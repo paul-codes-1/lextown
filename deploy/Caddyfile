@@ -1,0 +1,5 @@
+# Caddy terminates TLS (automatic Let's Encrypt) and proxies HTTP + WebSocket
+# upgrades to the node server. WebSockets need no special config in Caddy.
+lextown.lexingtonky.news {
+	reverse_proxy 127.0.0.1:8080
+}
