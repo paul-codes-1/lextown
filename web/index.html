@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="description" content="LEXTOWN-01: an open-source multiplayer block simulator of downtown Lexington, Kentucky.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏙️</text></svg>">
+<title>LEXTOWN-01 — Downtown Lexington Sim</title>
+<style>
+  :root{
+    --teal:#6ef7df; --teal-dim:#3fae9d; --ink:rgba(3,9,12,.62);
+    --line:rgba(110,247,223,.28); --txt:#d9fff6; --amber:#ffd9a4; --red:#ff5f52;
+  }
+  html,body{height:100%;margin:0;background:#0b0714;overflow:hidden}
+  #gl{position:fixed;inset:0;width:100%;height:100%;display:block;background:#0b0714}
+  #overlay{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:5}
+  #fx{position:fixed;inset:0;pointer-events:none;z-index:6;
+      background:
+        radial-gradient(ellipse at center, transparent 55%, rgba(5,2,12,.42) 100%),
+        repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0,0,0,.075) 2px 3px);}
+  #hud{position:fixed;inset:0;pointer-events:none;z-index:10;
+       font:11px/1.45 ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace;
+       color:var(--txt);letter-spacing:.08em}
+  .chip{background:var(--ink);border:1px solid var(--line);padding:7px 11px;
+        backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+  #topleft{position:absolute;top:14px;left:14px;display:flex;flex-direction:column;gap:8px;max-width:72vw}
+  #ident b{color:var(--teal);font-weight:600}
+  #ident .sub{color:#9adfd2;font-size:10px;letter-spacing:.14em}
+  #clock{font-size:34px;font-weight:600;letter-spacing:.06em;line-height:1.05;
+         font-variant-numeric:tabular-nums;color:#f2fffb;padding:8px 12px 6px}
+  #clock small{display:block;font-size:9.5px;font-weight:400;color:#9adfd2;letter-spacing:.16em;margin-top:4px}
+  #topright{position:absolute;top:14px;right:14px;display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+  #rec{font-variant-numeric:tabular-nums}
+  #rec .dot{color:var(--red);animation:blink 1.2s steps(2,start) infinite}
+  @keyframes blink{50%{opacity:0}}
+  @media (prefers-reduced-motion:reduce){#rec .dot{animation:none}}
+  #botleft{position:absolute;left:14px;bottom:14px;display:flex;flex-direction:column;gap:8px}
+  #counts{font-variant-numeric:tabular-nums;color:#9adfd2}
+  #counts b{color:var(--txt)}
+  #botright{position:absolute;right:14px;bottom:14px;display:flex;flex-wrap:wrap;gap:6px;
+            justify-content:flex-end;pointer-events:auto;max-width:80vw}
+  .tbtn{background:var(--ink);border:1px solid var(--line);color:#9adfd2;
+        font:10.5px ui-monospace,'SF Mono',Menlo,Consolas,monospace;letter-spacing:.12em;
+        padding:6px 10px;cursor:pointer;user-select:none}
+  .tbtn:hover{border-color:var(--teal);color:var(--txt)}
+  .tbtn:focus-visible{outline:1px solid var(--teal);outline-offset:1px}
+  .tbtn.on{background:rgba(110,247,223,.16);color:#eafffa;border-color:var(--teal)}
+  #help{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);
+        color:#7fbfb2;font-size:9.5px;letter-spacing:.14em;text-align:center;
+        background:var(--ink);border:1px solid rgba(110,247,223,.14);padding:5px 10px;white-space:nowrap}
+  @media (max-width:760px){
+    #help{display:none} #clock{font-size:24px}
+    #botright{max-width:62vw}
+  }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<canvas id="overlay"></canvas>
+<div id="fx"></div>
+<div id="hud">
+  <div id="topleft">
+    <div class="chip" id="ident"><b>LEXTOWN-01</b> ▮ DOWNTOWN LEXINGTON, KY<br>
+      <span class="sub">GRID: THIRD–HIGH × BROADWAY–MLK · SIM FEED</span></div>
+    <div class="chip" id="clock">19:21<small id="clocksub">DAY CYCLE 60× · DUSK</small></div>
+  </div>
+  <div id="topright">
+    <div class="chip" id="rec"><span class="dot">●</span> REC <span id="elapsed">00:00:00</span></div>
+    <div class="chip" id="camlabel">CAM-FOLLOW · PLAYER</div>
+    <div class="chip" id="netchip">NET: LOCAL-SIM · PEERS 0</div>
+  </div>
+  <div id="botleft">
+    <div class="chip" id="counts">TRK <b id="ncars">0</b> CAR · <b id="npeds">0</b> PED · SIG <b id="sig">EW</b></div>
+  </div>
+  <div id="help">WASD MOVE · SHIFT RUN · SPACE JUMP · DRAG CAM · V DRONE VIEW · P PAUSE</div>
+  <div id="botright">
+    <button class="tbtn" id="bView">DRONE-CAM</button>
+    <button class="tbtn" id="bJump">JUMP</button>
+    <button class="tbtn on" id="bAuto">AUTO-CAM</button>
+    <button class="tbtn on" id="bBox">BOX</button>
+    <button class="tbtn on" id="bTrk">TRK</button>
+    <button class="tbtn on" id="bLbl">LBL</button>
+    <button class="tbtn" id="bPause">||</button>
+    <button class="tbtn" id="s1">1×</button>
+    <button class="tbtn on" id="s60">60×</button>
+    <button class="tbtn" id="s300">300×</button>
+  </div>
+</div>
+<script src="vendor/three.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

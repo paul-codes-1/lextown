@@ -1,0 +1,16 @@
+{
+  "name": "lextown",
+  "version": "0.1.0",
+  "description": "LEXTOWN-01: open-source multiplayer block simulator of downtown Lexington, Kentucky",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
