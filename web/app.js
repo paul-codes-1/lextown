@@ -406,28 +406,38 @@ slab(-192, 8, -150, 92, parkMat);
 })();
 for (var tp = 0; tp < 12; tp++) treePts.push([-188 + Math.random() * 36, 12 + Math.random() * 76]);
 slab(-146, 8, -108, 92);
-addTower(-127, 50, 34, 30, 128, 7, 'LEXINGTON FINANCIAL CENTER · BIG BLUE');
+addTower(-127, 32, 34, 26, 128, 7, 'LEXINGTON FINANCIAL CENTER · BIG BLUE');
+// Central Bank Tower (300 W Vine, the ex-Kincaid Towers) sits just south,
+// fronting Vine — tan stepped slab with a light cap, per the 3D reference
+addTower(-126, 72, 30, 22, 88, 3, 'CENTRAL BANK TOWER');
+(function(){
+  var cap = new THREE.Mesh(new THREE.BoxGeometry(31, 2.2, 23),
+    new THREE.MeshStandardMaterial({color: 0xd8d3c6, roughness: 0.8}));
+  cap.position.set(-126, 89.6, 72); cap.castShadow = true; scene.add(cap);
+})();
 (function(){ // Big Blue crown: slanted glass top + lit band + spire + beacon
-  var band = new THREE.Mesh(new THREE.BoxGeometry(34.6, 1.4, 30.6),
+  var band = new THREE.Mesh(new THREE.BoxGeometry(34.6, 1.4, 26.6),
     regNight(new THREE.MeshStandardMaterial({color: 0x1a2634,
       emissive: 0xcfe8ff, emissiveIntensity: 0}), 2.2));
-  band.position.set(-127, 124.5, 50); scene.add(band);
-  var crown = new THREE.Mesh(new THREE.BoxGeometry(28, 7, 24),
+  band.position.set(-127, 124.5, 32); scene.add(band);
+  var crown = new THREE.Mesh(new THREE.BoxGeometry(28, 7, 20),
     new THREE.MeshStandardMaterial({color: 0x1c2a3d, roughness: 0.4, metalness: 0.4}));
   crown.rotation.z = 0.24;
-  crown.position.set(-127, 130.5, 50); crown.castShadow = true; scene.add(crown);
+  crown.position.set(-127, 130.5, 32); crown.castShadow = true; scene.add(crown);
   var sp = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 20, 6),
     new THREE.MeshStandardMaterial({color: 0x99a4b0}));
-  sp.position.set(-127, 143, 50); scene.add(sp);
+  sp.position.set(-127, 143, 32); scene.add(sp);
   var bk = new THREE.Mesh(new THREE.SphereGeometry(0.9, 8, 8),
     regNight(new THREE.MeshStandardMaterial({color: 0x220000, emissive: 0xff2222, emissiveIntensity: 0}), 3));
-  bk.position.set(-127, 153, 50); scene.add(bk);
+  bk.position.set(-127, 153, 32); scene.add(bk);
 })();
 
-// Block (0,4): Kincaid Tower + neighbor
+// Block (0,4): gray ribbed offices + gold-glass cube (per reference; no
+// "Kincaid" — that name left Lexington when 300 W Vine was rebranded)
 slab(-192, 108, -108, 192);
-addTower(-160, 140, 40, 34, 95, 8, 'KINCAID TOWER');
-addTower(-124, 170, 28, 24, 34, 4);
+addTower(-162, 138, 38, 30, 48, 4);
+addTower(-124, 168, 26, 24, 28, 8);
+addParkingLot(-188, 160, -146, 188);
 
 // Block (1,3): City Center — podium + teal glass pair + white hotel slab
 slab(-92, 8, -8, 92);
@@ -436,9 +446,9 @@ addTower(-70, 40, 28, 26, 52, 9, 'CITY CENTER');
 addTower(-32, 36, 24, 22, 44, 9);
 addTower(-50, 76, 30, 14, 36, 2);
 
-// Block (1,4): Central Bank tower
+// Block (1,4): Vine Center-style gray offices (unlabeled filler)
 slab(-92, 108, -8, 192);
-addTower(-50, 142, 34, 30, 62, 5, 'CENTRAL BANK');
+addTower(-50, 142, 34, 30, 52, 4);
 addTower(-70, 174, 26, 14, 16, 2);
 
 // Block (1,2): 21c + low-rises
@@ -484,12 +494,30 @@ addTower(170, -50, 26, 30, 40, 6);
   br.position.set(150, 14, -50); br.castShadow = true; scene.add(br);
 })();
 
-// Block (3,3): Phoenix Park + Central Library
-slab(108, 8, 150, 92, parkMat);
-for (var pp = 0; pp < 9; pp++) treePts.push([112 + Math.random() * 34, 12 + Math.random() * 76]);
-labels.push({name: 'PHOENIX PARK', x: 128, y: 12, z: 50});
-slab(154, 8, 192, 92);
-addTower(172, 45, 32, 26, 34, 4, 'CENTRAL LIBRARY');
+// Block (3,3): Phoenix Park + Central Library + City Hall (Government
+// Center — the 1920s Lafayette Hotel brick tower at 200 E Main)
+slab(108, 8, 138, 92, parkMat);
+for (var pp = 0; pp < 8; pp++) treePts.push([111 + Math.random() * 24, 12 + Math.random() * 76]);
+labels.push({name: 'PHOENIX PARK', x: 122, y: 12, z: 50});
+slab(142, 8, 192, 92);
+addTower(151, 66, 16, 22, 26, 4, 'CENTRAL LIBRARY');
+(function(){
+  var hall = addTower(176, 34, 26, 40, 42, 0, 'CITY HALL · LFUCG GOV CENTER');
+  // lighter arched-window top floor + deep cornice, hotel-style
+  var topBand = new THREE.Mesh(new THREE.BoxGeometry(26.6, 4.5, 40.6),
+    regNight(new THREE.MeshStandardMaterial({color: 0xc9c2b4,
+      emissiveMap: VARIANTS[6].em, emissive: 0xffffff, emissiveIntensity: 0,
+      roughness: 0.85}), 1.2));
+  topBand.position.set(176, 39.8, 34); topBand.castShadow = true; scene.add(topBand);
+  var cor = new THREE.Mesh(new THREE.BoxGeometry(28, 1.1, 42), corniceMat);
+  cor.position.set(176, 42.9, 34); cor.castShadow = true; scene.add(cor);
+  var flag = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 9, 6),
+    new THREE.MeshStandardMaterial({color: 0xb8bcc4}));
+  flag.position.set(176, 47.5, 34); scene.add(flag);
+  var banner = new THREE.Mesh(new THREE.BoxGeometry(3.4, 2, 0.12),
+    new THREE.MeshStandardMaterial({color: 0x27418f, roughness: 0.8}));
+  banner.position.set(177.9, 50, 34); scene.add(banner);
+})();
 
 // Rupp Arena / Central Bank Center (west of Broadway)
 (function(){
@@ -1290,12 +1318,15 @@ function envAt(h){
 // ---------- camera rig ----------
 var rig = {t: new THREE.Vector3(-40, 0, 10), r: 330, az: 0.65, el: 0.6};
 var autoCam = true;
+// drone tour: Rupp -> Big Blue/Central Bank Tower -> Main St corridor ->
+// courthouse square -> City Hall -> wide pull-back
 var PRESETS = [
-  {t: [-40, 0, 10],  r: 330, el: 0.6},
-  {t: [-135, 0, 55], r: 175, el: 0.46},
-  {t: [-350, 0, 105], r: 260, el: 0.5},
-  {t: [48, 0, -42],  r: 145, el: 0.4},
-  {t: [120, 0, -5],  r: 215, el: 0.55}
+  {t: [-330, 0, 105], r: 280, el: 0.46},
+  {t: [-130, 0, 50],  r: 165, el: 0.44},
+  {t: [-20, 0, -5],   r: 190, el: 0.46},
+  {t: [50, 0, -45],   r: 140, el: 0.48},
+  {t: [168, 0, 35],   r: 155, el: 0.46},
+  {t: [-40, 0, 10],   r: 370, el: 0.62}
 ];
 var pIdx = 0, pTimer = 0, tween = null;
 function startTween(){
