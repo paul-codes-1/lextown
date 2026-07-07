@@ -2,7 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-YP3SXMD9KK"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-YP3SXMD9KK');
+</script>
+
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Privacy policy for LEXTOWN, the free multiplayer downtown Lexington KY browser game: no accounts, minimal data, and exactly what gets relayed.">
+<link rel="canonical" href="https://playlextown.com/privacy.html">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏙️</text></svg>">
 <title>Privacy Policy — LEXTOWN-01</title>
 <style>
@@ -41,8 +52,18 @@ is discarded when you disconnect. There is no database, no account system,
 and no chat history — a message that has scrolled away is gone.</p>
 
 <h2>WHAT WE STORE ON YOUR DEVICE</h2>
-<p>One localStorage flag that remembers you've dismissed the tutorial.
-No cookies, no analytics, no advertising, no fingerprinting.</p>
+<p>Two localStorage values: a flag that remembers you've dismissed the
+tutorial, and the player name you chose. No advertising, no fingerprinting.</p>
+
+<h2>ANALYTICS</h2>
+<p>We use Google Analytics 4 to understand aggregate usage (page views,
+rough geography, device type). GA sets cookies/identifiers on your browser
+and processes data under
+<a href="https://policies.google.com/privacy" rel="noopener">Google's privacy policy</a>.
+We do not use advertising features, do not sell data, and only look at
+aggregate numbers. You can block it with any content blocker or
+<a href="https://tools.google.com/dlpage/gaoptout" rel="noopener">Google's opt-out add-on</a> —
+the game works identically without it.</p>
 
 <h2>SERVER LOGS</h2>
 <p>Like nearly every website, the server keeps short-lived operational logs
@@ -56,8 +77,8 @@ States, whose infrastructure applies its own standard logging.</p>
 collect personal information from anyone. There is nothing to sign up for.</p>
 
 <h2>THIRD PARTIES</h2>
-<p>None. No data is sold, shared, or sent to third-party services. The
-complete source code is public at
+<p>Google Analytics (above) and our hosting provider (AWS). No data is
+sold or shared with anyone else. The complete source code is public at
 <a href="https://github.com/paul-codes-1/lextown" rel="noopener">github.com/paul-codes-1/lextown</a>,
 so you can verify all of this yourself.</p>
 

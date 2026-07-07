@@ -2,10 +2,57 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-YP3SXMD9KK"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-YP3SXMD9KK');
+</script>
+
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<meta name="description" content="LEXTOWN-01: an open-source multiplayer block simulator of downtown Lexington, Kentucky.">
+<title>LEXTOWN — Free Multiplayer Downtown Lexington KY Game (Play in Browser)</title>
+<meta name="description" content="Walk, jetpack, and drive around a 3D multiplayer recreation of downtown Lexington, Kentucky — Main Street, Rupp Arena, Big Blue, and the courthouse square. Free, no download, no account. Everyone plays in one shared world.">
+<link rel="canonical" href="https://playlextown.com/">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#0b0714">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="LEXTOWN">
+<meta property="og:title" content="LEXTOWN — Multiplayer Downtown Lexington, KY in Your Browser">
+<meta property="og:description" content="Walk, jetpack, and drive around a 3D mini-Lexington with live traffic, chat, and a day/night cycle. Free, no download — everyone shares one world.">
+<meta property="og:url" content="https://playlextown.com/">
+<meta property="og:image" content="https://playlextown.com/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="LEXTOWN — Multiplayer Downtown Lexington, KY in Your Browser">
+<meta name="twitter:description" content="Walk, jetpack, and drive around a 3D mini-Lexington with live traffic, chat, and a day/night cycle. Free, no download.">
+<meta name="twitter:image" content="https://playlextown.com/og.jpg">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "VideoGame",
+  "name": "LEXTOWN-01",
+  "alternateName": "LEXTOWN",
+  "url": "https://playlextown.com/",
+  "image": "https://playlextown.com/og.jpg",
+  "description": "A free browser-based multiplayer game set in a stylized 3D recreation of downtown Lexington, Kentucky. Walk the real street grid, fly a jetpack onto rooftops, drive cars, and chat — with live traffic, pedestrians, and a day/night cycle.",
+  "playMode": "MultiPlayer",
+  "applicationCategory": "Game",
+  "gamePlatform": "Web browser",
+  "operatingSystem": "Any",
+  "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+  "gameLocation": {
+    "@type": "Place",
+    "name": "Downtown Lexington, Kentucky",
+    "address": {"@type": "PostalAddress", "addressLocality": "Lexington", "addressRegion": "KY", "addressCountry": "US"}
+  },
+  "author": {"@type": "Person", "name": "Paul Oliva"},
+  "license": "https://github.com/paul-codes-1/lextown/blob/main/LICENSE"
+}
+</script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏙️</text></svg>">
-<title>LEXTOWN-01 — Downtown Lexington Sim</title>
 <style>
   :root{
     --teal:#6ef7df; --teal-dim:#3fae9d; --ink:rgba(3,9,12,.62);
@@ -109,6 +156,16 @@
 </style>
 </head>
 <body>
+<noscript>
+  <h1>LEXTOWN — a multiplayer downtown Lexington, Kentucky game</h1>
+  <p>LEXTOWN-01 is a free browser game: a stylized 3D recreation of downtown
+  Lexington, KY — Main Street, Vine, Short, Broadway, Upper and Limestone,
+  with Rupp Arena, the Big Blue tower, the old Fayette County courthouse and
+  more. Walk around, fly a jetpack onto rooftops, drive cars, and chat with
+  everyone else on the page in one shared world. It requires JavaScript and
+  WebGL. The source code is open at
+  <a href="https://github.com/paul-codes-1/lextown">github.com/paul-codes-1/lextown</a>.</p>
+</noscript>
 <canvas id="gl"></canvas>
 <canvas id="overlay"></canvas>
 <div id="fx"></div>
