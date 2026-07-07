@@ -47,6 +47,9 @@
           padding:6px 9px;width:230px;pointer-events:auto;outline:none}
   #chatin:focus{border-color:var(--teal)}
   #chatin::placeholder{color:#5f938a}
+  #hint{position:absolute;left:50%;bottom:44px;transform:translateX(-50%);
+        color:#ffd28a;font-size:10.5px;letter-spacing:.14em;background:var(--ink);
+        border:1px solid rgba(255,210,138,.35);padding:5px 12px;white-space:nowrap;display:none}
   #botright{position:absolute;right:14px;bottom:14px;display:flex;flex-wrap:wrap;gap:6px;
             justify-content:flex-end;pointer-events:auto;max-width:80vw}
   .tbtn{background:var(--ink);border:1px solid var(--line);color:#9adfd2;
@@ -82,11 +85,13 @@
   <div id="botleft">
     <div id="chatlog"></div>
     <input id="chatin" maxlength="120" placeholder="[ENTER] CHAT" autocomplete="off" spellcheck="false">
-    <div class="chip" id="counts">TRK <b id="ncars">0</b> CAR · <b id="npeds">0</b> PED · SIG <b id="sig">EW</b></div>
+    <div class="chip" id="counts">TRK <b id="ncars">0</b> CAR · <b id="npeds">0</b> PED · SIG <b id="sig">EW</b> · FUEL <b id="fuel">100</b>%</div>
   </div>
-  <div id="help">WASD MOVE · SHIFT RUN · SPACE JUMP · ENTER CHAT · DRAG CAM · V DRONE VIEW · P PAUSE</div>
+  <div class="chip" id="hint"></div>
+  <div id="help">WASD MOVE · SHIFT RUN · SPACE JUMP · HOLD SPACE JETPACK · E ENTER CAR · ENTER CHAT · V DRONE</div>
   <div id="botright">
     <button class="tbtn" id="bView">DRONE-CAM</button>
+    <button class="tbtn" id="bCar">E-CAR</button>
     <button class="tbtn" id="bJump">JUMP</button>
     <button class="tbtn on" id="bAuto">AUTO-CAM</button>
     <button class="tbtn on" id="bBox">BOX</button>

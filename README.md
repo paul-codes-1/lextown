@@ -10,7 +10,7 @@ The map is the real downtown core, stylized:
 
 - **Streets** — Third, Second, Short, Main, Vine, and High crossed by Broadway, Mill, Upper, Limestone, and MLK, with the correct one-way pairs (Main/Short eastbound, Vine/Second westbound, Upper northbound, Limestone southbound) and working traffic signals.
 - **Landmarks** — Big Blue (Lexington Financial Center), Kincaid Tower, City Center, Central Bank, 21c Museum Hotel, the old courthouse dome on Cheapside, the Circuit Court towers, Central Library, Phoenix Park, Triangle Park, and Rupp Arena.
-- **Life** — 66 cars that queue and obey signals, 46 pedestrians, streetlights and neon that come on at dusk, sun shadows that rake through the afternoon.
+- **Life** — 66 cars that queue and obey signals (steal any of them with `E`), 46 pedestrians, surface parking lots, Lexington-style green street-name blades at every corner, streetlights and neon that come on at dusk, sun shadows that rake through the afternoon.
 
 ## Quick start
 
@@ -29,7 +29,8 @@ No server? Opening `web/index.html` directly (or hosting `web/` statically) runs
 |---|---|
 | `WASD` / arrows | Walk (relative to camera) |
 | `Shift` | Run |
-| `Space` | Jump |
+| `Space` | Jump — **hold in mid-air to fly the jetpack** (fuel drains, recharges on the ground; land on rooftops) |
+| `E` | Enter / exit the nearest car — W/S to drive, A/D to steer, up to 108 km/h |
 | Drag / wheel | Orbit / zoom camera |
 | `Enter` | Chat (Esc to cancel; messages appear in the log and as a bubble over your head) |
 | `V` | Toggle player / drone camera (drone mode has an auto-tour: `C`) |
@@ -49,7 +50,7 @@ Touch: left half of the screen is a virtual movement stick, right half orbits th
 
 `server.js` serves the static client and relays `{t:'state', x,y,z,ry}` packets (sent at 10 Hz) between connections, with server-side sanity enforcement:
 
-- **Movement validation** — every accepted state must be inside the world bounds and reachable from the last accepted state at legal speed (run ≈ 13.5 m/s, jump launch ≈ 11.5 m/s, plus jitter tolerance). Rejected moves are not relayed; the offending client gets a `{t:'correct'}` that snaps it back. Names are sanitized and pinned server-side on first contact.
+- **Movement validation** — every accepted state must be inside the world bounds and reachable from the last accepted state at legal speed, with per-mode caps (walking, jetpack, driving — the mode flag is client-declared, so this bounds absurdity rather than proving honesty). Rejected moves are not relayed; the offending client gets a `{t:'correct'}` that snaps it back. Names are sanitized and pinned server-side on first contact.
 - **Chat** — `{t:'chat', msg}` messages are stripped to printable ASCII, capped at 120 chars, and rate-limited per client (3-message burst, ~1/1.2 s refill) before being broadcast to everyone. The client shows them in the log and as a speech bubble over the sender's head.
 - **Packet-rate limiting** — state packets beyond 15/s per client are dropped.
 

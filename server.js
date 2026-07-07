@@ -54,9 +54,11 @@ const server = http.createServer((req, res) => {
 // vertical — enforced with tolerance for network jitter). Violations are not
 // relayed; the client gets a {t:'correct'} snapping it back.
 
-const WORLD = { x0: -545, x1: 325, z0: -425, z1: 325, y0: -1, y1: 45 };
-const MAX_H_SPEED = 18;    // m/s horizontal (run is 13.5)
-const MAX_V_SPEED = 15;    // m/s vertical (jump launch is 11.5)
+const WORLD = { x0: -545, x1: 325, z0: -425, z1: 325, y0: -1, y1: 190 };
+// per-mode speed caps (m/s): m=0 walk (run 13.5), m=1 jetpack (fly 15 h,
+// 13 v), m=2 driving (30 h). Mode is client-declared, so a cheater can claim
+// "driving" for the highest cap — this bounds absurdity, not dishonesty.
+const CAPS = { 0: { h: 18, v: 15 }, 1: { h: 20, v: 16 }, 2: { h: 38, v: 12 } };
 const MAX_STATE_HZ = 15;   // packets/sec before we start dropping
 const NAME_RE = /[^A-Za-z0-9 _-]/g;
 
@@ -79,10 +81,11 @@ function validMove(c, msg, now) {
   if (!num(msg.x, WORLD.x0, WORLD.x1) || !num(msg.z, WORLD.z0, WORLD.z1) ||
       !num(msg.y, WORLD.y0, WORLD.y1) || !num(msg.ry, -10, 10)) return false;
   if (!c.pos) return true; // first packet fixes the spawn
+  const caps = CAPS[msg.m === 1 || msg.m === 2 ? msg.m : 0];
   const dt = Math.min(2, Math.max(0.03, (now - c.posAt) / 1000));
   const dh = Math.hypot(msg.x - c.pos.x, msg.z - c.pos.z);
   const dv = Math.abs(msg.y - c.pos.y);
-  return dh <= MAX_H_SPEED * dt + 0.5 && dv <= MAX_V_SPEED * dt + 0.5;
+  return dh <= caps.h * dt + 0.5 && dv <= caps.v * dt + 0.5;
 }
 
 wss.on('connection', (ws) => {
@@ -131,6 +134,7 @@ wss.on('connection', (ws) => {
       client.posAt = now;
       const clean = { t: 'state', id, n: client.name || id,
         c: typeof msg.c === 'number' ? msg.c : 0x3a76c4,
+        m: msg.m === 1 || msg.m === 2 ? msg.m : 0,
         x: msg.x, y: msg.y, z: msg.z, ry: msg.ry };
       client.state = clean;
       broadcast(clean, ws);

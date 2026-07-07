@@ -197,7 +197,7 @@ function addTower(x, z, w, d, h, vi, name){
   m.position.set(x, h / 2 + 0.35, z);
   m.castShadow = true; m.receiveShadow = true;
   scene.add(m);
-  colliders.push({x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2});
+  colliders.push({x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2, h: h + 0.35});
   // white cornice / parapet cap on masonry buildings (reference: everywhere downtown)
   if (MASONRY[vi] && h < 45){
     var cor = new THREE.Mesh(new THREE.BoxGeometry(w + 0.8, 0.6, d + 0.8), corniceMat);
@@ -505,9 +505,9 @@ addTower(172, 45, 32, 26, 34, 4, 'CENTRAL LIBRARY');
 })();
 
 // colliders for custom landmark geometry
-colliders.push({x0: 32, x1: 68, z0: -58, z1: -32});                 // old courthouse
-colliders.push({x0: -176.5, x1: -165.5, z0: 34.5, z1: 45.5});       // fountain
-colliders.push({ell: 1, cx: -370, cz: 100, rx: 94, rz: 77});        // Rupp oval
+colliders.push({x0: 32, x1: 68, z0: -58, z1: -32, h: 15.7});        // old courthouse
+colliders.push({x0: -176.5, x1: -165.5, z0: 34.5, z1: 45.5, h: 2.3}); // fountain
+colliders.push({ell: 1, cx: -370, cz: 100, rx: 94, rz: 77, h: 23}); // Rupp oval
 
 // street tree rows along Main + Vine (reference: continuous canopy downtown)
 [0, 100].forEach(function(sz){
@@ -617,6 +617,68 @@ var sigNSMat = new THREE.MeshStandardMaterial({color: 0x111111, emissive: 0xff3b
   scene.add(poles);
 })();
 
+// ---------- street name signs (Lexington-style green blades) ----------
+var signGreenMat = new THREE.MeshStandardMaterial({color: 0x17694c, roughness: 0.6});
+function drawHorseBadge(g, x, y, s){
+  // navy medallion with a gold horse-head silhouette (Lexington's branding)
+  g.fillStyle = '#1d2f5e'; g.fillRect(x, y, s, s);
+  g.fillStyle = '#d8b04a';
+  g.beginPath();                                 // neck
+  g.moveTo(x + s * 0.22, y + s * 0.88);
+  g.lineTo(x + s * 0.38, y + s * 0.34);
+  g.lineTo(x + s * 0.62, y + s * 0.30);
+  g.lineTo(x + s * 0.66, y + s * 0.88);
+  g.closePath(); g.fill();
+  g.beginPath();                                 // head + muzzle
+  g.moveTo(x + s * 0.38, y + s * 0.40);
+  g.lineTo(x + s * 0.82, y + s * 0.50);
+  g.lineTo(x + s * 0.80, y + s * 0.62);
+  g.lineTo(x + s * 0.42, y + s * 0.58);
+  g.closePath(); g.fill();
+  g.beginPath();                                 // ear
+  g.moveTo(x + s * 0.42, y + s * 0.34);
+  g.lineTo(x + s * 0.50, y + s * 0.12);
+  g.lineTo(x + s * 0.56, y + s * 0.32);
+  g.closePath(); g.fill();
+}
+var signTexCache = {};
+function streetSignTex(name){
+  if (signTexCache[name]) return signTexCache[name];
+  var t = makeTex(256, 64, function(g){
+    g.fillStyle = '#17694c'; g.fillRect(0, 0, 256, 64);
+    g.strokeStyle = '#f2f2ee'; g.lineWidth = 5;
+    g.strokeRect(5, 5, 246, 54);
+    drawHorseBadge(g, 14, 14, 36);
+    g.fillStyle = '#f6f6f0';
+    g.font = 'bold 27px Helvetica, Arial, sans-serif';
+    g.textBaseline = 'middle';
+    g.fillText(name, 62, 34, 180);
+  });
+  t.encoding = THREE.sRGBEncoding;
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  signTexCache[name] = t;
+  return t;
+}
+(function(){
+  var bladeG = new THREE.BoxGeometry(2.7, 0.6, 0.06);
+  var poleG = new THREE.CylinderGeometry(0.09, 0.09, 4.6, 6);
+  var poles = new THREE.InstancedMesh(poleG, signGreenMat, EW.length * NS.length);
+  var M = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
+  var k = 0;
+  EW.forEach(function(e){ NS.forEach(function(nn){
+    var px = nn.x + 12.6, pz = e.z - 12.6;
+    M.compose(new THREE.Vector3(px, 2.3, pz), q, one);
+    poles.setMatrixAt(k++, M);
+    var texA = new THREE.MeshStandardMaterial({map: streetSignTex(e.name), roughness: 0.55});
+    var a = new THREE.Mesh(bladeG, [signGreenMat, signGreenMat, signGreenMat, signGreenMat, texA, texA]);
+    a.position.set(px, 4.3, pz); scene.add(a);         // EW blade reads N/S
+    var texB = new THREE.MeshStandardMaterial({map: streetSignTex(nn.name), roughness: 0.55});
+    var b = new THREE.Mesh(bladeG, [signGreenMat, signGreenMat, signGreenMat, signGreenMat, texB, texB]);
+    b.position.set(px, 3.8, pz); b.rotation.y = Math.PI / 2; scene.add(b);
+  }); });
+  scene.add(poles);
+})();
+
 // ---------- cars ----------
 var CAR_COLS = [0xc8ccd2, 0x22262c, 0x7a1f2b, 0x274a68, 0x8c8f4a, 0x3a3f47, 0xb0722a, 0xe0e3e8]
   .map(function(c){ return new THREE.MeshStandardMaterial({color: c, roughness: 0.45, metalness: 0.35}); });
@@ -627,7 +689,8 @@ var bodyG = new THREE.BoxGeometry(4.6, 1.1, 2.0);
 var cabG = new THREE.BoxGeometry(2.4, 0.85, 1.8);
 var lightG = new THREE.BoxGeometry(0.18, 0.28, 1.7);
 
-// static parked cars in the surface lots
+var vehicles = [];   // every enterable car: {g, ai:carRef|null, th, spd}
+// static parked cars in the surface lots (enterable)
 parkedPts.forEach(function(p){
   var g = new THREE.Group();
   var body = new THREE.Mesh(bodyG, CAR_COLS[(Math.random() * CAR_COLS.length) | 0]);
@@ -635,6 +698,7 @@ parkedPts.forEach(function(p){
   var cab = new THREE.Mesh(cabG, cabMat); cab.position.set(-0.25, 1.55, 0); g.add(cab);
   g.position.set(p[0], 0.72, p[1]); g.rotation.y = p[2];
   scene.add(g);
+  vehicles.push({g: g, ai: null, th: p[2], spd: 0});
 });
 
 var lanes = [];   // {axis, along-street coord fixed, dir, cars: []}
@@ -672,6 +736,7 @@ lanes.forEach(function(L){
                v: 0, vt: 10 + Math.random() * 4, id: 'CAR-' + ('0' + (cars.length + 1)).slice(-2),
                trail: [], tt: 0};
     L.cars.push(car); cars.push(car);
+    vehicles.push({g: g, ai: car, th: g.rotation.y, spd: 0});
   }
 });
 function placeCar(c){
@@ -791,6 +856,19 @@ function makeAvatar(torsoCol, legCol){
   var av = {g: g,
     armL: limb(0.45, -0.9, 2.05, skin), armR: limb(0.45, 0.9, 2.05, skin),
     legL: limb(0.55, -0.35, 1.0, leg),  legR: limb(0.55, 0.35, 1.0, leg)};
+  // jetpack (face is on +z, so the pack rides at -z)
+  var pack = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.95, 0.38),
+    new THREE.MeshStandardMaterial({color: 0x6a6f76, roughness: 0.5, metalness: 0.35}));
+  pack.position.set(0, 1.7, -0.52); g.add(pack);
+  var flameG = new THREE.ConeGeometry(0.2, 0.9, 8);
+  var flameMat = new THREE.MeshBasicMaterial({color: 0xffa03a, transparent: true, opacity: 0.9});
+  av.flames = [-0.22, 0.22].map(function(fx){
+    var f = new THREE.Mesh(flameG, flameMat);
+    f.rotation.x = Math.PI;
+    f.position.set(fx, 0.85, -0.52);
+    f.visible = false; g.add(f);
+    return f;
+  });
   g.scale.setScalar(0.85);
   scene.add(g);
   return av;
@@ -801,16 +879,32 @@ function setSwing(av, phase, amp){
   av.legL.rotation.x = -s; av.legR.rotation.x = s;
 }
 function angDelta(a, b){ return ((b - a + Math.PI * 3) % (Math.PI * 2)) - Math.PI; }
-function groundY(x, z){
-  for (var k = 0; k < slabRects.length; k++){
+// Ground height at a point: slabs, plus any roof at or below yRef (so the
+// jetpack can land on rooftops but street-level walkers only see slabs).
+function groundY(x, z, yRef){
+  var y = 0, k;
+  for (k = 0; k < slabRects.length; k++){
     var s = slabRects[k];
-    if (x >= s.x0 && x <= s.x1 && z >= s.z0 && z <= s.z1) return 0.7;
+    if (x >= s.x0 && x <= s.x1 && z >= s.z0 && z <= s.z1){ y = 0.7; break; }
   }
-  return 0;
+  if (yRef === undefined) return y;
+  for (k = 0; k < colliders.length; k++){
+    var c = colliders[k];
+    if (c.h > yRef + 0.5 || c.h <= y) continue;
+    if (c.ell){
+      var ex = (x - c.cx) / c.rx, ez = (z - c.cz) / c.rz;
+      if (ex * ex + ez * ez < 1) y = c.h;
+    } else if (x >= c.x0 && x <= c.x1 && z >= c.z0 && z <= c.z1) y = c.h;
+  }
+  return y;
 }
-function collide(p, r){
+// Push a point out of building footprints; anything at/above a roof is skipped
+// so flight over downtown works.
+function collide(p, r, y){
+  y = y || 0;
   for (var k = 0; k < colliders.length; k++){
     var c = colliders[k];
+    if (y >= c.h - 0.2) continue;
     if (c.ell){
       var ex = (p.x - c.cx) / (c.rx + r), ez = (p.z - c.cz) / (c.rz + r);
       var d2 = ex * ex + ez * ez;
@@ -843,11 +937,77 @@ var myId = 'ME';
 
 // ---------- local player ----------
 var player = {x: 14, y: 0, z: -9.5, vy: 0, ry: -Math.PI / 2, phase: 0, swing: 0,
-              grounded: true, moving: 0, av: makeAvatar(myColor, 0x3f7d3f)};
+              grounded: true, moving: 0, fuel: 100, thrusting: false, veh: null,
+              av: makeAvatar(myColor, 0x3f7d3f)};
 var rigP = {az: Math.PI / 2, el: 0.32, r: 13};
 var jumpQueued = false;
 var mode = 'player';   // 'player' | 'drone'
+function nearestVehicle(){
+  var best = null, bd = 42; // 6.5m squared-ish
+  for (var k = 0; k < vehicles.length; k++){
+    var g = vehicles[k].g;
+    var dx = g.position.x - player.x, dz = g.position.z - player.z;
+    var d2 = dx * dx + dz * dz;
+    if (d2 < bd){ bd = d2; best = vehicles[k]; }
+  }
+  return best;
+}
+function tryEnterExit(){
+  if (mode !== 'player') return;
+  if (player.veh){
+    var v = player.veh;
+    var px = v.g.position.x + Math.sin(v.th) * 3.4;
+    var pz = v.g.position.z + Math.cos(v.th) * 3.4;
+    player.veh = null;
+    player.av.g.visible = true;
+    player.x = px; player.z = pz;
+    player.y = groundY(px, pz, player.y + 1); player.vy = 0;
+    collide(player, 0.55, player.y);
+    return;
+  }
+  if (!player.grounded) return;
+  var nv = nearestVehicle();
+  if (!nv) return;
+  if (nv.ai && nv.ai.lane){
+    var idx = nv.ai.lane.cars.indexOf(nv.ai);
+    if (idx >= 0) nv.ai.lane.cars.splice(idx, 1);
+    nv.ai.lane = null;
+  }
+  nv.th = nv.g.rotation.y;
+  nv.spd = nv.ai ? nv.ai.v || 0 : 0;
+  player.veh = nv;
+  player.av.g.visible = false;
+  rigP.r = Math.max(rigP.r, 17);
+}
+function updateDrive(dt){
+  var v = player.veh;
+  var fwd = keysDown.w || keysDown.arrowup, back = keysDown.s || keysDown.arrowdown;
+  var left = keysDown.a || keysDown.arrowleft, right = keysDown.d || keysDown.arrowright;
+  if (stick.active){ fwd = stick.y < -0.25; back = stick.y > 0.25;
+                     left = stick.x < -0.3; right = stick.x > 0.3; }
+  if (fwd) v.spd += 13 * dt;
+  else if (back) v.spd -= 20 * dt;
+  else v.spd -= Math.sign(v.spd) * Math.min(Math.abs(v.spd), (2 + Math.abs(v.spd) * 0.35) * dt);
+  v.spd = Math.max(-9, Math.min(30, v.spd));
+  var st = (left ? 1 : 0) - (right ? 1 : 0);
+  v.th += st * Math.min(1, Math.abs(v.spd) / 9) * 1.7 * dt * (v.spd >= 0 ? 1 : -1);
+  var fx = Math.cos(v.th), fz = -Math.sin(v.th);
+  var p = {x: v.g.position.x + fx * v.spd * dt, z: v.g.position.z + fz * v.spd * dt};
+  var ox = p.x, oz = p.z;
+  collide(p, 1.8, 0);
+  if (p.x !== ox || p.z !== oz) v.spd *= 0.2;   // crunch
+  p.x = Math.max(X0 - 20, Math.min(X1 + 20, p.x));
+  p.z = Math.max(Z0 - 20, Math.min(Z1 + 20, p.z));
+  var gy = groundY(p.x, p.z);
+  v.g.position.set(p.x, gy + 0.15, p.z);
+  v.g.rotation.y = v.th;
+  player.x = p.x; player.z = p.z; player.y = gy;
+  player.moving = Math.abs(v.spd);
+  player.thrusting = false;
+  player.fuel = Math.min(100, player.fuel + 30 * dt);
+}
 function updatePlayer(dt){
+  if (player.veh && mode === 'player'){ updateDrive(dt); return; }
   var f = 0, r = 0;
   if (mode === 'player'){
     if (keysDown.w || keysDown.arrowup) f += 1;
@@ -856,7 +1016,8 @@ function updatePlayer(dt){
     if (keysDown.a || keysDown.arrowleft) r -= 1;
     if (stick.active){ f = -stick.y; r = stick.x; }
   }
-  var sp = (keysDown.shift ? 13.5 : 7.5);
+  var sp = keysDown.shift ? 13.5 : 7.5;
+  if (!player.grounded && player.thrusting) sp = 15;
   var mag = Math.hypot(f, r);
   if (mag > 0.15){
     f /= Math.max(1, mag); r /= Math.max(1, mag);
@@ -867,16 +1028,27 @@ function updatePlayer(dt){
     player.phase += dt * sp * 1.7;
     player.moving = sp;
   } else player.moving = 0;
-  collide(player, 0.55);
+  collide(player, 0.55, player.y);
   player.x = Math.max(X0 - 20, Math.min(X1 + 20, player.x));
   player.z = Math.max(Z0 - 20, Math.min(Z1 + 20, player.z));
-  var gy = groundY(player.x, player.z);
-  if ((keysDown[' '] || jumpQueued) && player.grounded){
+  var gy = groundY(player.x, player.z, player.y);
+  if ((keysDown[' '] || jumpQueued) && player.grounded && mode === 'player'){
     player.vy = 11.5; player.grounded = false;
   }
   jumpQueued = false;
+  // jetpack: hold space while airborne
+  var thrusting = false;
+  if (!player.grounded && (keysDown[' '] || stick.jets) && player.fuel > 0.5 && mode === 'player'){
+    player.vy += 55 * dt;
+    if (player.vy > 13) player.vy = 13;
+    player.fuel -= 9 * dt;
+    thrusting = true;
+  }
+  player.thrusting = thrusting;
+  if (player.grounded) player.fuel = Math.min(100, player.fuel + 30 * dt);
   player.vy -= 30 * dt;
   player.y += player.vy * dt;
+  if (player.y > 185){ player.y = 185; if (player.vy > 0) player.vy = 0; }
   if (player.y <= gy && player.vy <= 0){
     player.y = gy; player.vy = 0; player.grounded = true;
   } else if (player.grounded && player.y < gy + 0.71){
@@ -885,6 +1057,7 @@ function updatePlayer(dt){
   player.swing += (Math.min(0.8, player.moving / 12) - player.swing) * Math.min(1, dt * 8);
   setSwing(player.av, player.phase, player.swing);
   if (!player.grounded){ player.av.armL.rotation.x = -2.6; player.av.armR.rotation.x = -2.6; }
+  player.av.flames.forEach(function(fl){ fl.visible = thrusting; });
   player.av.g.position.set(player.x, player.y, player.z);
   player.av.g.rotation.y = player.ry;
 }
@@ -908,7 +1081,22 @@ function setNetChip(){
 }
 function removeRemote(id){
   var r = remotes[id];
-  if (r){ scene.remove(r.av.g); delete remotes[id]; setNetChip(); }
+  if (r){
+    scene.remove(r.av.g);
+    if (r.carG) scene.remove(r.carG);
+    delete remotes[id]; setNetChip();
+  }
+}
+function buildRemoteCar(color){
+  var g = new THREE.Group();
+  var body = new THREE.Mesh(bodyG, new THREE.MeshStandardMaterial({
+    color: color, roughness: 0.45, metalness: 0.35}));
+  body.position.y = 0.75; body.castShadow = true; g.add(body);
+  var cab = new THREE.Mesh(cabG, cabMat); cab.position.set(-0.25, 1.55, 0); g.add(cab);
+  var hl = new THREE.Mesh(lightG, headMat); hl.position.set(2.32, 0.75, 0); g.add(hl);
+  var tl = new THREE.Mesh(lightG, tailMat); tl.position.set(-2.32, 0.8, 0); g.add(tl);
+  scene.add(g);
+  return g;
 }
 function handleNet(m){
   if (m.t === 'welcome'){
@@ -921,9 +1109,11 @@ function handleNet(m){
     var r = remotes[m.id];
     if (!r){
       r = remotes[m.id] = {av: makeAvatar(m.c || 0x3a76c4, 0x555a63), name: m.n || m.id,
+        c: m.c || 0x3a76c4, m: 0, carG: null,
         buf: [], phase: Math.random() * 6, swing: 0, lx: m.x, lz: m.z, ry: m.ry || 0};
       setNetChip();
     }
+    r.m = m.m | 0;
     r.buf.push({t: performance.now(), x: m.x, y: m.y, z: m.z, ry: m.ry || 0});
     if (r.buf.length > 12) r.buf.shift();
     r.lastSeen = performance.now();
@@ -982,9 +1172,20 @@ function updateRemotes(dt){
     r.ry += angDelta(r.ry, a.ry + angDelta(a.ry, b.ry) * f) * Math.min(1, dt * 10);
     r.phase += dt * Math.min(spd, 14) * 1.7;
     r.swing += (Math.min(0.8, spd / 12) - r.swing) * Math.min(1, dt * 8);
-    setSwing(r.av, r.phase, r.swing);
-    r.av.g.position.set(x, y, z);
-    r.av.g.rotation.y = r.ry;
+    if (r.m === 2){        // driving: render their car, hide the avatar
+      if (!r.carG) r.carG = buildRemoteCar(r.c);
+      r.carG.visible = true; r.av.g.visible = false;
+      r.carG.position.set(x, y + 0.15, z);
+      r.carG.rotation.y = r.ry;
+    } else {
+      if (r.carG) r.carG.visible = false;
+      r.av.g.visible = true;
+      setSwing(r.av, r.phase, r.swing);
+      r.av.flames.forEach(function(fl){ fl.visible = r.m === 1; });
+      if (r.m === 1){ r.av.armL.rotation.x = -2.6; r.av.armR.rotation.x = -2.6; }
+      r.av.g.position.set(x, y, z);
+      r.av.g.rotation.y = r.ry;
+    }
   }
 }
 // WebSocket: #ws=1 -> same origin; #ws=<url> -> explicit. Default: try same origin when http(s).
@@ -1011,8 +1212,9 @@ function netTick(dt){
   netAcc = 0;
   if (online && ws && ws.readyState === 1)
     ws.send(JSON.stringify({t: 'state', n: myName, c: myColor,
+      m: player.veh ? 2 : (player.thrusting ? 1 : 0),
       x: +player.x.toFixed(2), y: +player.y.toFixed(2), z: +player.z.toFixed(2),
-      ry: +player.ry.toFixed(3)}));
+      ry: +(player.veh ? player.veh.th : player.ry).toFixed(3)}));
 }
 
 // ---------- local bots (stand-ins so the MMO pipeline always runs) ----------
@@ -1123,7 +1325,7 @@ function manual(){ if (autoCam){ autoCam = false; tween = null; syncBtns(); } }
 
 // pointer controls
 var drag = null;
-var stick = {active: false, id: null, ox: 0, oy: 0, x: 0, y: 0};
+var stick = {active: false, id: null, ox: 0, oy: 0, x: 0, y: 0, jets: false};
 glCanvas.style.touchAction = 'none';
 glCanvas.addEventListener('pointerdown', function(e){
   if (mode === 'player' && e.pointerType === 'touch' && e.clientX < window.innerWidth * 0.4){
@@ -1200,6 +1402,7 @@ window.addEventListener('keydown', function(e){
   if (k === ' ' || k.indexOf('arrow') === 0) e.preventDefault();
   if (k === 'p') togglePause();
   if (k === 'v') toggleMode();
+  if (k === 'e') tryEnterExit();
   if (k === 'b') setToggle('box');
   if (k === 't') setToggle('trk');
   if (k === 'l') setToggle('lbl');
@@ -1242,6 +1445,8 @@ var els = {
   ncars: document.getElementById('ncars'), npeds: document.getElementById('npeds'),
   camlabel: document.getElementById('camlabel'),
   bView: document.getElementById('bView'), bJump: document.getElementById('bJump'),
+  bCar: document.getElementById('bCar'), hint: document.getElementById('hint'),
+  fuel: document.getElementById('fuel'),
   bAuto: document.getElementById('bAuto'), bBox: document.getElementById('bBox'),
   bTrk: document.getElementById('bTrk'), bLbl: document.getElementById('bLbl'),
   bPause: document.getElementById('bPause'),
@@ -1267,7 +1472,9 @@ function setToggle(k){ show[k] = !show[k]; syncBtns(); }
 function setSpeed(s){ speed = s; paused = false; syncBtns(); }
 function togglePause(){ paused = !paused; syncBtns(); }
 els.bView.onclick = toggleMode;
-els.bJump.addEventListener('pointerdown', function(){ jumpQueued = true; });
+els.bCar.onclick = tryEnterExit;
+els.bJump.addEventListener('pointerdown', function(){ jumpQueued = true; stick.jets = true; });
+window.addEventListener('pointerup', function(){ stick.jets = false; });
 els.bAuto.onclick = function(){ autoCam = !autoCam; tween = null; pTimer = 0; syncBtns(); };
 els.bBox.onclick = function(){ setToggle('box'); };
 els.bTrk.onclick = function(){ setToggle('trk'); };
@@ -1499,6 +1706,15 @@ function frame(now){
   els.clocksub.textContent = paused ? 'PAUSED · ' + dayName(simH)
     : 'DAY CYCLE ' + speed + '× · ' + dayName(simH);
   els.elapsed.textContent = fmtElapsed((now - t0) / 1000);
+  els.fuel.textContent = Math.round(player.fuel);
+  var hint = '';
+  if (mode === 'player'){
+    if (player.veh) hint = 'E — EXIT · W/S DRIVE · A/D STEER · ' + Math.round(Math.abs(player.veh.spd) * 3.6) + ' KM/H';
+    else if (player.grounded && nearestVehicle()) hint = 'E — ENTER CAR';
+    else if (!player.grounded && player.thrusting) hint = 'JETPACK · FUEL ' + Math.round(player.fuel) + '%';
+  }
+  els.hint.textContent = hint;
+  els.hint.style.display = hint ? 'block' : 'none';
 
   renderer.render(scene, camera);
   drawOverlay();
