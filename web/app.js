@@ -5,10 +5,11 @@
 
 // ---------- renderer / scene ----------
 var glCanvas = document.getElementById('gl');
-var renderer = new THREE.WebGLRenderer({canvas: glCanvas, antialias: true});
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+var IS_COARSE = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+var renderer = new THREE.WebGLRenderer({canvas: glCanvas, antialias: !IS_COARSE});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, IS_COARSE ? 1.5 : 2));
 renderer.outputEncoding = THREE.sRGBEncoding;
-renderer.shadowMap.enabled = true;
+renderer.shadowMap.enabled = !IS_COARSE;   // phones skip the shadow pass
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 var scene = new THREE.Scene();
@@ -1396,9 +1397,12 @@ window.addEventListener('keydown', function(e){
     if (e.key === 'Enter') sendChat();
     return;
   }
+  if (e.key === 'Escape' && !els.tut.hidden){ tutClose(); return; }
+  if (e.key === '?'){ if (els.tut.hidden) tutOpen(); else tutClose(); return; }
   if (e.key === 'Enter'){ e.preventDefault(); chatIn.focus(); return; }
   var k = e.key.toLowerCase();
   keysDown[k] = true;
+  if (k === 'h'){ if (els.tut.hidden) tutOpen(); else tutClose(); }
   if (k === ' ' || k.indexOf('arrow') === 0) e.preventDefault();
   if (k === 'p') togglePause();
   if (k === 'v') toggleMode();
@@ -1446,7 +1450,8 @@ var els = {
   camlabel: document.getElementById('camlabel'),
   bView: document.getElementById('bView'), bJump: document.getElementById('bJump'),
   bCar: document.getElementById('bCar'), hint: document.getElementById('hint'),
-  fuel: document.getElementById('fuel'),
+  fuel: document.getElementById('fuel'), bHelp: document.getElementById('bHelp'),
+  tut: document.getElementById('tut'),
   bAuto: document.getElementById('bAuto'), bBox: document.getElementById('bBox'),
   bTrk: document.getElementById('bTrk'), bLbl: document.getElementById('bLbl'),
   bPause: document.getElementById('bPause'),
@@ -1484,6 +1489,22 @@ els.s1.onclick = function(){ setSpeed(1); };
 els.s60.onclick = function(){ setSpeed(60); };
 els.s300.onclick = function(){ setSpeed(300); };
 syncBtns();
+
+// ---------- tutorial / about ----------
+function tutOpen(){ els.tut.hidden = false; }
+function tutClose(){
+  els.tut.hidden = true;
+  try { localStorage.setItem('lt_tut_seen', '1'); } catch (e){}
+}
+els.bHelp.onclick = tutOpen;
+document.getElementById('tutClose').onclick = tutClose;
+document.getElementById('tutPlay').onclick = tutClose;
+els.tut.addEventListener('pointerdown', function(e){ if (e.target === els.tut) tutClose(); });
+(function(){
+  var seen = false;
+  try { seen = localStorage.getItem('lt_tut_seen') === '1'; } catch (e){}
+  if (!seen) tutOpen();
+})();
 
 function dayName(h){
   if (h < 5.5 || h >= 21.5) return 'NIGHT';
@@ -1541,6 +1562,14 @@ function drawOverlay(){
   ov.clearRect(0, 0, vw, vh);
   camera.getWorldPosition(camPos);
   var k;
+  if (stick.active){   // touch joystick
+    ov.strokeStyle = 'rgba(110,247,223,0.5)'; ov.lineWidth = 2;
+    ov.beginPath(); ov.arc(stick.ox, stick.oy, 40, 0, Math.PI * 2); ov.stroke();
+    ov.fillStyle = 'rgba(110,247,223,0.45)';
+    ov.beginPath();
+    ov.arc(stick.ox + stick.x * 34, stick.oy + stick.y * 34, 16, 0, Math.PI * 2);
+    ov.fill();
+  }
   if (show.trk){
     ov.globalAlpha = 0.55;
     for (k = 0; k < cars.length; k++){
