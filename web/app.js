@@ -14,7 +14,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 var scene = new THREE.Scene();
 var camera = new THREE.PerspectiveCamera(55, 1, 1, 5000);
 
-var hemi = new THREE.HemisphereLight(0x8fb0d4, 0x2a2a30, 0.6);
+var hemi = new THREE.HemisphereLight(0x8fb0d4, 0x4a4a40, 0.6);
 scene.add(hemi);
 var sun = new THREE.DirectionalLight(0xffffff, 1.0);
 sun.castShadow = true;
@@ -56,10 +56,14 @@ function makeTex(w, h, draw){
   return t;
 }
 function asphaltBase(g, w, h){
-  g.fillStyle = '#1d2026'; g.fillRect(0, 0, w, h);
-  for (var i = 0; i < w * h / 60; i++){
-    g.fillStyle = 'rgba(255,255,255,' + (0.015 + Math.random() * 0.03) + ')';
+  g.fillStyle = '#34373d'; g.fillRect(0, 0, w, h);
+  for (var i = 0; i < w * h / 50; i++){
+    g.fillStyle = 'rgba(255,255,255,' + (0.02 + Math.random() * 0.045) + ')';
     g.fillRect(Math.random() * w, Math.random() * h, 1.5, 1.5);
+  }
+  for (i = 0; i < w * h / 500; i++){
+    g.fillStyle = 'rgba(0,0,0,0.18)';
+    g.fillRect(Math.random() * w, Math.random() * h, 3, 2);
   }
 }
 // EW road: dashes run along u (horizontal)
@@ -85,15 +89,20 @@ var xwalkTex = makeTex(256, 256, function(g, w, h){
   for (i = 28; i < h - 28; i += 22){ g.fillRect(6, i, 26, 12); g.fillRect(w - 32, i, 26, 12); }
 });
 
-// facade variants: {map, em} pairs
-function facadeVariant(base, winCol, litCols, density){
+// facade variants: {map, em} pairs — palette matched to Google 3D reference
+// captures of downtown (buff + red brick w/ white trim, painted masonry,
+// limestone civic, a few dark glass towers).
+function facadeVariant(base, winCol, litCols, density, sill){
   var map = makeTex(128, 128, function(g){
     g.fillStyle = base; g.fillRect(0, 0, 128, 128);
-    g.fillStyle = 'rgba(0,0,0,0.12)';
+    g.fillStyle = 'rgba(0,0,0,0.1)';
     for (var r0 = 0; r0 < 5; r0++) g.fillRect(0, r0 * 25.6, 128, 2);
-    g.fillStyle = winCol;
-    for (var r = 0; r < 5; r++) for (var c = 0; c < 4; c++)
-      g.fillRect(c * 32 + 7, r * 25.6 + 6, 18, 13);
+    for (var r = 0; r < 5; r++) for (var c = 0; c < 4; c++){
+      var x = c * 32 + 7, y = r * 25.6 + 6;
+      g.fillStyle = winCol; g.fillRect(x, y, 18, 13);
+      g.fillStyle = 'rgba(255,255,255,0.25)'; g.fillRect(x, y, 18, 1.5);  // glass glint
+      if (sill){ g.fillStyle = sill; g.fillRect(x - 1.5, y + 13, 21, 2.5); }
+    }
   });
   var em = makeTex(128, 128, function(g){
     g.fillStyle = '#000'; g.fillRect(0, 0, 128, 128);
@@ -108,18 +117,54 @@ function facadeVariant(base, winCol, litCols, density){
   return {map: map, em: em};
 }
 var WARM = ['#ffd9a4', '#ffe9c8', '#f7c87e', '#cfe6ff'];
+var SILL = '#ddd6c8';
 var VARIANTS = [
-  facadeVariant('#6e4636', '#171c26', WARM, 0.42),  // brick
-  facadeVariant('#54382e', '#141922', WARM, 0.38),  // dark brick
-  facadeVariant('#a8927a', '#1a2028', WARM, 0.45),  // tan masonry
-  facadeVariant('#7f858e', '#161b24', WARM, 0.5),   // gray office
-  facadeVariant('#4c545e', '#131824', WARM, 0.55),  // slate
-  facadeVariant('#2b3a4c', '#0f1520', WARM, 0.6),   // glass
-  facadeVariant('#9a938a', '#1a1f26', WARM, 0.3),   // limestone civic
-  facadeVariant('#2c4d70', '#0d1826', ['#cfe6ff', '#ffe9c8', '#bfeaff'], 0.72), // blue glass
-  facadeVariant('#463a30', '#12161e', WARM, 0.5)    // bronze glass
+  facadeVariant('#9c5240', '#2a2e38', WARM, 0.42, SILL),  // 0 red brick, white sills
+  facadeVariant('#b49a76', '#2b2f3a', WARM, 0.38, SILL),  // 1 buff brick
+  facadeVariant('#d8d3c6', '#333844', WARM, 0.45, null),  // 2 white-painted masonry
+  facadeVariant('#c2b193', '#2b2f3a', WARM, 0.45, SILL),  // 3 tan masonry
+  facadeVariant('#9aa0a8', '#252b36', WARM, 0.5,  null),  // 4 gray office
+  facadeVariant('#3a545c', '#16222a', WARM, 0.6,  null),  // 5 teal-dark glass
+  facadeVariant('#c9c2b4', '#2a2f38', WARM, 0.3,  SILL),  // 6 limestone civic
+  facadeVariant('#26476b', '#0d1826', ['#cfe6ff', '#ffe9c8', '#bfeaff'], 0.72, null), // 7 Big Blue glass
+  facadeVariant('#5a4a3a', '#141118', WARM, 0.5,  null),  // 8 bronze glass
+  facadeVariant('#1f4247', '#0e1c1f', WARM, 0.62, null)   // 9 City Center teal glass
 ];
-var roofMat = new THREE.MeshStandardMaterial({color: 0x23262e, roughness: 1});
+// roofs: downtown reads as mostly white membrane + a few dark/green ones
+var roofWhite = new THREE.MeshStandardMaterial({color: 0xd3d3cb, roughness: 1});
+var roofDark = new THREE.MeshStandardMaterial({color: 0x3a3d42, roughness: 1});
+var roofGreen = new THREE.MeshStandardMaterial({color: 0x3f7d72, roughness: 0.7, metalness: 0.15});
+var roofMat = roofDark;
+function pickRoof(h){
+  if (h > 50) return Math.random() < 0.6 ? roofDark : roofWhite;
+  var r = Math.random();
+  return r < 0.68 ? roofWhite : r < 0.9 ? roofDark : roofGreen;
+}
+// storefront band textures (ground floor: awning strip + glass + mullions)
+var AWNING_COLS = ['#7a3a34', '#3a5a44', '#2f4a66', '#6b5a2f', '#4a3a56'];
+function storefrontVariant(awn){
+  var map = makeTex(128, 64, function(g){
+    g.fillStyle = '#d0cabc'; g.fillRect(0, 0, 128, 64);          // sign band
+    g.fillStyle = awn; g.fillRect(0, 14, 128, 10);               // awning strip
+    g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(0, 22, 128, 2);
+    g.fillStyle = '#1e242c'; g.fillRect(0, 26, 128, 38);         // glass
+    g.fillStyle = '#4a4438';
+    for (var x = 0; x < 128; x += 26) g.fillRect(x, 26, 3, 38);  // mullions
+    g.fillStyle = 'rgba(255,255,255,0.12)'; g.fillRect(0, 28, 128, 4);
+  });
+  var em = makeTex(128, 64, function(g){
+    g.fillStyle = '#000'; g.fillRect(0, 0, 128, 64);
+    for (var x = 0; x < 128; x += 26){
+      if (Math.random() < 0.75){
+        g.fillStyle = ['#ffd9a4', '#ffe9c8', '#ffc87e'][(Math.random() * 3) | 0];
+        g.fillRect(x + 3, 26, 23, 38);
+      }
+    }
+  });
+  map.encoding = THREE.sRGBEncoding;
+  return {map: map, em: em};
+}
+var STOREFRONTS = AWNING_COLS.map(storefrontVariant);
 
 // materials whose emissiveIntensity tracks night factor: {m, k}
 var nightMats = [];
@@ -129,7 +174,8 @@ var labels = [];   // {name, x, y, z}
 var colliders = [];   // {x0,x1,z0,z1} or {ell,cx,cz,rx,rz}
 var slabRects = [];   // walkable raised block slabs
 
-function towerMats(vi, w, h){
+var GLASSY = {5: 1, 7: 1, 8: 1, 9: 1};
+function towerMats(vi, w, h, roof){
   var v = VARIANTS[vi];
   var map = v.map.clone(); map.needsUpdate = true;
   var em = v.em.clone(); em.needsUpdate = true;
@@ -137,24 +183,55 @@ function towerMats(vi, w, h){
   map.repeat.set(rx, ry); em.repeat.set(rx, ry);
   var side = new THREE.MeshStandardMaterial({
     map: map, emissiveMap: em, emissive: 0xffffff, emissiveIntensity: 0,
-    roughness: vi >= 5 && vi !== 6 ? 0.55 : 0.88, metalness: vi >= 5 && vi !== 6 ? 0.25 : 0
+    roughness: GLASSY[vi] ? 0.5 : 0.9, metalness: GLASSY[vi] ? 0.3 : 0
   });
   regNight(side, 0.75 + Math.random() * 0.55);
-  return [side, side, roofMat, roofMat, side, side];
+  var rm = roof || pickRoof(h);
+  return [side, side, rm, rm, side, side];
 }
+var MASONRY = {0: 1, 1: 1, 2: 1, 3: 1, 6: 1};
+var corniceMat = new THREE.MeshStandardMaterial({color: 0xddd6c8, roughness: 0.9});
+var acPts = [];   // rooftop AC units, instanced later
 function addTower(x, z, w, d, h, vi, name){
   var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), towerMats(vi, Math.max(w, d), h));
   m.position.set(x, h / 2 + 0.35, z);
   m.castShadow = true; m.receiveShadow = true;
   scene.add(m);
   colliders.push({x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2});
+  // white cornice / parapet cap on masonry buildings (reference: everywhere downtown)
+  if (MASONRY[vi] && h < 45){
+    var cor = new THREE.Mesh(new THREE.BoxGeometry(w + 0.8, 0.6, d + 0.8), corniceMat);
+    cor.position.set(x, h + 0.55, z); cor.castShadow = true; scene.add(cor);
+  }
+  // rooftop AC clutter on everything mid-rise and lower
+  if (h < 70 && w > 10){
+    var nAc = 1 + (Math.random() * 3) | 0;
+    for (var a = 0; a < nAc; a++)
+      acPts.push([x + (Math.random() - 0.5) * w * 0.55,
+                  h + 0.9, z + (Math.random() - 0.5) * d * 0.55]);
+  }
   if (name) labels.push({name: name, x: x, y: h + 7, z: z});
   return m;
+}
+// ground-floor storefront band (drawn as a thin wrap box at street level)
+function addStorefront(x, z, w, d){
+  var v = STOREFRONTS[(Math.random() * STOREFRONTS.length) | 0];
+  var map = v.map.clone(); map.needsUpdate = true;
+  var em = v.em.clone(); em.needsUpdate = true;
+  map.repeat.set(Math.max(1, Math.round(w / 9)), 1);
+  em.repeat.set(map.repeat.x, 1);
+  var mat = new THREE.MeshStandardMaterial({map: map, emissiveMap: em,
+    emissive: 0xffffff, emissiveIntensity: 0, roughness: 0.7});
+  regNight(mat, 1.4 + Math.random() * 0.5);
+  var m = new THREE.Mesh(new THREE.BoxGeometry(w + 0.5, 4.4, d + 0.5),
+    [mat, mat, roofDark, roofDark, mat, mat]);
+  m.position.set(x, 2.2 + 0.35, z);
+  scene.add(m);
 }
 
 // ---------- ground / streets ----------
 var ground = new THREE.Mesh(new THREE.PlaneGeometry(2800, 2800),
-  new THREE.MeshStandardMaterial({color: 0x15161a, roughness: 1}));
+  new THREE.MeshStandardMaterial({color: 0x2c3226, roughness: 1}));
 ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true;
 scene.add(ground);
 
@@ -187,8 +264,29 @@ NS.forEach(function(s){
 })();
 
 // ---------- block slabs + procedural buildings ----------
-var slabMat = new THREE.MeshStandardMaterial({color: 0x565b64, roughness: 1});
-var parkMat = new THREE.MeshStandardMaterial({color: 0x2e5238, roughness: 1});
+var slabMat = new THREE.MeshStandardMaterial({color: 0xa7a49c, roughness: 1});
+var parkMat = new THREE.MeshStandardMaterial({color: 0x53703f, roughness: 1});
+// red brick pavers — courthouse square + circuit court plaza in the reference
+var paverTex = makeTex(128, 128, function(g){
+  g.fillStyle = '#9c5a48'; g.fillRect(0, 0, 128, 128);
+  g.fillStyle = 'rgba(0,0,0,0.18)';
+  for (var y = 0; y < 128; y += 16) g.fillRect(0, y, 128, 1.5);
+  for (var x = 0; x < 128; x += 16) g.fillRect(x, 0, 1.5, 128);
+  for (var i = 0; i < 260; i++){
+    g.fillStyle = 'rgba(255,235,220,' + (Math.random() * 0.06) + ')';
+    g.fillRect(Math.random() * 128, Math.random() * 128, 4, 3);
+  }
+});
+paverTex.encoding = THREE.sRGBEncoding;
+var paverMat = new THREE.MeshStandardMaterial({map: paverTex, roughness: 1});
+paverMat.map.repeat.set(8, 8);
+// surface parking lot (striped) — half of real downtown is parking lots
+var lotTex = makeTex(256, 256, function(g){
+  asphaltBase(g, 256, 256);
+  g.fillStyle = 'rgba(235,235,225,0.55)';
+  for (var y = 40; y < 256; y += 88)
+    for (var x = 10; x < 256; x += 28) g.fillRect(x, y, 2.5, 40);
+});
 var treePts = [];
 function slab(x0, z0, x1, z1, mat){
   var m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.7, z1 - z0), mat || slabMat);
@@ -207,6 +305,22 @@ function addSign(x, y, z, rotY){
   m.position.set(x, y, z); m.rotation.y = rotY;
   scene.add(m);
 }
+var parkedPts = [];   // static parked cars, built after CAR_COLS exists
+function addParkingLot(px0, pz0, px1, pz1){
+  var w = px1 - px0, d = pz1 - pz0;
+  var t = lotTex.clone(); t.needsUpdate = true;
+  t.repeat.set(Math.max(1, w / 34), Math.max(1, d / 34));
+  var m = new THREE.Mesh(new THREE.PlaneGeometry(w, d),
+    new THREE.MeshStandardMaterial({map: t, roughness: 1}));
+  m.rotation.x = -Math.PI / 2;
+  m.position.set((px0 + px1) / 2, 0.74, (pz0 + pz1) / 2);
+  m.receiveShadow = true; scene.add(m);
+  var n = 2 + (Math.random() * Math.min(6, w * d / 220)) | 0;
+  for (var k = 0; k < n; k++)
+    parkedPts.push([px0 + 4 + Math.random() * (w - 8), pz0 + 4 + Math.random() * (d - 8),
+                    Math.random() < 0.5 ? 0 : Math.PI / 2]);
+  treePts.push([px0 + 2, pz0 + 2]);
+}
 function procBlock(x0, z0, x1, z1){
   slab(x0, z0, x1, z1);
   var cols = Math.random() < 0.5 ? 2 : 1, rows = Math.random() < 0.6 ? 2 : 1;
@@ -216,29 +330,33 @@ function procBlock(x0, z0, x1, z1){
     var px0 = x0 + ci * cw + 3, pz0 = z0 + ri * rh + 3;
     var px1 = x0 + (ci + 1) * cw - 3, pz1 = z0 + (ri + 1) * rh - 3;
     var r = Math.random();
-    if (r < 0.08){ // pocket lot with trees
+    if (r < 0.06){ // pocket park
       for (var k = 0; k < 4; k++)
         treePts.push([px0 + Math.random() * (px1 - px0), pz0 + Math.random() * (pz1 - pz0)]);
       continue;
     }
+    if (r < 0.24){ // surface parking lot — a defining downtown Lexington feature
+      addParkingLot(px0, pz0, px1, pz1);
+      continue;
+    }
     var w = (px1 - px0) * (0.75 + Math.random() * 0.25);
     var d = (pz1 - pz0) * (0.75 + Math.random() * 0.25);
-    var h = r < 0.6 ? 8 + Math.random() * 12 : r < 0.9 ? 18 + Math.random() * 18 : 40 + Math.random() * 26;
+    var h = r < 0.62 ? 8 + Math.random() * 12 : r < 0.9 ? 18 + Math.random() * 18 : 40 + Math.random() * 26;
     var vi = h > 38 ? (Math.random() < 0.5 ? 5 : 4) : (Math.random() * 4) | 0;
     var bx = (px0 + px1) / 2, bz = (pz0 + pz1) / 2;
     addTower(bx, bz, w, d, h, vi);
-    // ground-floor neon on Main / Short / Vine frontage
-    var edges = [{s: 0, near: Math.abs(pz0 - (z0)) < 4 && [0, -100, 100].indexOf(z0 - 12) >= -1}];
-    if (Math.random() < 0.55 && Math.abs(bz) < 160){
+    var retail = Math.abs(bz) < 160 && MASONRY[vi] && h < 28;
+    if (retail) addStorefront(bx, bz, w, d);
+    if (Math.random() < 0.5 && retail){
       var south = bz > 0;
-      addSign(bx - w / 4 + Math.random() * (w / 2), 4.2,
-        south ? bz - d / 2 - 0.3 : bz + d / 2 + 0.3, 0);
+      addSign(bx - w / 4 + Math.random() * (w / 2), 5.2,
+        south ? bz - d / 2 - 0.55 : bz + d / 2 + 0.55, 0);
     }
   }
 }
 
 // blocks between streets; skip landmark blocks
-var SKIP = {'0-3':1, '0-4':1, '1-3':1, '1-4':1, '1-2':1, '2-2':1, '3-2':1, '3-3':1};
+var SKIP = {'0-2':1, '0-3':1, '0-4':1, '1-0':1, '1-2':1, '1-3':1, '1-4':1, '2-2':1, '3-2':1, '3-3':1};
 for (var i = 0; i < NS.length - 1; i++){
   for (var j = 0; j < EW.length - 1; j++){
     var bx0 = NS[i].x + SW / 2 + 3, bx1 = NS[i + 1].x - SW / 2 - 3;
@@ -249,6 +367,31 @@ for (var i = 0; i < NS.length - 1; i++){
 }
 
 // ---------- landmarks ----------
+// Block (0,2): Victorian Square — red brick + white trim, Main & Broadway
+slab(-192, -92, -108, -8);
+addTower(-170, -32, 38, 40, 13, 0, 'VICTORIAN SQUARE');
+addTower(-131, -45, 32, 22, 13, 0);
+addStorefront(-170, -32, 38, 40);
+addTower(-150, -74, 42, 22, 10, 2);
+
+// Block (1,0): First Presbyterian-style church (green copper roof + steeple)
+slab(-92, -292, -8, -208);
+(function(){
+  var nave = addTower(-46, -252, 20, 34, 9, 0);
+  var gable = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 33, 3, 1), roofGreen);
+  gable.rotation.x = Math.PI / 2; gable.rotation.z = Math.PI;
+  gable.scale.set(1, 1, 0.55);
+  gable.position.set(-46, 9.35, -252); gable.castShadow = true; scene.add(gable);
+  var tower = addTower(-46, -273, 6.5, 6.5, 16, 0);
+  var spire = new THREE.Mesh(new THREE.ConeGeometry(4.4, 12, 4), roofDark);
+  spire.rotation.y = Math.PI / 4;
+  spire.position.set(-46, 22.5, -273); spire.castShadow = true; scene.add(spire);
+  labels.push({name: 'FIRST PRESBYTERIAN', x: -46, y: 32, z: -262});
+})();
+addTower(-72, -230, 22, 28, 14, 1);
+addTower(-20, -235, 20, 24, 11, 2);
+for (var ch = 0; ch < 5; ch++) treePts.push([-88 + Math.random() * 76, -290 + Math.random() * 20]);
+
 // Block (0,3): Triangle Park (west) + Big Blue (east)
 slab(-192, 8, -150, 92, parkMat);
 (function(){ // fountain
@@ -263,10 +406,15 @@ slab(-192, 8, -150, 92, parkMat);
 for (var tp = 0; tp < 12; tp++) treePts.push([-188 + Math.random() * 36, 12 + Math.random() * 76]);
 slab(-146, 8, -108, 92);
 addTower(-127, 50, 34, 30, 128, 7, 'LEXINGTON FINANCIAL CENTER · BIG BLUE');
-(function(){ // rooftop + spire on Big Blue
-  var top = new THREE.Mesh(new THREE.BoxGeometry(22, 5, 20),
-    new THREE.MeshStandardMaterial({color: 0x1c2a3d, roughness: 0.6}));
-  top.position.set(-127, 131, 50); top.castShadow = true; scene.add(top);
+(function(){ // Big Blue crown: slanted glass top + lit band + spire + beacon
+  var band = new THREE.Mesh(new THREE.BoxGeometry(34.6, 1.4, 30.6),
+    regNight(new THREE.MeshStandardMaterial({color: 0x1a2634,
+      emissive: 0xcfe8ff, emissiveIntensity: 0}), 2.2));
+  band.position.set(-127, 124.5, 50); scene.add(band);
+  var crown = new THREE.Mesh(new THREE.BoxGeometry(28, 7, 24),
+    new THREE.MeshStandardMaterial({color: 0x1c2a3d, roughness: 0.4, metalness: 0.4}));
+  crown.rotation.z = 0.24;
+  crown.position.set(-127, 130.5, 50); crown.castShadow = true; scene.add(crown);
   var sp = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 20, 6),
     new THREE.MeshStandardMaterial({color: 0x99a4b0}));
   sp.position.set(-127, 143, 50); scene.add(sp);
@@ -280,11 +428,12 @@ slab(-192, 108, -108, 192);
 addTower(-160, 140, 40, 34, 95, 8, 'KINCAID TOWER');
 addTower(-124, 170, 28, 24, 34, 4);
 
-// Block (1,3): City Center — podium + two towers
+// Block (1,3): City Center — podium + teal glass pair + white hotel slab
 slab(-92, 8, -8, 92);
-addTower(-50, 50, 78, 78, 12, 5);
-addTower(-68, 50, 30, 28, 52, 5, 'CITY CENTER');
-addTower(-29, 50, 26, 24, 44, 4);
+addTower(-50, 42, 78, 60, 12, 9);
+addTower(-70, 40, 28, 26, 52, 9, 'CITY CENTER');
+addTower(-32, 36, 24, 22, 44, 9);
+addTower(-50, 76, 30, 14, 36, 2);
 
 // Block (1,4): Central Bank tower
 slab(-92, 108, -8, 192);
@@ -297,8 +446,8 @@ addTower(-20, -26, 18, 22, 58, 2, '21C MUSEUM HOTEL');
 addTower(-58, -30, 34, 24, 18, 0);
 addTower(-55, -70, 40, 20, 24, 1);
 
-// Block (2,2): Old Courthouse square (Cheapside)
-slab(8, -92, 92, -8);
+// Block (2,2): Old Courthouse square (Cheapside) — red paver plaza
+slab(8, -92, 92, -8, paverMat);
 (function(){
   var stone = towerMats(6, 36, 16);
   var base = new THREE.Mesh(new THREE.BoxGeometry(36, 15, 26), stone);
@@ -307,7 +456,7 @@ slab(8, -92, 92, -8);
   var drum = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, 6, 20), civ);
   drum.position.set(50, 18.3, -45); drum.castShadow = true; scene.add(drum);
   var dome = new THREE.Mesh(new THREE.SphereGeometry(7, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2),
-    new THREE.MeshStandardMaterial({color: 0x5a6e5e, roughness: 0.5, metalness: 0.4}));
+    new THREE.MeshStandardMaterial({color: 0x3a3d42, roughness: 0.55, metalness: 0.25}));
   dome.position.set(50, 21.3, -45); dome.castShadow = true; scene.add(dome);
   var cup = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 4, 10), civ);
   cup.position.set(50, 29.5, -45); scene.add(cup);
@@ -324,8 +473,8 @@ slab(8, -92, 92, -8);
 })();
 for (var cq = 0; cq < 7; cq++) treePts.push([14 + Math.random() * 70, -30 + Math.random() * 18]);
 
-// Block (3,2): Circuit Court twin towers
-slab(108, -92, 192, -8);
+// Block (3,2): Circuit Court twin towers — red paver plaza
+slab(108, -92, 192, -8, paverMat);
 addTower(130, -50, 26, 30, 40, 6, 'FAYETTE CIRCUIT COURT');
 addTower(170, -50, 26, 30, 40, 6);
 (function(){
@@ -345,11 +494,11 @@ addTower(172, 45, 32, 26, 34, 4, 'CENTRAL LIBRARY');
 (function(){
   slab(-500, 12, -216, 190);
   var oval = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 22, 48),
-    new THREE.MeshStandardMaterial({color: 0xcfd3d8, roughness: 0.55}));
+    new THREE.MeshStandardMaterial({color: 0xe8e8e2, roughness: 0.6}));
   oval.scale.set(85, 1, 68); oval.position.set(-370, 11.7, 100);
   oval.castShadow = true; oval.receiveShadow = true; scene.add(oval);
   var podium = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 7, 48),
-    new THREE.MeshStandardMaterial({color: 0x3a3f47, roughness: 0.9}));
+    new THREE.MeshStandardMaterial({color: 0x8a8478, roughness: 0.9}));
   podium.scale.set(92, 1, 75); podium.position.set(-370, 4.2, 100); scene.add(podium);
   labels.push({name: 'RUPP ARENA', x: -370, y: 34, z: 100});
   var conv = addTower(-248, 100, 42, 150, 14, 5, 'CENTRAL BANK CENTER');
@@ -359,6 +508,16 @@ addTower(172, 45, 32, 26, 34, 4, 'CENTRAL LIBRARY');
 colliders.push({x0: 32, x1: 68, z0: -58, z1: -32});                 // old courthouse
 colliders.push({x0: -176.5, x1: -165.5, z0: 34.5, z1: 45.5});       // fountain
 colliders.push({ell: 1, cx: -370, cz: 100, rx: 94, rz: 77});        // Rupp oval
+
+// street tree rows along Main + Vine (reference: continuous canopy downtown)
+[0, 100].forEach(function(sz){
+  for (var tx = -190; tx < 290; tx += 38){
+    var nearX = NS.some(function(n){ return Math.abs(tx - n.x) < 15; });
+    if (nearX) continue;
+    if (Math.random() < 0.75) treePts.push([tx + Math.random() * 6, sz - 13.5]);
+    if (Math.random() < 0.75) treePts.push([tx + Math.random() * 6, sz + 13.5]);
+  }
+});
 
 // distant skyline filler ring
 (function(){
@@ -372,6 +531,22 @@ colliders.push({ell: 1, cx: -370, cz: 100, rx: 94, rz: 77});        // Rupp oval
       towerMats((Math.random() * 5) | 0, 30, h));
     m.position.set(x, h / 2, z); scene.add(m);
   }
+})();
+
+// rooftop AC units (instanced)
+(function(){
+  if (!acPts.length) return;
+  var im = new THREE.InstancedMesh(new THREE.BoxGeometry(1.7, 1.1, 1.3),
+    new THREE.MeshStandardMaterial({color: 0xc4c4bc, roughness: 0.9}), acPts.length);
+  var M = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
+  var e = new THREE.Euler();
+  for (var k = 0; k < acPts.length; k++){
+    q.setFromEuler(e.set(0, Math.random() * Math.PI, 0));
+    M.compose(new THREE.Vector3(acPts[k][0], acPts[k][1], acPts[k][2]), q, one);
+    im.setMatrixAt(k, M);
+  }
+  im.castShadow = true;
+  scene.add(im);
 })();
 
 // trees (instanced)
@@ -451,6 +626,16 @@ var tailMat = new THREE.MeshStandardMaterial({color: 0x1a0f0f, emissive: 0xff332
 var bodyG = new THREE.BoxGeometry(4.6, 1.1, 2.0);
 var cabG = new THREE.BoxGeometry(2.4, 0.85, 1.8);
 var lightG = new THREE.BoxGeometry(0.18, 0.28, 1.7);
+
+// static parked cars in the surface lots
+parkedPts.forEach(function(p){
+  var g = new THREE.Group();
+  var body = new THREE.Mesh(bodyG, CAR_COLS[(Math.random() * CAR_COLS.length) | 0]);
+  body.position.y = 0.75; body.castShadow = true; g.add(body);
+  var cab = new THREE.Mesh(cabG, cabMat); cab.position.set(-0.25, 1.55, 0); g.add(cab);
+  g.position.set(p[0], 0.72, p[1]); g.rotation.y = p[2];
+  scene.add(g);
+});
 
 var lanes = [];   // {axis, along-street coord fixed, dir, cars: []}
 EW.forEach(function(s){
@@ -742,8 +927,45 @@ function handleNet(m){
     r.buf.push({t: performance.now(), x: m.x, y: m.y, z: m.z, ry: m.ry || 0});
     if (r.buf.length > 12) r.buf.shift();
     r.lastSeen = performance.now();
+  } else if (m.t === 'chat'){
+    var who = m.id === myId ? myName : (remotes[m.id] ? remotes[m.id].name : (m.n || m.id));
+    addChatLine(who, m.msg, m.id === myId);
+    var bubble = {msg: m.msg, until: performance.now() + 6000};
+    if (m.id === myId) myBubble = bubble;
+    else if (remotes[m.id]) remotes[m.id].bubble = bubble;
+  } else if (m.t === 'correct'){
+    // server rejected our movement — snap back to the last accepted position
+    player.x = m.x; player.y = m.y; player.z = m.z; player.vy = 0;
   } else if (m.t === 'leave') removeRemote(m.id);
 }
+
+// ---------- chat ----------
+var myBubble = null;
+var chatLog = document.getElementById('chatlog');
+var chatIn = document.getElementById('chatin');
+function addChatLine(who, msg, self){
+  var div = document.createElement('div');
+  var w = document.createElement('span'); w.className = 'who';
+  w.textContent = who + ': ';
+  if (self) w.style.color = '#8ef7ff';
+  div.appendChild(w);
+  div.appendChild(document.createTextNode(msg));
+  chatLog.appendChild(div);
+  while (chatLog.children.length > 8) chatLog.removeChild(chatLog.firstChild);
+}
+function sendChat(){
+  var msg = chatIn.value.trim().slice(0, 120);
+  chatIn.value = '';
+  chatIn.blur();
+  if (!msg) return;
+  if (online && ws && ws.readyState === 1){
+    ws.send(JSON.stringify({t: 'chat', msg: msg}));   // server echoes it back
+  } else {
+    addChatLine(myName, msg, true);
+    myBubble = {msg: msg, until: performance.now() + 6000};
+  }
+}
+chatIn.addEventListener('focus', function(){ keysDown = {}; });
 function updateRemotes(dt){
   var now = performance.now(), rt = now - 160;
   for (var id in remotes){
@@ -835,8 +1057,8 @@ var KEYS = [
   {h: 0,    sky: '#100a1e', fog: '#181028', sun: 0,    night: 1,    hemi: 0.22},
   {h: 4.6,  sky: '#100a1e', fog: '#181028', sun: 0,    night: 1,    hemi: 0.22},
   {h: 6.6,  sky: '#4a3a5e', fog: '#8a5a6e', sun: 0.45, night: 0.5,  hemi: 0.4},
-  {h: 9,    sky: '#8fb0d4', fog: '#b8c8dc', sun: 0.95, night: 0,    hemi: 0.55},
-  {h: 16.5, sky: '#8fb0d4', fog: '#b8c8dc', sun: 0.9,  night: 0,    hemi: 0.55},
+  {h: 9,    sky: '#8fb0d4', fog: '#c2d0e0', sun: 1.1,  night: 0,    hemi: 0.62},
+  {h: 16.5, sky: '#8fb0d4', fog: '#c2d0e0', sun: 1.0,  night: 0,    hemi: 0.62},
   {h: 19,   sky: '#b06a86', fog: '#d19a8a', sun: 0.5,  night: 0.25, hemi: 0.5},
   {h: 20.4, sky: '#45204e', fog: '#6e3560', sun: 0.1,  night: 0.8,  hemi: 0.3},
   {h: 21.6, sky: '#100a1e', fog: '#181028', sun: 0,    night: 1,    hemi: 0.22},
@@ -967,6 +1189,12 @@ window.addEventListener('touchend', function(){ pinch = null; });
 
 var keysDown = {};
 window.addEventListener('keydown', function(e){
+  if (e.target === chatIn){
+    if (e.key === 'Escape'){ chatIn.value = ''; chatIn.blur(); }
+    if (e.key === 'Enter') sendChat();
+    return;
+  }
+  if (e.key === 'Enter'){ e.preventDefault(); chatIn.focus(); return; }
   var k = e.key.toLowerCase();
   keysDown[k] = true;
   if (k === ' ' || k.indexOf('arrow') === 0) e.preventDefault();
@@ -1154,8 +1382,21 @@ function drawOverlay(){
       drawn++;
     }
   }
-  // player name tags (always on) + detection boxes for players
+  // player name tags + chat bubbles (always on) + detection boxes for players
   (function(){
+    var nowMs = performance.now();
+    function speech(px, py, msg){
+      ov.font = '10.5px ui-monospace, Menlo, Consolas, monospace';
+      var text = msg.length > 42 ? msg.slice(0, 40) + '…' : msg;
+      var w = ov.measureText(text).width;
+      ov.fillStyle = 'rgba(240,246,244,0.92)';
+      ov.fillRect(px - w / 2 - 5, py - 26, w + 10, 15);
+      ov.beginPath();
+      ov.moveTo(px - 4, py - 11); ov.lineTo(px + 4, py - 11); ov.lineTo(px, py - 6);
+      ov.fill();
+      ov.fillStyle = '#10201c';
+      ov.fillText(text, px - w / 2, py - 15);
+    }
     for (var id in remotes){
       var r = remotes[id];
       var pos = r.av.g.position;
@@ -1166,6 +1407,7 @@ function drawOverlay(){
       ov.font = '9.5px ui-monospace, Menlo, Consolas, monospace';
       var tw = ov.measureText(r.name).width;
       chip(p[0] - tw / 2, p[1], r.name, '#ffd28a');
+      if (r.bubble && r.bubble.until > nowMs) speech(p[0], p[1], r.bubble.msg);
       if (show.box){
         var bp = project(pos.x, pos.y + 1.2, pos.z);
         if (bp){
@@ -1174,13 +1416,14 @@ function drawOverlay(){
         }
       }
     }
-    if (mode === 'drone'){
-      var pp2 = project(player.x, player.y + 2.9, player.z);
-      if (pp2){
+    var pp2 = project(player.x, player.y + 2.9, player.z);
+    if (pp2){
+      if (mode === 'drone'){
         ov.font = '9.5px ui-monospace, Menlo, Consolas, monospace';
         var tw2 = ov.measureText(myName + ' (YOU)').width;
         chip(pp2[0] - tw2 / 2, pp2[1], myName + ' (YOU)', '#8ef7ff');
       }
+      if (myBubble && myBubble.until > nowMs) speech(pp2[0], pp2[1], myBubble.msg);
     }
   })();
   if (show.lbl){

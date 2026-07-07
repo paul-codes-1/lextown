@@ -30,20 +30,38 @@ const server = http.createServer((req, res) => {
       res.writeHead(404);
       return res.end('not found');
     }
-    res.writeHead(200, { 'content-type': MIME[path.extname(filePath)] || 'application/octet-stream' });
+    res.writeHead(200, {
+      'content-type': MIME[path.extname(filePath)] || 'application/octet-stream',
+      'cache-control': 'no-cache',
+    });
     res.end(data);
   });
 });
 
-// --- multiplayer relay ---------------------------------------------------
+// --- multiplayer relay with server-side validation -----------------------
 // Protocol (JSON, one object per message):
 //   server -> client on connect:  {t:'welcome', id, peers:[<last state of each peer>]}
 //   client -> server ~10Hz:       {t:'state', n:<name>, c:<color>, x,y,z, ry}
 //   server -> others (relayed):   {t:'state', id, n, c, x,y,z, ry}
+//   server -> cheater (rejected): {t:'correct', x,y,z}  (client must snap back)
+//   client -> server:             {t:'chat', msg}       (<=120 chars, rate limited)
+//   server -> everyone:           {t:'chat', id, n, msg}
 //   server -> others on drop:     {t:'leave', id}
+//
+// Movement validation: the server is authoritative about *plausibility*, not
+// physics. Each accepted state must be inside the world bounds and reachable
+// from the last accepted state at legal speed (run 13.5 m/s, jump ~11.5 m/s
+// vertical — enforced with tolerance for network jitter). Violations are not
+// relayed; the client gets a {t:'correct'} snapping it back.
+
+const WORLD = { x0: -545, x1: 325, z0: -425, z1: 325, y0: -1, y1: 45 };
+const MAX_H_SPEED = 18;    // m/s horizontal (run is 13.5)
+const MAX_V_SPEED = 15;    // m/s vertical (jump launch is 11.5)
+const MAX_STATE_HZ = 15;   // packets/sec before we start dropping
+const NAME_RE = /[^A-Za-z0-9 _-]/g;
 
 const wss = new WebSocketServer({ server });
-const clients = new Map(); // ws -> {id, state}
+const clients = new Map(); // ws -> client record
 let nextId = 1;
 
 function broadcast(msg, except) {
@@ -53,9 +71,31 @@ function broadcast(msg, except) {
   }
 }
 
+function num(v, lo, hi) {
+  return typeof v === 'number' && isFinite(v) && v >= lo && v <= hi;
+}
+
+function validMove(c, msg, now) {
+  if (!num(msg.x, WORLD.x0, WORLD.x1) || !num(msg.z, WORLD.z0, WORLD.z1) ||
+      !num(msg.y, WORLD.y0, WORLD.y1) || !num(msg.ry, -10, 10)) return false;
+  if (!c.pos) return true; // first packet fixes the spawn
+  const dt = Math.min(2, Math.max(0.03, (now - c.posAt) / 1000));
+  const dh = Math.hypot(msg.x - c.pos.x, msg.z - c.pos.z);
+  const dv = Math.abs(msg.y - c.pos.y);
+  return dh <= MAX_H_SPEED * dt + 0.5 && dv <= MAX_V_SPEED * dt + 0.5;
+}
+
 wss.on('connection', (ws) => {
   const id = 'P' + nextId++;
-  const client = { id, state: null };
+  const client = {
+    id,
+    state: null,          // last accepted state (relayed to new joiners)
+    pos: null, posAt: 0,  // last accepted position for speed checks
+    name: null,
+    stateTimes: [],       // sliding window for packet-rate limiting
+    chatTokens: 3, chatAt: Date.now(),
+    strikes: 0,
+  };
   clients.set(ws, client);
   const peers = [...clients.values()]
     .filter((c) => c.id !== id && c.state)
@@ -67,10 +107,47 @@ wss.on('connection', (ws) => {
     if (data.length > 512) return; // oversized packet, drop
     let msg;
     try { msg = JSON.parse(data); } catch { return; }
+    const now = Date.now();
+
     if (msg.t === 'state') {
-      msg.id = client.id;
-      client.state = msg;
-      broadcast(msg, ws);
+      // packet-rate limit
+      client.stateTimes = client.stateTimes.filter((t) => now - t < 1000);
+      if (client.stateTimes.length >= MAX_STATE_HZ) return;
+      client.stateTimes.push(now);
+
+      // pin identity server-side: sanitized name locked on first packet
+      if (client.name === null && typeof msg.n === 'string')
+        client.name = msg.n.replace(NAME_RE, '').slice(0, 14) || id;
+
+      if (!validMove(client, msg, now)) {
+        client.strikes++;
+        if (client.strikes % 5 === 1 && client.pos) // don't spam corrections
+          ws.send(JSON.stringify({ t: 'correct', x: client.pos.x, y: client.pos.y, z: client.pos.z }));
+        if (client.strikes === 20)
+          console.log(`[cheat?] ${id}/${client.name} ${client.strikes} rejected moves`);
+        return; // rejected: not relayed
+      }
+      client.pos = { x: msg.x, y: msg.y, z: msg.z };
+      client.posAt = now;
+      const clean = { t: 'state', id, n: client.name || id,
+        c: typeof msg.c === 'number' ? msg.c : 0x3a76c4,
+        x: msg.x, y: msg.y, z: msg.z, ry: msg.ry };
+      client.state = clean;
+      broadcast(clean, ws);
+      return;
+    }
+
+    if (msg.t === 'chat') {
+      // token bucket: 3 burst, ~1 msg / 1.2s refill
+      client.chatTokens = Math.min(3, client.chatTokens + (now - client.chatAt) / 1200);
+      client.chatAt = now;
+      if (client.chatTokens < 1) return;
+      client.chatTokens -= 1;
+      if (typeof msg.msg !== 'string') return;
+      const text = msg.msg.replace(/[^\x20-\x7E]/g, '').trim().slice(0, 120);
+      if (!text) return;
+      broadcast({ t: 'chat', id, n: client.name || id, msg: text }, null); // echo to sender too
+      return;
     }
   });
 

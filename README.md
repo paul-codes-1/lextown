@@ -31,6 +31,7 @@ No server? Opening `web/index.html` directly (or hosting `web/` statically) runs
 | `Shift` | Run |
 | `Space` | Jump |
 | Drag / wheel | Orbit / zoom camera |
+| `Enter` | Chat (Esc to cancel; messages appear in the log and as a bubble over your head) |
 | `V` | Toggle player / drone camera (drone mode has an auto-tour: `C`) |
 | `P` | Pause the city sim |
 | `B` / `T` / `L` | Toggle detection boxes / motion tracks / landmark labels |
@@ -46,9 +47,15 @@ Touch: left half of the screen is a virtual movement stick, right half orbits th
 
 ## How multiplayer works
 
-`server.js` is a dumb relay: it assigns each connection an id, forwards `{t:'state', x,y,z,ry}` packets (sent at 10 Hz) to everyone else, and broadcasts `{t:'leave'}` on disconnect. The client renders remote players through a small interpolation buffer (~160 ms), so movement is smooth at any reasonable latency. There is no server-side validation or persistence — it's a toy MMO skeleton meant to be easy to read and extend.
+`server.js` serves the static client and relays `{t:'state', x,y,z,ry}` packets (sent at 10 Hz) between connections, with server-side sanity enforcement:
 
-Ideas for where to take it: chat bubbles, server-authoritative movement, spatial interest management, persistence, riding the cars.
+- **Movement validation** — every accepted state must be inside the world bounds and reachable from the last accepted state at legal speed (run ≈ 13.5 m/s, jump launch ≈ 11.5 m/s, plus jitter tolerance). Rejected moves are not relayed; the offending client gets a `{t:'correct'}` that snaps it back. Names are sanitized and pinned server-side on first contact.
+- **Chat** — `{t:'chat', msg}` messages are stripped to printable ASCII, capped at 120 chars, and rate-limited per client (3-message burst, ~1/1.2 s refill) before being broadcast to everyone. The client shows them in the log and as a speech bubble over the sender's head.
+- **Packet-rate limiting** — state packets beyond 15/s per client are dropped.
+
+The client renders remote players through a small interpolation buffer (~160 ms), so movement is smooth at any reasonable latency. There is no persistence — the world resets when the server does.
+
+Ideas for where to take it: spatial interest management, persistence, private worlds, riding the cars.
 
 ## Deploying
 
