@@ -118,9 +118,12 @@ wss.on('connection', (ws) => {
       if (client.stateTimes.length >= MAX_STATE_HZ) return;
       client.stateTimes.push(now);
 
-      // pin identity server-side: sanitized name locked on first packet
-      if (client.name === null && typeof msg.n === 'string')
-        client.name = msg.n.replace(NAME_RE, '').slice(0, 14) || id;
+      // sanitized name, updatable (players can rename from the welcome modal)
+      if (typeof msg.n === 'string') {
+        const nm = msg.n.replace(NAME_RE, '').slice(0, 14);
+        if (nm) client.name = nm;
+      }
+      if (client.name === null) client.name = id;
 
       if (!validMove(client, msg, now)) {
         client.strikes++;

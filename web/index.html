@@ -78,6 +78,12 @@
   kbd{border:1px solid var(--teal-dim);border-bottom-width:2px;padding:0 5px;border-radius:2px;
       font:inherit;color:#eafffa;background:rgba(110,247,223,.08)}
   #tutClose{position:absolute;top:10px;right:10px}
+  .name-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  #nameIn{background:rgba(110,247,223,.07);border:1px solid var(--teal-dim);color:#eafffa;
+          font:13px ui-monospace,'SF Mono',Menlo,Consolas,monospace;letter-spacing:.14em;
+          padding:8px 10px;width:170px;outline:none;text-transform:uppercase}
+  #nameIn:focus{border-color:var(--teal)}
+  .name-note{color:#7fbfb2;font-size:10px}
   #tutPlay{margin-top:18px;width:100%;padding:10px;font-size:12px}
   .tut-links{margin-top:12px;text-align:center;font-size:10.5px;color:#7fbfb2}
   .tut-links a{color:#9adfd2}
@@ -145,6 +151,12 @@
     <button class="tbtn" id="tutClose">✕</button>
     <h1>LEXTOWN-01 · HOW TO PLAY</h1>
     <p class="tagline">A multiplayer mini-downtown-Lexington. Everyone on this page shares one world.</p>
+    <h2>CALL SIGN</h2>
+    <div class="name-row">
+      <input id="nameIn" maxlength="14" autocomplete="off" spellcheck="false"
+             placeholder="LEX-000" aria-label="Player name">
+      <span class="name-note">shown over your head + in chat · letters, numbers, - _</span>
+    </div>
     <h2>ON FOOT</h2>
     <div class="tut-grid">
       <b><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></b><span>walk (arrows work too) · <kbd>Shift</kbd> run</span>

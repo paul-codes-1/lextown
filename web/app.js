@@ -930,9 +930,14 @@ function collide(p, r, y){
 // ---------- identity ----------
 var PLAYER_COLS = [0x3a76c4, 0xc44b3a, 0x3f9d5a, 0xb08a2e, 0x7a4a9d, 0xd4703a];
 var hashStr = location.hash || '';
+function cleanName(s){
+  return (s || '').replace(/[^A-Za-z0-9 _-]/g, '').trim().slice(0, 14).toUpperCase();
+}
 var nameM = /name=([^&#]+)/.exec(hashStr);
-var myName = nameM ? decodeURIComponent(nameM[1]).slice(0, 14).toUpperCase()
-                   : 'LEX-' + (100 + ((Math.random() * 900) | 0));
+var savedName = '';
+try { savedName = localStorage.getItem('lt_name') || ''; } catch (e){}
+var myName = cleanName(nameM ? decodeURIComponent(nameM[1]) : savedName)
+          || 'LEX-' + (100 + ((Math.random() * 900) | 0));
 var myColor = PLAYER_COLS[(Math.random() * PLAYER_COLS.length) | 0];
 var myId = 'ME';
 
@@ -1115,6 +1120,7 @@ function handleNet(m){
       setNetChip();
     }
     r.m = m.m | 0;
+    if (m.n && m.n !== r.name) r.name = m.n;   // live rename
     r.buf.push({t: performance.now(), x: m.x, y: m.y, z: m.z, ry: m.ry || 0});
     if (r.buf.length > 12) r.buf.shift();
     r.lastSeen = performance.now();
@@ -1397,6 +1403,10 @@ window.addEventListener('keydown', function(e){
     if (e.key === 'Enter') sendChat();
     return;
   }
+  if (e.target && e.target.id === 'nameIn'){
+    if (e.key === 'Enter' || e.key === 'Escape') tutClose();
+    return;
+  }
   if (e.key === 'Escape' && !els.tut.hidden){ tutClose(); return; }
   if (e.key === '?'){ if (els.tut.hidden) tutOpen(); else tutClose(); return; }
   if (e.key === 'Enter'){ e.preventDefault(); chatIn.focus(); return; }
@@ -1491,8 +1501,19 @@ els.s300.onclick = function(){ setSpeed(300); };
 syncBtns();
 
 // ---------- tutorial / about ----------
-function tutOpen(){ els.tut.hidden = false; }
+var nameIn = document.getElementById('nameIn');
+nameIn.value = myName;
+function applyName(){
+  var n = cleanName(nameIn.value);
+  if (!n || n === myName){ nameIn.value = myName; return; }
+  myName = n;
+  nameIn.value = n;
+  try { localStorage.setItem('lt_name', n); } catch (e){}
+  syncBtns();   // camlabel shows the call sign
+}
+function tutOpen(){ els.tut.hidden = false; nameIn.value = myName; }
 function tutClose(){
+  applyName();
   els.tut.hidden = true;
   try { localStorage.setItem('lt_tut_seen', '1'); } catch (e){}
 }
