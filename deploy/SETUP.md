@@ -1,5 +1,11 @@
 # Deploying LEXTOWN-01
 
+**Production (2026-07-07): https://playlextown.com** — Lightsail nano
+`playlextown` (us-east-1a, key `~/.ssh/lextown.pem`, user `ubuntu`), domain
+registered via Route53 (auto-renew on, privacy on), zone `Z0193083291ALXGNIZKM6`.
+No static IP (account quota full) — the public IP survives reboots but changes
+on stop/start; if that happens, update the A records for `@` and `www`.
+
 Target shape: one small Ubuntu box (Lightsail nano is plenty — the server is a
 static file host + JSON relay, no database), Caddy for TLS, systemd to keep it up.
 

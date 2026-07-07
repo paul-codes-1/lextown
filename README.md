@@ -2,7 +2,9 @@
 
 An open-source, browser-based multiplayer block simulator of **downtown Lexington, Kentucky** — think Roblox-meets-OSINT-feed. Walk a blocky avatar around a stylized model of the real downtown grid, with live traffic, pedestrians, a full day/night cycle, and a tactical detection-overlay HUD.
 
-Built with [Three.js](https://threejs.org/) (vendored, no build step) and a ~100-line Node WebSocket relay. No accounts, no database, no build tooling — clone it and run it.
+**Play it live: https://playlextown.com** — everyone on the page shares one world.
+
+Built with [Three.js](https://threejs.org/) (vendored, no build step) and a small Node WebSocket relay. No accounts, no database, no build tooling — clone it and run it.
 
 ## The city
 
