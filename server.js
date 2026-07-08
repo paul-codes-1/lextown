@@ -108,14 +108,14 @@ function logEvent(e, data) {
 const stats = {
   boot: Date.now(), joins: 0, peak: 0, chats: 0, shots: 0, hits: 0,
   corrections: 0, clientErrs: 0, kicks: 0, bans: 0,
-  heliFlights: 0, heliDowns: 0, rockets: 0, pushes: 0,
+  heliFlights: 0, heliDowns: 0, rockets: 0, pushes: 0, missions: 0,
 };
 function statsLine() {
   const up = Math.round((Date.now() - stats.boot) / 60000);
   return `up ${up}m · online ${clients.size} (peak ${stats.peak}) · joins ${stats.joins}` +
     ` · chats ${stats.chats} · shots ${stats.shots} · freezes ${stats.hits}` +
     ` · heli flights ${stats.heliFlights} · heli downs ${stats.heliDowns}` +
-    ` · rockets ${stats.rockets} · pushes ${stats.pushes}` +
+    ` · rockets ${stats.rockets} · pushes ${stats.pushes} · missions ${stats.missions}` +
     ` · move-rejects ${stats.corrections} · client-errs ${stats.clientErrs}` +
     ` · kicks ${stats.kicks} · bans ${stats.bans}`;
 }
@@ -134,6 +134,17 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (err) => {
   logEvent('rejection', { msg: String(err && err.stack || err).slice(0, 500) });
 });
+
+// mission leaderboard: fastest "Ribbon Cutting" takedowns, [{n, ms, ts}]
+// persisted to scores.json (gitignored), capped at the top 50
+const SCORES_PATH = path.join(__dirname, 'scores.json');
+let scores = [];
+try { scores = JSON.parse(fs.readFileSync(SCORES_PATH, 'utf8')); } catch { scores = []; }
+function saveScores() {
+  try { fs.writeFileSync(SCORES_PATH, JSON.stringify(scores, null, 2)); }
+  catch (e) { console.log('[warn] could not persist scores:', e.message); }
+}
+function topScores() { return scores.slice(0, 10).map((s) => ({ n: s.n, ms: s.ms })); }
 
 // persistent ban list: [{ip, name}]
 const BANS_PATH = path.join(__dirname, 'bans.json');
@@ -472,6 +483,29 @@ wss.on('connection', (ws, req) => {
           Math.abs(HELI.y - target.pos.y) > 45) return;
       stats.pushes++;
       broadcast({ t: 'pushed', id: target.id, vx: msg.vx, vy: msg.vy, vz: msg.vz }, null);
+      return;
+    }
+
+    if (msg.t === 'score') {
+      // mission completion: plausible time window, 1 per 15s per client
+      if (!num(msg.ms, 3000, 600000)) return;
+      if (client.lastScoreAt && now - client.lastScoreAt < 15000) return;
+      client.lastScoreAt = now;
+      const n = client.name || id;
+      scores.push({ n, ms: Math.round(msg.ms), ts: new Date().toISOString() });
+      scores.sort((a, b) => a.ms - b.ms);
+      scores = scores.slice(0, 50);
+      saveScores();
+      stats.missions++;
+      logEvent('mission_score', { id, n, ms: Math.round(msg.ms) });
+      broadcast({ t: 'chat', id: 'SERVER', n: '* MISSION',
+        msg: `${n} downed the chopper in ${(msg.ms / 1000).toFixed(1)}s` }, null);
+      ws.send(JSON.stringify({ t: 'scores', top: topScores() }));
+      return;
+    }
+
+    if (msg.t === 'scores') {
+      ws.send(JSON.stringify({ t: 'scores', top: topScores() }));
       return;
     }
 

@@ -98,6 +98,15 @@
   #hint{position:absolute;left:50%;bottom:44px;transform:translateX(-50%);
         color:#ffd28a;font-size:10.5px;letter-spacing:.14em;background:var(--ink);
         border:1px solid rgba(255,210,138,.35);padding:5px 12px;white-space:nowrap;display:none}
+  #caption{position:absolute;left:50%;bottom:84px;transform:translateX(-50%);
+           max-width:76vw;text-align:center;font-size:13px;letter-spacing:.08em;
+           background:rgba(2,6,10,.82);border:1px solid rgba(255,210,138,.4);
+           padding:8px 16px;color:#f2fffb}
+  #caption[hidden]{display:none}
+  #caption b{color:var(--teal);font-weight:600}
+  #scoreList{margin:8px 0 0;padding-left:26px;font-size:12.5px;line-height:1.9}
+  #scoreList li::marker{color:#ffd28a}
+  #scoreYou{color:#ffd28a;font-size:12px;letter-spacing:.12em;margin:10px 0 2px}
   #botright{position:absolute;right:14px;bottom:14px;display:flex;flex-direction:column;
             align-items:flex-end;gap:6px;pointer-events:auto;max-width:80vw}
   #tray{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
@@ -116,10 +125,10 @@
         color:#7fbfb2;font-size:9.5px;letter-spacing:.14em;text-align:center;
         background:var(--ink);border:1px solid rgba(110,247,223,.14);padding:5px 10px;white-space:nowrap}
   /* ---- tutorial / about modal ---- */
-  #tut{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;
+  #tut,#scores{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;
        background:rgba(3,7,13,.72);pointer-events:auto;
        font:12px/1.6 ui-monospace,'SF Mono',Menlo,Consolas,monospace;color:var(--txt)}
-  #tut[hidden]{display:none}
+  #tut[hidden],#scores[hidden]{display:none}
   .tut-panel{background:rgba(5,13,17,.97);border:1px solid var(--teal);max-width:600px;
              width:calc(100vw - 40px);max-height:86vh;overflow-y:auto;padding:22px 24px;
              letter-spacing:.05em;position:relative}
@@ -190,6 +199,7 @@
     <input id="chatin" maxlength="120" placeholder="[ENTER] CHAT" autocomplete="off" spellcheck="false">
   </div>
   <div class="chip" id="hint"></div>
+  <div id="caption" hidden><b id="capWho"></b><span id="capText"></span></div>
   <div id="help">WASD MOVE · SPACE JET · E VEHICLE · G NERF · C CAMERA · ENTER CHAT · ? HELP
     &nbsp;·&nbsp; <a href="privacy.html">PRIVACY</a> · <a href="terms.html">TERMS</a></div>
   <div id="botright">
@@ -211,6 +221,10 @@
         <button class="tbtn on" id="s60">60×</button>
         <button class="tbtn" id="s300">300×</button>
       </div>
+      <div class="trayrow">
+        <button class="tbtn on" id="bSnd">SND ON</button>
+        <button class="tbtn" id="bScores">SCORES</button>
+      </div>
     </div>
     <div id="mainrow">
       <span id="touchbtns">
@@ -222,6 +236,16 @@
       <button class="tbtn" id="bHelp">?</button>
       <button class="tbtn" id="bMenu">SIM ▾</button>
     </div>
+  </div>
+</div>
+<div id="scores" hidden>
+  <div class="tut-panel" style="max-width:440px">
+    <button class="tbtn" id="scoreClose" style="position:absolute;top:10px;right:10px">✕</button>
+    <h1>THE RIBBON CUTTING</h1>
+    <p class="tagline">Fastest chopper takedowns — everyone, everywhere, all devices.</p>
+    <div id="scoreYou"></div>
+    <ol id="scoreList"></ol>
+    <p class="tut-links">replay any time at the gold ring by City Hall</p>
   </div>
 </div>
 <div id="tut" hidden>
@@ -247,12 +271,18 @@
       <b><kbd>E</kbd></b><span>enter or exit the nearest car (any car — traffic or parked)</span>
       <b><kbd>W</kbd>/<kbd>S</kbd> · <kbd>A</kbd>/<kbd>D</kbd></b><span>drive / brake · steer — tops out around 108 km/h</span>
     </div>
+    <h2>MISSION: THE RIBBON CUTTING</h2>
+    <div class="tut-grid">
+      <b><kbd>E</kbd></b><span>at the <b>gold ring by City Hall</b> (E Main St) — the mayor is dedicating "a horse statue" and the news chopper won't stop buzzing her. Take the ceremonial RPG and <b>shoot it down</b> (holding it aims in first person — look up!).</span>
+      <b>Score</b><span>fastest takedown wins — there's a global high-score board (SIM menu → SCORES). Replayable any time, and don't worry: the pilot has a parachute.</span>
+      <b>Unlock</b><span><b>beating it once unlocks the chopper</b> on this device</span>
+    </div>
     <h2>THE NEWS CHOPPER</h2>
     <div class="tut-grid">
-      <b><kbd>E</kbd></b><span>on Big Blue's rooftop helipad — fly the <b>LEXINGTON KY NEWS chopper</b> (one pilot at a time; jetpack up there)</span>
+      <b><kbd>E</kbd></b><span>on Big Blue's rooftop helipad — fly the <b>LEXINGTON KY NEWS chopper</b> (one pilot at a time; jetpack up there). Locked until you beat THE RIBBON CUTTING.</span>
       <b><kbd>W</kbd>/<kbd>S</kbd> · <kbd>A</kbd>/<kbd>D</kbd></b><span>fly / turn · <kbd>Space</kbd> climb · <kbd>Shift</kbd> descend · <kbd>E</kbd> lands (or bails out — the chopper crashes)</span>
       <b><kbd>F</kbd> / click</b><span>hold for the <b>water cannon</b> — the jet shoves players around (no damage, no opt-in needed)</span>
-      <b>RPG</b><span>while the chopper is up, RPG crates glow around downtown. Grab one and <kbd>F</kbd> fires — <b>three hits bring it down</b>, and it respawns on Big Blue. Rockets only hurt the helicopter.</span>
+      <b>RPG</b><span>while the chopper is up, RPG crates glow around downtown. Grab one and <kbd>F</kbd> fires (holding it locks you into first-person aim) — <b>three hits bring it down</b>, and it respawns on Big Blue. Rockets only hurt the helicopter.</span>
     </div>
     <h2>NERF TAG (OPT-IN)</h2>
     <div class="tut-grid">

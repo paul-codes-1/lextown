@@ -987,7 +987,15 @@ var myColor = PLAYER_COLS[(Math.random() * PLAYER_COLS.length) | 0];
 var myId = 'ME';
 
 // ---------- local player ----------
-var player = {x: 14, y: 0, z: -9.5, vy: 0, ry: -Math.PI / 2, phase: 0, swing: 0,
+// optional deep-link spawn: #x=..&z=..
+var spawnX = 14, spawnZ = -9.5;
+(function(){
+  var mx = /(?:^|[#&])x=(-?[\d.]+)/.exec(hashStr);
+  var mz = /(?:^|[#&])z=(-?[\d.]+)/.exec(hashStr);
+  if (mx) spawnX = Math.max(X0 - 20, Math.min(X1 + 20, parseFloat(mx[1])));
+  if (mz) spawnZ = Math.max(Z0 - 20, Math.min(Z1 + 20, parseFloat(mz[1])));
+})();
+var player = {x: spawnX, y: 0, z: spawnZ, vy: 0, ry: -Math.PI / 2, phase: 0, swing: 0,
               grounded: true, moving: 0, fuel: 100, thrusting: false, veh: null,
               heli: false, kx: 0, kz: 0,
               pvp: false, frozenUntil: 0,
@@ -1198,11 +1206,12 @@ function heliDist2(x, z){
   var dx = heli.x - x, dz = heli.z - z;
   return dx * dx + dz * dz;
 }
-function canEnterHeli(){
+function canEnterHeliBase(){
   return mode === 'player' && !player.veh && !player.heli && !isFrozen() &&
     heli.pilot === null && !heli.down && player.grounded &&
     heliDist2(player.x, player.z) < 45 && Math.abs(player.y - (heli.y - 1.45)) < 5;
 }
+function canEnterHeli(){ return heliUnlocked && canEnterHeliBase(); }
 function enterHeliLocal(){
   player.heli = true;
   heli.pilot = 'ME';
@@ -1514,12 +1523,13 @@ function spawnRocket(ox, oy, oz, dx, dy, dz, mine){
   scene.add(g);
   rockets.push({g: g, vx: dx * 55, vy: dy * 55, vz: dz * 55,
                 born: performance.now(), puffAt: 0, mine: !!mine});
+  sndRocket();
 }
 function fireRocket(){
   var now = performance.now();
   if (now - lastRocket < 1100 || isFrozen()) return;
   lastRocket = now;
-  myRpg--;
+  if (!missionFight()) myRpg--;   // the ceremonial RPG never runs dry
   camera.getWorldDirection(_aim);
   player.ry = Math.atan2(_aim.x, _aim.z);
   var ox = player.x + _aim.x * 1.5;
@@ -1544,7 +1554,14 @@ function updateRockets(dt){
       puff(r.g.position.x, r.g.position.y, r.g.position.z, 0x9a9a92, 0.28, 1.4, 500, 0.6, 0.5);
     }
     var p = r.g.position, boom = false, big = false;
-    if (heli.pilot !== null && !heli.down){
+    if (r.mine && missionFight()){
+      var mdx = p.x - mh.x, mdy = p.y - mh.y, mdz = p.z - mh.z;
+      if (mdx * mdx + mdy * mdy + mdz * mdz < 24){
+        boom = true; big = true;
+        missionHit();
+      }
+    }
+    if (!boom && heli.pilot !== null && !heli.down){
       var hdx = p.x - heli.x, hdy = p.y - heli.y, hdz = p.z - heli.z;
       if (hdx * hdx + hdy * hdy + hdz * hdz < 22){
         boom = true; big = true;
@@ -1578,6 +1595,7 @@ function explosion(x, y, z, big){
   puff(x, y, z, 0xffb54a, big ? 2.5 : 1.1, big ? 26 : 11, 380, 0, 0.95);
   puff(x, y, z, 0xff5f3a, big ? 1.6 : 0.7, big ? 18 : 8, 300, 0, 0.9);
   puff(x, y + 1, z, 0x444444, big ? 2 : 0.9, big ? 8 : 4, 900, 3, 0.5);
+  sndBoom(big);
 }
 function updatePuffs(dt){
   var now = performance.now();
@@ -1592,6 +1610,465 @@ function updatePuffs(dt){
     p.m.position.y += p.vy * dt;
     p.m.material.opacity = p.op * (1 - age / p.life);
   }
+}
+
+// ---------- sound (WebAudio, fully synthesized — no audio assets) ----------
+var sndOn = true;
+try { sndOn = localStorage.getItem('lt_snd') !== '0'; } catch (e){}
+var AC = null, sndMaster = null, rotorGain = null, noiseBuf = null;
+function pokeAudio(){
+  if (!window.AudioContext && !window.webkitAudioContext) return;
+  if (!AC){
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    sndMaster = AC.createGain();
+    sndMaster.gain.value = sndOn ? 0.5 : 0;
+    sndMaster.connect(AC.destination);
+    noiseBuf = AC.createBuffer(1, AC.sampleRate, AC.sampleRate);
+    var d = noiseBuf.getChannelData(0);
+    for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    // rotor loop: 13 Hz-chopped lowpassed noise + a low triangle hum
+    rotorGain = AC.createGain(); rotorGain.gain.value = 0; rotorGain.connect(sndMaster);
+    var rn = AC.createBufferSource(); rn.buffer = noiseBuf; rn.loop = true;
+    var lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 320;
+    var chop = AC.createGain(); chop.gain.value = 0.5;
+    var lfo = AC.createOscillator(); lfo.type = 'square'; lfo.frequency.value = 13;
+    var lfoG = AC.createGain(); lfoG.gain.value = 0.45;
+    lfo.connect(lfoG); lfoG.connect(chop.gain);
+    rn.connect(lp); lp.connect(chop); chop.connect(rotorGain);
+    var hum = AC.createOscillator(); hum.type = 'triangle'; hum.frequency.value = 52;
+    var humG = AC.createGain(); humG.gain.value = 0.22;
+    hum.connect(humG); humG.connect(rotorGain);
+    rn.start(); lfo.start(); hum.start();
+  }
+  if (AC.state === 'suspended') AC.resume();
+}
+function setSnd(on){
+  sndOn = on;
+  if (sndMaster) sndMaster.gain.value = on ? 0.5 : 0;
+  try { localStorage.setItem('lt_snd', on ? '1' : '0'); } catch (e){}
+  syncBtns();
+}
+function sndNoise(dur, f0, f1, vol){
+  if (!AC || !sndOn) return;
+  var src = AC.createBufferSource(); src.buffer = noiseBuf;
+  var f = AC.createBiquadFilter(); f.type = 'lowpass';
+  var t = AC.currentTime;
+  f.frequency.setValueAtTime(f0, t);
+  f.frequency.exponentialRampToValueAtTime(Math.max(40, f1), t + dur);
+  var g = AC.createGain();
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  src.connect(f); f.connect(g); g.connect(sndMaster);
+  src.start(t); src.stop(t + dur + 0.05);
+}
+function sndTone(freq, dur, at, type, vol, glideTo){
+  if (!AC || !sndOn) return;
+  var o = AC.createOscillator(); o.type = type || 'square';
+  var t = AC.currentTime + (at || 0);
+  o.frequency.setValueAtTime(freq, t);
+  if (glideTo) o.frequency.exponentialRampToValueAtTime(glideTo, t + dur);
+  var g = AC.createGain();
+  g.gain.setValueAtTime(vol || 0.12, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g); g.connect(sndMaster);
+  o.start(t); o.stop(t + dur + 0.05);
+}
+function sndRocket(){ sndNoise(0.55, 2600, 260, 0.4); }
+function sndBoom(big){
+  sndNoise(big ? 1.1 : 0.5, big ? 260 : 420, 55, big ? 0.85 : 0.45);
+  sndTone(64, big ? 0.9 : 0.4, 0, 'sine', big ? 0.5 : 0.25, 30);
+}
+function sndHitClank(){ sndTone(230, 0.16, 0, 'square', 0.2, 120); sndNoise(0.12, 1800, 500, 0.2); }
+function sndSnip(){ sndNoise(0.06, 5200, 2600, 0.3); sndNoise(0.07, 4800, 2200, 0.3); }
+function sndWin(){
+  [523, 659, 784, 1047].forEach(function(f, i){ sndTone(f, 0.28, i * 0.13, 'square', 0.12); });
+}
+function sndApplause(){
+  if (!AC || !sndOn) return;
+  for (var i = 0; i < 16; i++) setTimeout(sndNoise.bind(null, 0.09, 2400, 1200, 0.12), i * 90 + Math.random() * 60);
+}
+function updateRotorSnd(){
+  if (!AC || !rotorGain) return;
+  var v = 0;
+  if (heli.rotorSpeed > 0.15 && !heli.down){
+    var d1 = Math.hypot(heli.x - camera.position.x, heli.y - camera.position.y, heli.z - camera.position.z);
+    v = Math.max(v, heli.rotorSpeed * Math.max(0, 1 - d1 / 260));
+  }
+  if (mh && mh.alive){
+    var d2 = Math.hypot(mh.x - camera.position.x, mh.y - camera.position.y, mh.z - camera.position.z);
+    v = Math.max(v, Math.max(0, 1 - d2 / 260));
+  }
+  rotorGain.gain.setTargetAtTime(v * 0.55, AC.currentTime, 0.12);
+}
+
+// ---------- mission: THE RIBBON CUTTING ----------
+// The mayor dedicates "a horse statue" at City Hall; the news chopper keeps
+// buzzing the press conference. Shoot it down with the ceremonial RPG.
+// Beating it once unlocks the flyable chopper on this device. Fastest
+// takedown times go to a shared leaderboard (server-side scores.json).
+var MISSION_C = {x: 152, z: 30};              // set-piece center on the plaza
+var MISSION_TRIG = {x: 146, z: 14};           // walk here, press E
+var heliUnlocked = false, missionBest = 0;
+try {
+  heliUnlocked = localStorage.getItem('lt_heli_unlock') === '1';
+  missionBest = parseInt(localStorage.getItem('lt_mission_best') || '0', 10) || 0;
+} catch (e){}
+var goldMat = new THREE.MeshStandardMaterial({color: 0xd8b04a, roughness: 0.35, metalness: 0.7});
+var stoneMat2 = new THREE.MeshStandardMaterial({color: 0x8a8478, roughness: 0.9});
+var drapeMat = new THREE.MeshStandardMaterial({color: 0xcfd2d8, roughness: 1});
+var ribbonMat = new THREE.MeshStandardMaterial({color: 0xb01f2e, roughness: 0.6});
+var setPieces = {};   // podium, drape, horse, ribbon, posts, trigger ring
+(function(){
+  var gy = groundY(MISSION_C.x, MISSION_C.z);   // 0.7 (plaza slab)
+  // pedestal + draped statue (drape swaps for the gold horse on a win)
+  var ped = new THREE.Mesh(new THREE.BoxGeometry(3, 1.2, 2), stoneMat2);
+  ped.position.set(152, gy + 0.6, 36); ped.castShadow = true; scene.add(ped);
+  var drape = new THREE.Mesh(new THREE.BoxGeometry(2.6, 3, 1.6), drapeMat);
+  drape.position.set(152, gy + 2.7, 36); drape.castShadow = true; scene.add(drape);
+  var horse = new THREE.Group();
+  var body = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.85, 0.65), goldMat);
+  body.position.y = 1.9; horse.add(body);
+  for (var L = 0; L < 4; L++){
+    var leg = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.5, 0.16), goldMat);
+    leg.position.set(L < 2 ? -0.85 : 0.85, 0.75, L % 2 ? -0.22 : 0.22);
+    horse.add(leg);
+  }
+  var neck = new THREE.Mesh(new THREE.BoxGeometry(0.45, 1.2, 0.4), goldMat);
+  neck.rotation.z = -0.5; neck.position.set(1.15, 2.6, 0); horse.add(neck);
+  var head = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.35, 0.32), goldMat);
+  head.position.set(1.6, 3.1, 0); horse.add(head);
+  var tail = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.18), goldMat);
+  tail.rotation.z = 0.6; tail.position.set(-1.25, 2.15, 0); horse.add(tail);
+  horse.traverse(function(o){ o.castShadow = true; });
+  horse.position.set(152, gy + 1.2, 36);
+  horse.visible = false; scene.add(horse);
+  colliders.push({x0: 150.4, x1: 153.6, z0: 35, z1: 37, h: gy + 4.4});
+  // podium
+  var pod = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.3, 0.8), stoneMat2);
+  pod.position.set(152, gy + 0.65, 24); pod.castShadow = true; scene.add(pod);
+  var mic = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.5, 5),
+    new THREE.MeshStandardMaterial({color: 0x2c2f35}));
+  mic.rotation.z = 0.4; mic.position.set(151.9, gy + 1.5, 24); scene.add(mic);
+  // ribbon between two posts
+  var posts = [];
+  [148, 156].forEach(function(px){
+    var post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 2.2, 6), goldMat);
+    post.position.set(px, gy + 1.1, 28); post.castShadow = true; scene.add(post);
+    posts.push(post);
+  });
+  var ribbon = new THREE.Mesh(new THREE.BoxGeometry(8, 0.28, 0.05), ribbonMat);
+  ribbon.position.set(152, gy + 1.25, 28); scene.add(ribbon);
+  var bow = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.12), ribbonMat);
+  bow.rotation.z = Math.PI / 4; bow.position.set(152, gy + 1.25, 28.05); scene.add(bow);
+  // mission trigger: gold ring, always visible
+  var trig = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.06, 6, 24),
+    new THREE.MeshBasicMaterial({color: 0xd8b04a, transparent: true, opacity: 0.85}));
+  trig.rotation.x = Math.PI / 2;
+  trig.position.set(MISSION_TRIG.x, gy + 0.2, MISSION_TRIG.z);
+  scene.add(trig);
+  setPieces = {drape: drape, horse: horse, ribbon: ribbon, bow: bow, trig: trig};
+})();
+// NPCs (mayor + press) spawn per run
+var missionNpcs = [];
+function spawnNpc(x, z, col, ry, scale){
+  var g = new THREE.Group();
+  var body = new THREE.Mesh(pedBodyG, new THREE.MeshStandardMaterial({color: col, roughness: 0.85}));
+  body.position.y = 0.75; body.castShadow = true; g.add(body);
+  var head = new THREE.Mesh(pedHeadG, skinMat); head.position.y = 1.55; g.add(head);
+  g.position.set(x, groundY(x, z) + 0.02, z);
+  g.rotation.y = ry;
+  g.scale.setScalar(scale || 1);
+  scene.add(g);
+  missionNpcs.push(g);
+  return g;
+}
+// captions
+var capEl = document.getElementById('caption');
+var capWhoEl = document.getElementById('capWho');
+var capTextEl = document.getElementById('capText');
+var capUntil = 0;
+function caption(who, text, dur){
+  if (!capEl) return;
+  capWhoEl.textContent = who + ': ';
+  capTextEl.textContent = text;
+  capEl.hidden = false;
+  capUntil = performance.now() + (dur || 3400);
+}
+var AMBIENT_CAPS = [
+  ['THE MAYOR', 'AS I WAS SAYING--'],
+  ['PILOT', 'GREAT SHOT OF THE STATUE, JIM. GETTING LOWER.'],
+  ['THE MAYOR', 'THIS IS A SOLEMN HORSE OCCASION.'],
+  ['PILOT', 'JIM SAYS ZOOM IN. I AM THE ZOOM, JIM.'],
+  ['THE MAYOR', 'SOMEBODY HAND ME THE BIG SCISSORS.'],
+  ['SECURITY', 'MA\'AM, THE SCISSORS ARE NOT A WEAPON.'],
+  ['PILOT', 'CHANNEL 1 NEWS: WE REPORT. WE HOVER.'],
+  ['THE MAYOR', 'I CAN BARELY HEAR MYSELF DEDICATE.']
+];
+var mission = {stage: 'idle', tStage: 0, t0f: 0, ms: 0, capAt: 0, capIdx: 0};
+var mh = null;      // mission chopper {parts, x,y,z,th,hp,alive,down,...}
+var chute = null;   // the new guy
+function missionFight(){ return mission.stage === 'fight' && mh && mh.alive; }
+function nearMissionTrig(){
+  var dx = player.x - MISSION_TRIG.x, dz = player.z - MISSION_TRIG.z;
+  return dx * dx + dz * dz < 16;
+}
+function startMission(){
+  mission.stage = 'intro'; mission.tStage = 0; mission.capAt = 0; mission.capIdx = 0;
+  setPieces.drape.visible = true;
+  setPieces.horse.visible = false;
+  setPieces.ribbon.visible = true; setPieces.bow.visible = true;
+  // mayor behind the podium facing the press; press row facing her
+  spawnNpc(152, 25.2, 0x8f2f3c, Math.PI, 0.95);          // the mayor
+  spawnNpc(149.5, 18.5, 0x39404a, 0, 0.9);
+  spawnNpc(152, 18, 0x2f5d8f, 0, 0.9);
+  spawnNpc(154.5, 18.5, 0x6b4a8f, 0, 0.9);
+  if (!mh){
+    var parts = buildHeli();
+    mh = {parts: parts, mesh: parts.g, x: 152, y: 95, z: -80, th: 0, hp: 3,
+          alive: false, down: false, boomed: false, downVy: 0, ang: 0, swoopT: 0, spin: 0};
+  }
+  mh.hp = 3; mh.alive = false; mh.down = false; mh.boomed = false;
+  mh.x = 152; mh.y = 95; mh.z = -90; mh.ang = Math.PI / 2; mh.swoopT = 0;
+  mh.mesh.visible = true;
+  mh.mesh.rotation.set(0, 0, 0);
+  caption('ANNOUNCER', 'LIVE FROM CITY HALL: THE DEDICATION OF "A HORSE STATUE"', 3600);
+  addChatLine('* MISSION', 'THE RIBBON CUTTING - shoot down the chopper', true);
+}
+function missionHit(){
+  if (!mh || !mh.alive) return;
+  mh.hp--;
+  sndHitClank();
+  if (mh.hp === 2) caption('PILOT', 'WE\'VE BEEN HIT. STAY CALM, JIM.');
+  else if (mh.hp === 1) caption('PILOT', 'JIM IS NOT STAYING CALM.');
+  if (mh.hp <= 0){
+    mh.alive = false; mh.down = true; mh.downVy = 0; mh.spin = 0;
+    mission.ms = performance.now() - mission.t0f;
+    mission.stage = 'won'; mission.tStage = 0;
+    caption('PILOT', 'TELL MY STORY, JIM.', 2600);
+    spawnChute(mh.x, mh.y + 1, mh.z);   // the new guy bails with a parachute
+  }
+}
+function spawnChute(x, y, z){
+  if (chute) removeChute();
+  var av = makeAvatar(0xd97940, 0x39404a);
+  av.g.scale.setScalar(0.8);
+  av.armL.rotation.x = -2.9; av.armR.rotation.x = -2.9;
+  var canopy = new THREE.Mesh(
+    new THREE.SphereGeometry(2.1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.MeshStandardMaterial({color: 0xb01f2e, roughness: 0.8, side: THREE.DoubleSide}));
+  scene.add(canopy);
+  chute = {av: av, canopy: canopy, x: x, y: y, z: z, sway: Math.random() * 6,
+           landed: false, doneAt: 0};
+}
+function removeChute(){
+  if (!chute) return;
+  scene.remove(chute.av.g); scene.remove(chute.canopy);
+  chute = null;
+}
+function updateChute(dt){
+  if (!chute) return;
+  var now = performance.now();
+  if (!chute.landed){
+    chute.sway += dt * 1.6;
+    chute.y -= 3.1 * dt;
+    chute.x += Math.sin(chute.sway) * 0.8 * dt;
+    chute.z += Math.cos(chute.sway * 0.8) * 0.8 * dt;
+    var gy = groundY(chute.x, chute.z, chute.y);
+    if (chute.y <= gy){
+      chute.y = gy; chute.landed = true; chute.doneAt = now + 6000;
+      chute.canopy.visible = false;
+      chute.av.armL.rotation.x = 0; chute.av.armR.rotation.x = 0;
+      caption('THE NEW GUY', 'FIRST DAY. OBVIOUSLY.', 3600);
+    }
+  } else if (now > chute.doneAt){ removeChute(); return; }
+  chute.av.g.position.set(chute.x, chute.y, chute.z);
+  chute.canopy.position.set(chute.x, chute.y + 3.4, chute.z);
+}
+function missionCleanup(){
+  mission.stage = 'idle';
+  missionNpcs.forEach(function(g){ scene.remove(g); });
+  missionNpcs.length = 0;
+  if (mh) mh.mesh.visible = false;
+  removeChute();
+  setPieces.drape.visible = true;
+  setPieces.horse.visible = false;
+  setPieces.ribbon.visible = true; setPieces.bow.visible = true;
+}
+function missionFail(why){
+  mission.stage = 'fail'; mission.tStage = 0;
+  caption('THE MAYOR', why === 'left'
+    ? 'THE PRESS CONFERENCE CONTINUES WITHOUT YOU.'
+    : 'WE WILL DO THIS INDOORS NEXT YEAR.', 4200);
+}
+function submitScore(ms){
+  try {
+    if (!missionBest || ms < missionBest){
+      missionBest = ms;
+      localStorage.setItem('lt_mission_best', String(Math.round(ms)));
+    }
+  } catch (e){}
+  if (online && ws && ws.readyState === 1)
+    ws.send(JSON.stringify({t: 'score', ms: Math.round(ms)}));
+}
+function fmtMs(ms){ return (ms / 1000).toFixed(1) + 's'; }
+function missionPoints(ms){ return Math.max(100, 1000 - Math.round(ms / 100)); }
+function showScores(myMs){
+  var sEl = document.getElementById('scores');
+  if (!sEl) return;
+  sEl.hidden = false;
+  document.getElementById('scoreYou').textContent = myMs
+    ? 'YOUR TIME: ' + fmtMs(myMs) + ' · +' + missionPoints(myMs) + ' PTS' +
+      (missionBest ? ' · DEVICE BEST ' + fmtMs(missionBest) : '')
+    : (missionBest ? 'YOUR DEVICE BEST: ' + fmtMs(missionBest)
+                   : 'NO RUNS YET — START AT THE GOLD RING BY CITY HALL');
+  var list = document.getElementById('scoreList');
+  list.textContent = '';
+  var li = document.createElement('li');
+  li.textContent = online ? 'fetching global times...' : 'OFFLINE — global board unavailable';
+  list.appendChild(li);
+  if (online && ws && ws.readyState === 1) ws.send(JSON.stringify({t: 'scores'}));
+}
+function renderScores(top){
+  var sEl = document.getElementById('scores');
+  if (!sEl || sEl.hidden) return;
+  var list = document.getElementById('scoreList');
+  list.textContent = '';
+  if (!top.length){
+    var li0 = document.createElement('li');
+    li0.textContent = 'no times yet — be the first';
+    list.appendChild(li0);
+    return;
+  }
+  top.forEach(function(s){
+    var li = document.createElement('li');
+    li.textContent = (s.n || '?') + ' — ' + fmtMs(s.ms);
+    list.appendChild(li);
+  });
+}
+function updateMission(dt){
+  var now = performance.now();
+  if (capEl && !capEl.hidden && now > capUntil) capEl.hidden = true;
+  if (setPieces.trig){
+    setPieces.trig.rotation.z += dt * 0.8;
+    setPieces.trig.visible = mission.stage === 'idle';
+  }
+  updateChute(dt);
+  if (mh && mh.mesh.visible){
+    mh.parts.rotor.rotation.y += 26 * dt;
+    mh.parts.tRotor.rotation.x += 78 * dt;
+  }
+  // the downed chopper keeps falling whatever stage we're in
+  if (mh && mh.down && !mh.boomed){
+    mh.downVy -= 24 * dt;
+    mh.y += mh.downVy * dt;
+    mh.th += 2.4 * dt;
+    mh.mesh.position.set(mh.x, mh.y, mh.z);
+    mh.mesh.rotation.y = mh.th;
+    mh.mesh.rotation.z = Math.sin(now * 0.011) * 0.35;
+    if (Math.random() < dt * 12) puff(mh.x, mh.y + 0.5, mh.z, 0x333333, 0.9, 3.5, 900, 2, 0.55);
+    var gyd = groundY(mh.x, mh.z, mh.y) + 1.0;
+    if (mh.y <= gyd){
+      mh.boomed = true;
+      explosion(mh.x, gyd, mh.z, true);
+      mh.mesh.visible = false;
+    }
+  }
+  if (mission.stage === 'idle') return;
+  mission.tStage += dt;
+  var t = mission.tStage;
+  // walking away aborts (intro/fight only)
+  if ((mission.stage === 'intro' || mission.stage === 'fight')){
+    var pdx = player.x - MISSION_C.x, pdz = player.z - MISSION_C.z;
+    if (pdx * pdx + pdz * pdz > 170 * 170){ missionFail('left'); }
+  }
+  if (mission.stage === 'intro'){
+    // chopper flies in from the north while the mayor talks
+    mh.z += (30 - mh.z) * Math.min(1, dt * 0.35);
+    mh.y += (46 - mh.y) * Math.min(1, dt * 0.4);
+    mh.th = -Math.PI / 2;   // nose south, toward City Hall
+    mh.mesh.position.set(mh.x, mh.y, mh.z);
+    mh.mesh.rotation.y = mh.th;
+    if (t > 2.8 && mission.capIdx === 0){ mission.capIdx = 1; caption('THE MAYOR', 'THANK YOU ALL. TODAY WE HONOR... A HORSE.'); }
+    if (t > 5.6 && mission.capIdx === 1){ mission.capIdx = 2; caption('THE MAYOR', 'POSSIBLY SEVERAL HORSES. THE PLAQUE IS AMBIGUOUS.'); }
+    if (t > 8.2 && mission.capIdx === 2){ mission.capIdx = 3; caption('ANNOUNCER', 'IS THAT... THE NEWS CHOPPER?'); }
+    if (t > 10.5){
+      mission.stage = 'fight'; mission.tStage = 0; mission.capAt = 4;
+      mission.t0f = now;
+      mh.alive = true;
+      caption('SECURITY', 'CIVILIAN - TAKE THIS RPG. IT IS CEREMONIAL.', 4200);
+    }
+    return;
+  }
+  if (mission.stage === 'fight'){
+    if (t > 240){ missionFail('timeout'); return; }
+    if (t > mission.capAt){
+      mission.capAt = t + 6.5 + Math.random() * 3;
+      var c = AMBIENT_CAPS[(Math.random() * AMBIENT_CAPS.length) | 0];
+      caption(c[0], c[1]);
+    }
+    // orbit City Hall; every ~9s swoop low over the podium
+    mh.ang += dt * 0.55;
+    mh.swoopT += dt;
+    var ph = mh.swoopT % 9;
+    var swoop = ph < 2.4;
+    var tr = swoop ? 13 : 32, ta = swoop ? 15 : 40 + Math.sin(mh.ang * 0.7) * 6;
+    mh.r = mh.r === undefined ? 32 : mh.r + (tr - mh.r) * Math.min(1, dt * 1.4);
+    mh.x = MISSION_C.x + Math.cos(mh.ang) * mh.r;
+    mh.z = MISSION_C.z + Math.sin(mh.ang) * mh.r;
+    mh.y += (ta - mh.y) * Math.min(1, dt * 1.2);
+    mh.th = Math.atan2(-Math.cos(mh.ang), -Math.sin(mh.ang));   // orbit tangent
+    mh.mesh.position.set(mh.x, mh.y + Math.sin(now * 0.004) * 0.1, mh.z);
+    mh.mesh.rotation.y = mh.th;
+    mh.mesh.rotation.z = -0.14;
+    mh.mesh.rotation.x = swoop ? -0.1 : 0;
+    return;
+  }
+  if (mission.stage === 'won'){
+    if (t > 2.6 && mission.capIdx !== 9){
+      mission.capIdx = 9;
+      setPieces.ribbon.visible = false; setPieces.bow.visible = false;
+      setPieces.drape.visible = false; setPieces.horse.visible = true;
+      sndSnip(); sndApplause(); sndWin();
+      for (var cf = 0; cf < 8; cf++)
+        puff(152 + (Math.random() - 0.5) * 6, 3 + Math.random() * 3, 30 + (Math.random() - 0.5) * 6,
+          [0xff2d95, 0x25f4ee, 0xffd23f][cf % 3], 0.3, 1.2, 1200, 1.5, 0.8);
+      caption('THE MAYOR', '...AND THAT IS WHY I LOVE THIS CITY.', 3400);
+      if (!heliUnlocked){
+        heliUnlocked = true;
+        try { localStorage.setItem('lt_heli_unlock', '1'); } catch (e){}
+        addChatLine('* CHOPPER', 'NEWS CHOPPER UNLOCKED - press E on Big Blue\'s helipad', true);
+      }
+      submitScore(mission.ms);
+    }
+    if (t > 6 && mission.capIdx === 9){
+      mission.capIdx = 10;
+      caption('ANNOUNCER', 'RIBBON CUT. STATUE HORSED. DEMOCRACY SAVED.', 4200);
+      showScores(mission.ms);
+      mission.stage = 'post'; mission.tStage = 0;
+    }
+    return;
+  }
+  if (mission.stage === 'fail'){
+    // chopper loses interest and leaves
+    if (mh){
+      mh.y += 9 * dt; mh.z -= 18 * dt; mh.alive = false;
+      mh.mesh.position.set(mh.x, mh.y, mh.z);
+    }
+    if (t > 5) missionCleanup();
+    return;
+  }
+  if (mission.stage === 'post'){
+    if (t > 24) missionCleanup();
+  }
+}
+
+// dev hook, only with #debug=1: poke the mission from the console
+if (/debug=1/.test(hashStr)){
+  window.__lt = {
+    hit: function(){ missionHit(); },
+    stage: function(){ return mission.stage; },
+    unlock: function(){ return heliUnlocked; }
+  };
 }
 
 var rigP = {az: Math.PI / 2, el: 0.32, r: 13};
@@ -1609,6 +2086,7 @@ function nearestVehicle(){
 }
 function fireAction(){
   if (player.heli) return;   // water cannon is hold-to-spray, handled in flight
+  if (missionFight() && !player.veh){ fireRocket(); return; }
   if (myRpg > 0 && heliActive() && !player.veh){ fireRocket(); return; }
   fireDart();
 }
@@ -1618,6 +2096,10 @@ function tryEnterExit(){
     // bailing out above the ground crashes the chopper (it respawns on Big Blue)
     var hgy = groundY(heli.x, heli.z, heli.y) + 1.45;
     exitHeli(heli.y > hgy + 3);
+    return;
+  }
+  if (mission.stage === 'idle' && !player.veh && !isFrozen() && nearMissionTrig()){
+    startMission();
     return;
   }
   if (canEnterHeli()){ requestHeli(); return; }
@@ -1743,19 +2225,46 @@ function updatePlayer(dt){
   player.av.g.position.set(player.x, player.y, player.z);
   player.av.g.rotation.y = player.ry;
 }
+// RPG in hand: lock into first person so the chopper is actually aimable
+// (third-person elevation can't look up past ~8 degrees)
+function rpgOut(){
+  return mode === 'player' && !player.veh && !player.heli &&
+    (missionFight() || (myRpg > 0 && heliActive()));
+}
+// first-person RPG viewmodel, parented to the camera (past the near plane)
+scene.add(camera);
+var rpgView = new THREE.Group();
+(function(){
+  var olive = new THREE.MeshStandardMaterial({color: 0x4a5232, roughness: 0.8});
+  var darkTip = new THREE.MeshStandardMaterial({color: 0x33381f, roughness: 0.7});
+  var tube = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 1.25, 8), olive);
+  tube.rotation.x = Math.PI / 2;
+  rpgView.add(tube);
+  var muzzle = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.07, 0.22, 8), darkTip);
+  muzzle.rotation.x = Math.PI / 2; muzzle.position.z = -0.7; rpgView.add(muzzle);
+  var sight = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.09, 0.03), darkTip);
+  sight.position.set(0, 0.1, -0.25); rpgView.add(sight);
+  rpgView.position.set(0.5, -0.42, -1.55);
+  rpgView.rotation.set(-0.05, 0.08, 0.06);
+  rpgView.visible = false;
+  camera.add(rpgView);
+})();
 var camR = 13, aimBlend = 0, camFP = false;
 function updatePlayerCam(dt){
   followPause -= dt;
-  var aiming = ads && !player.veh && (player.pvp || player.heli || (myRpg > 0 && heliActive()));
+  var aiming = ads && !player.veh && (player.pvp || player.heli || missionFight() || (myRpg > 0 && heliActive()));
   aimBlend += ((aiming ? 1 : 0) - aimBlend) * Math.min(1, dt * 9);
   var tf = aiming ? 42 : 55;
   if (Math.abs(camera.fov - tf) > 0.05){
     camera.fov += (tf - camera.fov) * Math.min(1, dt * 9);
     camera.updateProjectionMatrix();
   }
-  player.av.g.visible = !camFP && !player.veh && !player.heli;
-  rigP.el = Math.max(-0.15, Math.min(1.35, rigP.el));
-  if (camFP){
+  var fp = camFP || rpgOut();
+  player.av.g.visible = !fp && !player.veh && !player.heli;
+  // first person can look almost straight up (that's where the chopper is)
+  rigP.el = Math.max(fp ? -1.45 : -0.15, Math.min(fp ? 1.45 : 1.35, rigP.el));
+  rpgView.visible = fp && rpgOut();
+  if (fp){
     // first person: eye / hood / cockpit; same az-el mapping as third person
     var ex, ey, ez;
     if (player.heli){
@@ -1881,6 +2390,8 @@ function handleNet(m){
   } else if (m.t === 'spray'){
     if (m.id !== myId)
       sprayBurst(m.ox, m.oy, m.oz, m.dx, m.dy, m.dz);
+  } else if (m.t === 'scores'){
+    renderScores(m.top || []);
   } else if (m.t === 'sys'){
     addChatLine('⚙ SERVER', String(m.msg || ''), false);
   } else if (m.t === 'leave') removeRemote(m.id);
@@ -2152,7 +2663,7 @@ document.addEventListener('mousemove', function(e){
 document.addEventListener('mousedown', function(e){
   if (!ptrLocked || mode !== 'player') return;
   if (e.button === 0){ mouse0Held = true; if (!player.heli) fireAction(); }
-  if (e.button === 2 && (player.pvp || player.heli || (myRpg > 0 && heliActive()))) ads = true;
+  if (e.button === 2 && (player.pvp || player.heli || missionFight() || (myRpg > 0 && heliActive()))) ads = true;
 });
 document.addEventListener('mouseup', function(e){
   if (e.button === 0) mouse0Held = false;
@@ -2161,6 +2672,7 @@ document.addEventListener('mouseup', function(e){
 document.addEventListener('contextmenu', function(e){ if (ptrLocked) e.preventDefault(); });
 glCanvas.style.touchAction = 'none';
 glCanvas.addEventListener('pointerdown', function(e){
+  pokeAudio();
   if (ptrLocked) return;
   if (mode === 'player' && e.pointerType === 'touch' && e.clientX < window.innerWidth * 0.4){
     stick.active = true; stick.id = e.pointerId;
@@ -2233,6 +2745,7 @@ window.addEventListener('touchend', function(){ pinch = null; });
 
 var keysDown = {};
 window.addEventListener('keydown', function(e){
+  pokeAudio();   // browsers unlock audio on the first real gesture
   if (e.target === chatIn){
     if (e.key === 'Escape'){ chatIn.value = ''; chatIn.blur(); }
     if (e.key === 'Enter') sendChat();
@@ -2242,6 +2755,7 @@ window.addEventListener('keydown', function(e){
     if (e.key === 'Enter' || e.key === 'Escape') tutClose();
     return;
   }
+  if (e.key === 'Escape' && els.scores && !els.scores.hidden){ els.scores.hidden = true; return; }
   if (e.key === 'Escape' && !els.tut.hidden){ tutClose(); return; }
   if (e.key === '?'){ if (els.tut.hidden) tutOpen(); else tutClose(); return; }
   if (e.key === 'Enter'){
@@ -2315,6 +2829,8 @@ var els = {
   bPause: document.getElementById('bPause'),
   bFP: document.getElementById('bFP'), bMenu: document.getElementById('bMenu'),
   tray: document.getElementById('tray'),
+  bSnd: document.getElementById('bSnd'), bScores: document.getElementById('bScores'),
+  scores: document.getElementById('scores'),
   s1: document.getElementById('s1'), s60: document.getElementById('s60'), s300: document.getElementById('s300')
 };
 els.ncars.textContent = cars.length; els.npeds.textContent = peds.length;
@@ -2332,6 +2848,8 @@ function syncBtns(){
   els.s60.classList.toggle('on', speed === 60 && !paused);
   els.s300.classList.toggle('on', speed === 300 && !paused);
   els.bMenu.classList.toggle('on', !els.tray.hidden);
+  els.bSnd.classList.toggle('on', sndOn);
+  els.bSnd.textContent = sndOn ? 'SND ON' : 'SND OFF';
   els.camlabel.textContent = mode === 'player'
     ? (camFP ? 'CAM-FP · ' : 'CAM-FOLLOW · ') + myName
     : 'CAM-ORBIT · ' + (autoCam ? 'AUTO' : 'MANUAL');
@@ -2347,6 +2865,10 @@ els.bFP.onclick = function(){
   camFP = !camFP; syncBtns();
 };
 els.bMenu.onclick = function(){ els.tray.hidden = !els.tray.hidden; syncBtns(); };
+els.bSnd.onclick = function(){ pokeAudio(); setSnd(!sndOn); };
+els.bScores.onclick = function(){ showScores(0); };
+document.getElementById('scoreClose').onclick = function(){ els.scores.hidden = true; };
+els.scores.addEventListener('pointerdown', function(e){ if (e.target === els.scores) els.scores.hidden = true; });
 els.bFire.addEventListener('pointerdown', function(){
   fireTouchHeld = true;
   if (!player.heli) fireAction();
@@ -2458,7 +2980,7 @@ function drawOverlay(){
     ov.fill();
   }
   if (mode === 'player' && !player.veh &&
-      (player.pvp || player.heli || (myRpg > 0 && heliActive()) || camFP)){   // crosshair
+      (player.pvp || player.heli || missionFight() || (myRpg > 0 && heliActive()) || camFP)){   // crosshair
     ov.fillStyle = 'rgba(255,157,90,0.95)';
     ov.fillRect(vw / 2 - 1.5, vh / 2 - 1.5, 3, 3);
     if (ads){
@@ -2477,6 +2999,24 @@ function drawOverlay(){
           heliActive() ? '#ff9d5a' : '#ffd28a');
       }
     }
+  }
+  if (mh && mh.mesh.visible && !mh.boomed){   // mission chopper tag
+    var mTag = project(mh.x, mh.y + 3.4, mh.z);
+    if (mTag){
+      var mTxt = 'LEX NEWS CHOPPER (LIVE)' + (mh.alive ? ' · HP ' + mh.hp + '/3' : '');
+      ov.font = '9.5px ui-monospace, Menlo, Consolas, monospace';
+      chip(mTag[0] - ov.measureText(mTxt).width / 2, mTag[1], mTxt, '#ff5f52');
+    }
+  }
+  if (mission.stage === 'fight'){   // mission timer, top center
+    var mSecs = (performance.now() - mission.t0f) / 1000;
+    var tTxt = 'THE RIBBON CUTTING · ' + mSecs.toFixed(1) + 's';
+    ov.font = '12px ui-monospace, Menlo, Consolas, monospace';
+    var tw3 = ov.measureText(tTxt).width;
+    ov.fillStyle = 'rgba(2,8,10,0.62)';
+    ov.fillRect(vw / 2 - tw3 / 2 - 8, 12, tw3 + 16, 20);
+    ov.fillStyle = '#ffd28a';
+    ov.fillText(tTxt, vw / 2 - tw3 / 2, 26);
   }
   if (show.trk){
     ov.globalAlpha = 0.55;
@@ -2614,10 +3154,12 @@ function frame(now){
   runBots(dt);
   updateRemotes(dt);
   updateHeli(dt);
+  updateMission(dt);
   updateRockets(dt);
   updateDrops(dt);
   updatePuffs(dt);
   updatePickups(dt);
+  updateRotorSnd();
   netTick(dt);
   diagTick(dt);
   if (mode === 'drone'){
@@ -2657,9 +3199,12 @@ function frame(now){
   var hint = '';
   if (mode === 'player'){
     if (isFrozen()) hint = 'FROZEN — ' + Math.ceil((player.frozenUntil - performance.now()) / 1000) + 's';
+    else if (missionFight()) hint = 'SHOOT DOWN THE CHOPPER · F/CLICK — FIRE · RMB — AIM · CHOPPER HP ' + mh.hp + '/3';
     else if (player.heli) hint = 'W/S A/D FLY · SPACE UP · SHIFT DOWN · HOLD F/CLICK — WATER CANNON · E — EXIT · HP ' + heli.hp + '/3';
     else if (player.veh) hint = 'E — EXIT · W/S DRIVE · A/D STEER · ' + Math.round(Math.abs(player.veh.spd) * 3.6) + ' KM/H';
+    else if (mission.stage === 'idle' && nearMissionTrig()) hint = 'E — START MISSION: THE RIBBON CUTTING';
     else if (canEnterHeli()) hint = 'E — FLY THE NEWS CHOPPER';
+    else if (!heliUnlocked && canEnterHeliBase()) hint = 'LOCKED — BEAT "THE RIBBON CUTTING" AT CITY HALL TO FLY';
     else if (player.grounded && nearestVehicle()) hint = 'E — ENTER CAR';
     else if (!player.grounded && player.thrusting) hint = 'JETPACK · FUEL ' + Math.round(player.fuel) + '%';
     else if (myRpg > 0 && heliActive()) hint = 'RPG ×' + myRpg + ' · F/CLICK — FIRE AT THE CHOPPER · RMB — AIM';

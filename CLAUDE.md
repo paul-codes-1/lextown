@@ -97,6 +97,18 @@ Key models to keep straight:
   `handleNet` → `remotes` map → `updateRemotes` interpolation (~160 ms
   buffer). Bots are just locally-generated state packets, so multiplayer
   features must work through that one pipeline to work offline.
+- **Mission "THE RIBBON CUTTING"** runs entirely client-side: its chopper
+  (`mh`) is a local NPC separate from the shared `heli`; only the final time
+  touches the server (`{t:'score'}` → validated → `scores.json` top-50 →
+  `{t:'scores'}` top-10 + chat announcement). Beating it sets
+  `lt_heli_unlock` in localStorage, which gates `canEnterHeli()` — the
+  server never knows about the unlock (clients are untrusted anyway).
+  Holding an RPG (mission or crate) forces first person via `rpgOut()` so
+  the chopper is aimable — third-person elevation can't look up. Sound is
+  synthesized WebAudio (no assets): `pokeAudio()` on first gesture, rotor
+  loop gain by distance, `lt_snd` mutes. Captions are the `#caption` DOM
+  bar. Dev hook: `#debug=1` exposes `window.__lt`; `#x=..&z=..` deep-links
+  the spawn point.
 - **The news chopper is a single shared object** (`heli`), not a vehicle in
   `vehicles`. Whoever pilots it (local via `player.heli`, remote via `m:3`
   state packets) drives the one mesh; parked position comes from

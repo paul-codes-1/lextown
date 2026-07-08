@@ -46,14 +46,21 @@ amount of data that passes through it.</p>
   relayed to other connected players in real time so they can see you.</li>
   <li><strong>Chat messages</strong> — relayed to everyone connected.
   Chat is public and unmoderated; do not share personal information.</li>
+  <li><strong>Mission high scores</strong> — if you finish the City Hall
+  mission, your chosen player name and completion time are added to the
+  public high-score board. That board is the one thing that persists on the
+  server: the fastest 50 times are kept until displaced by faster ones.
+  Use a name you're happy to see on a leaderboard.</li>
 </ul>
-<p>All of the above lives in server memory only while you are connected and
+<p>Everything else lives in server memory only while you are connected and
 is discarded when you disconnect. There is no database, no account system,
 and no chat history — a message that has scrolled away is gone.</p>
 
 <h2>WHAT WE STORE ON YOUR DEVICE</h2>
-<p>Two localStorage values: a flag that remembers you've dismissed the
-tutorial, and the player name you chose. No advertising, no fingerprinting.</p>
+<p>A few localStorage values: a flag that remembers you've dismissed the
+tutorial, the player name you chose, your sound on/off preference, and your
+mission progress (best time + whether you've unlocked the helicopter). No
+advertising, no fingerprinting.</p>
 
 <h2>ANALYTICS</h2>
 <p>We use Google Analytics 4 to understand aggregate usage (page views,
