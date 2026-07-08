@@ -22,6 +22,17 @@ const MIME = {
 
 const server = http.createServer((req, res) => {
   let urlPath = decodeURIComponent(req.url.split('?')[0]);
+  if (urlPath === '/admin/stats') {   // curl-able live counters (token-gated)
+    const q = new URL(req.url, 'http://x').searchParams;
+    if (!ADMIN_TOKEN || q.get('token') !== ADMIN_TOKEN) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify({
+      stats, online: [...clients.values()].map((c) => ({
+        id: c.id, name: c.name, ip: c.ip, pvp: c.pvp,
+        secs: Math.round((Date.now() - c.joinedAt) / 1000),
+      })),
+    }, null, 2));
+  }
   if (urlPath === '/') urlPath = '/index.html';
   const filePath = path.join(WEB_ROOT, path.normalize(urlPath));
   if (!filePath.startsWith(WEB_ROOT)) {
@@ -61,6 +72,61 @@ const WORLD = { x0: -545, x1: 325, z0: -425, z1: 325, y0: -1, y1: 190 };
 const FREEZE_MS = 4000;
 const HIT_RANGE = 80;          // max shooter->target distance for a valid tag
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+
+// --- telemetry -----------------------------------------------------------
+// Structured JSONL event log for post-hoc analytics + bug hunting. Rotates
+// daily, pruned after 14 days (matches the privacy policy's "routinely
+// discarded" operational-log language). Never logs chat content.
+const LOG_DIR = path.join(__dirname, 'logs');
+try { fs.mkdirSync(LOG_DIR, { recursive: true }); } catch {}
+let logStream = null, logDay = '';
+function pruneLogs() {
+  try {
+    for (const f of fs.readdirSync(LOG_DIR)) {
+      const m = f.match(/^events-(\d{4}-\d{2}-\d{2})\.jsonl$/);
+      if (m && Date.now() - Date.parse(m[1]) > 14 * 86400e3)
+        fs.unlinkSync(path.join(LOG_DIR, f));
+    }
+  } catch {}
+}
+function logEvent(e, data) {
+  const day = new Date().toISOString().slice(0, 10);
+  if (day !== logDay) {
+    try { if (logStream) logStream.end(); } catch {}
+    logDay = day;
+    logStream = fs.createWriteStream(path.join(LOG_DIR, `events-${day}.jsonl`), { flags: 'a' });
+    pruneLogs();
+  }
+  try {
+    logStream.write(JSON.stringify(Object.assign({ ts: new Date().toISOString(), e }, data)) + '\n');
+  } catch {}
+}
+const stats = {
+  boot: Date.now(), joins: 0, peak: 0, chats: 0, shots: 0, hits: 0,
+  corrections: 0, clientErrs: 0, kicks: 0, bans: 0,
+};
+function statsLine() {
+  const up = Math.round((Date.now() - stats.boot) / 60000);
+  return `up ${up}m · online ${clients.size} (peak ${stats.peak}) · joins ${stats.joins}` +
+    ` · chats ${stats.chats} · shots ${stats.shots} · freezes ${stats.hits}` +
+    ` · move-rejects ${stats.corrections} · client-errs ${stats.clientErrs}` +
+    ` · kicks ${stats.kicks} · bans ${stats.bans}`;
+}
+setInterval(() => {
+  logEvent('metrics', {
+    online: clients.size, peak: stats.peak, joins: stats.joins, chats: stats.chats,
+    shots: stats.shots, hits: stats.hits, corrections: stats.corrections,
+    clientErrs: stats.clientErrs, rssMb: Math.round(process.memoryUsage().rss / 1048576),
+  });
+}, 5 * 60 * 1000).unref();
+process.on('uncaughtException', (err) => {
+  logEvent('fatal', { msg: String(err && err.stack || err).slice(0, 500) });
+  console.error('[fatal]', err);
+  process.exit(1);   // systemd restarts us
+});
+process.on('unhandledRejection', (err) => {
+  logEvent('rejection', { msg: String(err && err.stack || err).slice(0, 500) });
+});
 
 // persistent ban list: [{ip, name}]
 const BANS_PATH = path.join(__dirname, 'bans.json');
@@ -124,7 +190,11 @@ function handleCommand(ws, client, text) {
     return;
   }
   if (!client.admin) { sys(ws, 'unknown command'); return; }
+  logEvent('admin_cmd', { by: client.name, cmd, arg: arg.slice(0, 60) });
   switch (cmd) {
+    case 'stats':
+      sys(ws, statsLine());
+      break;
     case 'list': {
       const lines = [...clients.values()].map((c) =>
         `${c.id} ${c.name || '?'} ${c.ip || '?'}${c.admin ? ' [admin]' : ''}`);
@@ -136,6 +206,7 @@ function handleCommand(ws, client, text) {
       if (!tc) { sys(ws, `no player "${arg}"`); break; }
       sys(tws, 'you were kicked by an admin');
       tws.close(4001, 'kicked');
+      stats.kicks++;
       sys(ws, `kicked ${tc.name}`);
       console.log(`[admin] ${client.name} kicked ${tc.name}`);
       break;
@@ -147,6 +218,7 @@ function handleCommand(ws, client, text) {
       saveBans();
       sys(tws, 'you were banned by an admin');
       tws.close(4003, 'banned');
+      stats.bans++;
       sys(ws, `banned ${tc.name} (${tc.ip})`);
       console.log(`[admin] ${client.name} banned ${tc.name} ${tc.ip}`);
       break;
@@ -170,7 +242,7 @@ function handleCommand(ws, client, text) {
       broadcast({ t: 'chat', id: 'SERVER', n: '⚙ ANNOUNCE', msg: arg.slice(0, 120) }, null);
       break;
     default:
-      sys(ws, 'commands: /list /kick <name> /ban <name> /unban <name|ip> /unfreeze <name> /announce <msg>');
+      sys(ws, 'commands: /stats /list /kick <name> /ban <name> /unban <name|ip> /unfreeze <name> /announce <msg>');
   }
 }
 
@@ -190,8 +262,13 @@ wss.on('connection', (ws, req) => {
     stateTimes: [],       // sliding window for packet-rate limiting
     chatTokens: 3, chatAt: Date.now(),
     strikes: 0,
+    joinedAt: Date.now(), chatCount: 0, shotCount: 0, tagCount: 0, errCount: 0,
   };
   clients.set(ws, client);
+  stats.joins++;
+  stats.peak = Math.max(stats.peak, clients.size);
+  logEvent('join', { id, ip, online: clients.size,
+    ua: String(req.headers['user-agent'] || '').slice(0, 120) });
   const peers = [...clients.values()]
     .filter((c) => c.id !== id && c.state)
     .map((c) => c.state);
@@ -215,6 +292,7 @@ wss.on('connection', (ws, req) => {
         const nm = msg.n.replace(NAME_RE, '').slice(0, 14);
         if (nm && nm !== client.name) {
           if (isBanned(null, nm)) { ws.close(4003, 'banned'); return; }
+          logEvent(client.name === null ? 'name' : 'rename', { id, n: nm });
           client.name = nm;
         }
       }
@@ -223,10 +301,13 @@ wss.on('connection', (ws, req) => {
 
       if (!validMove(client, msg, now)) {
         client.strikes++;
+        stats.corrections++;
         if (client.strikes % 5 === 1 && client.pos) // don't spam corrections
           ws.send(JSON.stringify({ t: 'correct', x: client.pos.x, y: client.pos.y, z: client.pos.z }));
-        if (client.strikes === 20)
+        if (client.strikes === 20) {
           console.log(`[cheat?] ${id}/${client.name} ${client.strikes} rejected moves`);
+          logEvent('cheat_suspect', { id, n: client.name, strikes: client.strikes });
+        }
         return; // rejected: not relayed
       }
       client.pos = { x: msg.x, y: msg.y, z: msg.z };
@@ -247,6 +328,8 @@ wss.on('connection', (ws, req) => {
       client.shotTimes = client.shotTimes.filter((t) => now - t < 1000);
       if (client.shotTimes.length >= 4) return;
       client.shotTimes.push(now);
+      client.shotCount++;
+      stats.shots++;
       if (![msg.ox, msg.oy, msg.oz, msg.dx, msg.dy, msg.dz].every((v) => num(v, -1000, 1000))) return;
       broadcast({ t: 'shot', id, ox: msg.ox, oy: msg.oy, oz: msg.oz,
         dx: msg.dx, dy: msg.dy, dz: msg.dz }, ws);
@@ -262,7 +345,31 @@ wss.on('connection', (ws, req) => {
       const d = Math.hypot(client.pos.x - target.pos.x, client.pos.z - target.pos.z);
       if (d > HIT_RANGE) return;
       target.frozenUntil = now + FREEZE_MS;
+      client.tagCount++;
+      stats.hits++;
+      logEvent('freeze', { by: id, target: target.id });
       broadcast({ t: 'frozen', id: target.id, dur: FREEZE_MS, by: id }, null);
+      return;
+    }
+
+    if (msg.t === 'err') {
+      // client-side uncaught errors (max 3/session, content truncated)
+      if (client.errCount >= 3) return;
+      client.errCount++;
+      stats.clientErrs++;
+      logEvent('client_err', { id, n: client.name,
+        msg: String(msg.msg || '').slice(0, 200), src: String(msg.src || '').slice(0, 100) });
+      return;
+    }
+
+    if (msg.t === 'diag') {
+      // periodic client perf beacon (fps etc.), max ~1/min enforced client-side
+      if (!client.lastDiag || now - client.lastDiag > 45000) {
+        client.lastDiag = now;
+        logEvent('diag', { id, fps: num(msg.fps, 0, 1000) ? msg.fps : null,
+          coarse: msg.coarse ? 1 : 0, dpr: num(msg.dpr, 0, 10) ? msg.dpr : null,
+          peers: num(msg.peers, 0, 1000) ? msg.peers : null });
+      }
       return;
     }
 
@@ -276,6 +383,8 @@ wss.on('connection', (ws, req) => {
       const text = msg.msg.replace(/[^\x20-\x7E]/g, '').trim().slice(0, 120);
       if (!text) return;
       if (text[0] === '/') { handleCommand(ws, client, text); return; }
+      client.chatCount++;
+      stats.chats++;   // volume only — content is never logged
       broadcast({ t: 'chat', id, n: client.name || id, msg: text }, null); // echo to sender too
       return;
     }
@@ -284,6 +393,9 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     clients.delete(ws);
     broadcast({ t: 'leave', id });
+    logEvent('leave', { id, n: client.name, secs: Math.round((Date.now() - client.joinedAt) / 1000),
+      chats: client.chatCount, shots: client.shotCount, tags: client.tagCount,
+      strikes: client.strikes, online: clients.size });
     console.log(`[leave] ${id} (${clients.size} online)`);
   });
   ws.on('error', () => ws.close());

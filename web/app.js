@@ -1393,6 +1393,31 @@ function updateRemotes(dt){
     ws = null;
   };
 })();
+// ---------- diagnostics beacons ----------
+// Uncaught errors (max 3/session) and a once-a-minute fps sample go to the
+// server's operational log so bugs in the wild are findable.
+var errSent = 0;
+window.addEventListener('error', function(ev){
+  if (errSent >= 3 || !online || !ws || ws.readyState !== 1) return;
+  errSent++;
+  try {
+    ws.send(JSON.stringify({t: 'err',
+      msg: String(ev.message || ev.error || 'unknown').slice(0, 180),
+      src: String(ev.filename || '').split('/').pop() + ':' + (ev.lineno || 0)}));
+  } catch (e){}
+});
+var diagFrames = 0, diagAcc = 0;
+function diagTick(dt){
+  diagFrames++;
+  diagAcc += dt;
+  if (diagAcc < 60) return;
+  var fps = Math.round(diagFrames / diagAcc);
+  diagFrames = 0; diagAcc = 0;
+  if (online && ws && ws.readyState === 1)
+    ws.send(JSON.stringify({t: 'diag', fps: fps, coarse: IS_COARSE ? 1 : 0,
+      dpr: Math.round((window.devicePixelRatio || 1) * 10) / 10, peers: peerCount()}));
+}
+
 var netAcc = 0;
 function netTick(dt){
   netAcc += dt;
@@ -1959,6 +1984,7 @@ function frame(now){
   runBots(dt);
   updateRemotes(dt);
   netTick(dt);
+  diagTick(dt);
   if (mode === 'drone'){
     applyWASD(dt);
     updateRig(dt);

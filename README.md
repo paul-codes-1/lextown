@@ -59,6 +59,24 @@ Set `ADMIN_TOKEN` in the server environment (e.g. a systemd drop-in). In-game, a
 /unban <name|ip>    lift a ban
 /unfreeze <name>    thaw someone
 /announce <msg>     server-wide message
+/stats              live counters (uptime, peak, joins, shots, freezes…)
+```
+
+## Diagnostics
+
+The server writes a structured event log to `logs/events-YYYY-MM-DD.jsonl`
+(joins/leaves with session stats, freezes, admin actions, cheat suspects,
+client error reports, fps samples — chat content is never logged), rotated
+daily and pruned after 14 days. Live counters are also at
+`GET /admin/stats?token=<ADMIN_TOKEN>`. Clients report up to 3 uncaught
+errors and a once-a-minute fps sample per session.
+
+Handy queries on the box:
+
+```bash
+jq -r 'select(.e=="leave") | [.n, .secs] | @tsv' logs/events-*.jsonl   # session lengths
+jq 'select(.e=="client_err")' logs/events-*.jsonl                     # bugs in the wild
+jq 'select(.e=="metrics") | {ts,online,rssMb}' logs/events-*.jsonl    # 5-min health snapshots
 ```
 
 ### URL options

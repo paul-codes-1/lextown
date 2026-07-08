@@ -41,6 +41,9 @@ ssh -i ~/.ssh/lextown.pem ubuntu@44.211.95.210 \
 - `ADMIN_TOKEN` lives in `/etc/systemd/system/lextown.service.d/admin.conf`
   on the box, never in the repo. Bans persist to `/opt/lextown/bans.json`
   (gitignored).
+- Telemetry: JSONL event log in `/opt/lextown/logs/` (14-day auto-prune),
+  live counters via in-game `/stats` or `GET /admin/stats?token=…`. **Never
+  log chat content** — privacy.html promises it isn't stored.
 - The box has **no static IP** (account quota). IP survives reboots but
   changes on stop/start — then fix the `@` and `www` A records in Route53
   zone `Z0193083291ALXGNIZKM6`.

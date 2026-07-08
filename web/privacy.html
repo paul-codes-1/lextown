@@ -67,9 +67,11 @@ the game works identically without it.</p>
 
 <h2>SERVER LOGS</h2>
 <p>Like nearly every website, the server keeps short-lived operational logs
-(connections, disconnections, errors) that can include IP addresses. These
-are used only to keep the service running and to deal with abuse, and are
-routinely discarded. The game is hosted on Amazon Web Services in the United
+(connections, disconnections, session lengths, error reports, frame-rate
+samples, and gameplay counts like darts fired) that can include IP addresses.
+Chat content is never logged. These logs are used only to keep the service
+running, find bugs, and deal with abuse; they are automatically deleted after
+about two weeks. The game is hosted on Amazon Web Services in the United
 States, whose infrastructure applies its own standard logging.</p>
 
 <h2>CHILDREN</h2>
