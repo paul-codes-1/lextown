@@ -1196,6 +1196,7 @@ function updatePlayer(dt){
   player.thrusting = thrusting;
   if (player.grounded) player.fuel = Math.min(100, player.fuel + 30 * dt);
   player.vy -= 30 * dt;
+  if (player.vy < -30) player.vy = -30;   // terminal velocity
   player.y += player.vy * dt;
   if (player.y > 185){ player.y = 185; if (player.vy > 0) player.vy = 0; }
   if (player.y <= gy && player.vy <= 0){

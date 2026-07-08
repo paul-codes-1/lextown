@@ -141,9 +141,12 @@ function isBanned(ip, name) {
   return bans.some((b) => b.ip === ip || (n && b.name && b.name.toLowerCase() === n));
 }
 // per-mode speed caps (m/s): m=0 walk (run 13.5), m=1 jetpack (fly 15 h,
-// 13 v), m=2 driving (30 h). Mode is client-declared, so a cheater can claim
-// "driving" for the highest cap — this bounds absurdity, not dishonesty.
-const CAPS = { 0: { h: 18, v: 15 }, 1: { h: 20, v: 16 }, 2: { h: 38, v: 12 } };
+// 13 v up), m=2 driving (30 h). Mode is client-declared, so a cheater can
+// claim "driving" for the highest cap — this bounds absurdity, not honesty.
+// `v` caps UPWARD speed only; falling is capped separately at terminal
+// velocity, otherwise legitimate falls past ~4m get rejected (rubber-band).
+const CAPS = { 0: { h: 18, v: 14 }, 1: { h: 20, v: 16 }, 2: { h: 38, v: 12 } };
+const MAX_FALL = 34;   // client terminal velocity is 30
 const MAX_STATE_HZ = 15;   // packets/sec before we start dropping
 const NAME_RE = /[^A-Za-z0-9 _-]/g;
 
@@ -169,8 +172,10 @@ function validMove(c, msg, now) {
   const caps = CAPS[msg.m === 1 || msg.m === 2 ? msg.m : 0];
   const dt = Math.min(2, Math.max(0.03, (now - c.posAt) / 1000));
   const dh = Math.hypot(msg.x - c.pos.x, msg.z - c.pos.z);
-  const dv = Math.abs(msg.y - c.pos.y);
-  return dh <= caps.h * dt + 0.5 && dv <= caps.v * dt + 0.5;
+  const up = msg.y - c.pos.y;   // + rising, - falling
+  return dh <= caps.h * dt + 0.5 &&
+    up <= caps.v * dt + 0.5 &&
+    -up <= MAX_FALL * dt + 0.5;
 }
 
 function sys(ws, msg) {
