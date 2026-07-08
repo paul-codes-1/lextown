@@ -1026,8 +1026,16 @@ function fireDart(){
   lastFire = now;
   camera.getWorldDirection(_aim);
   player.ry = Math.atan2(_aim.x, _aim.z);     // face where you shoot
-  var ox = player.x + _aim.x * 1.1, oy = player.y + 1.7 + _aim.y * 1.1,
-      oz = player.z + _aim.z * 1.1;
+  var ox, oy, oz;
+  if (ads){   // spawn on the reticle ray so ADS shots land where the dot is
+    ox = camera.position.x + _aim.x * 6;
+    oy = camera.position.y + _aim.y * 6;
+    oz = camera.position.z + _aim.z * 6;
+  } else {
+    ox = player.x + _aim.x * 1.1;
+    oy = player.y + 1.7 + _aim.y * 1.1;
+    oz = player.z + _aim.z * 1.1;
+  }
   spawnDart(ox, oy, oz, _aim.x, _aim.y, _aim.z, true);
   if (online && ws && ws.readyState === 1)
     ws.send(JSON.stringify({t: 'shot',
@@ -1203,7 +1211,7 @@ function updatePlayer(dt){
   player.av.g.position.set(player.x, player.y, player.z);
   player.av.g.rotation.y = player.ry;
 }
-var camR = 13;
+var camR = 13, aimBlend = 0;
 function updatePlayerCam(dt){
   followPause -= dt;
   // soft follow: settle behind the character/car when the mouse is idle
@@ -1219,17 +1227,22 @@ function updatePlayerCam(dt){
   rigP.el = Math.max(-0.15, Math.min(1.35, rigP.el));
   rigP.r = Math.max(4, Math.min(90, rigP.r));
   var aiming = ads && player.pvp && !player.veh;
-  camR += ((aiming ? 4.6 : rigP.r) - camR) * Math.min(1, dt * 9);
+  aimBlend += ((aiming ? 1 : 0) - aimBlend) * Math.min(1, dt * 9);
+  camR += ((aiming ? 4.4 : rigP.r) - camR) * Math.min(1, dt * 9);
   var tf = aiming ? 42 : 55;
   if (Math.abs(camera.fov - tf) > 0.05){
     camera.fov += (tf - camera.fov) * Math.min(1, dt * 9);
     camera.updateProjectionMatrix();
   }
+  // over-the-shoulder shift while aiming so the reticle clears the head
+  var offX = Math.cos(rigP.az) * 1.25 * aimBlend;
+  var offZ = -Math.sin(rigP.az) * 1.25 * aimBlend;
+  var offY = 0.4 * aimBlend;
   camera.position.set(
-    player.x + camR * Math.cos(rigP.el) * Math.sin(rigP.az),
-    player.y + 1.6 + camR * Math.sin(rigP.el),
-    player.z + camR * Math.cos(rigP.el) * Math.cos(rigP.az));
-  camera.lookAt(player.x, player.y + 2.2, player.z);
+    player.x + offX + camR * Math.cos(rigP.el) * Math.sin(rigP.az),
+    player.y + 1.6 + offY + camR * Math.sin(rigP.el),
+    player.z + offZ + camR * Math.cos(rigP.el) * Math.cos(rigP.az));
+  camera.lookAt(player.x + offX, player.y + 2.2 + offY, player.z + offZ);
 }
 
 // ---------- net layer (WebSocket or local bot sim) ----------
