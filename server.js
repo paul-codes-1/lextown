@@ -54,13 +54,17 @@ const server = http.createServer((req, res) => {
 
 // --- multiplayer relay with server-side validation -----------------------
 // Protocol (JSON, one object per message):
-//   server -> client on connect:  {t:'welcome', id, peers:[<last state of each peer>]}
-//   client -> server ~10Hz:       {t:'state', n:<name>, c:<color>, x,y,z, ry}
-//   server -> others (relayed):   {t:'state', id, n, c, x,y,z, ry}
+//   server -> client on connect:  {t:'welcome', id, peers:[...], heli:{...}}
+//   client -> server ~10Hz:       {t:'state', n:<name>, c:<color>, m, p, x,y,z, ry}
+//   server -> others (relayed):   {t:'state', id, n, c, m, p, x,y,z, ry}
 //   server -> cheater (rejected): {t:'correct', x,y,z}  (client must snap back)
 //   client -> server:             {t:'chat', msg}       (<=120 chars, rate limited)
 //   server -> everyone:           {t:'chat', id, n, msg}
 //   server -> others on drop:     {t:'leave', id}
+//   news chopper:                 {t:'heli', a:'enter'|'exit'|'deny'|'snap'|'hp'|'down', ...}
+//   RPG rockets (cosmetic relay): {t:'rocket', ox..dz}; hit claim {t:'rhit'}
+//   water cannon:                 {t:'spray', ox..dz} relay; {t:'push', target, vx,vy,vz}
+//                                 -> validated, sent to all as {t:'pushed', id, vx,vy,vz}
 //
 // Movement validation: the server is authoritative about *plausibility*, not
 // physics. Each accepted state must be inside the world bounds and reachable
@@ -104,11 +108,14 @@ function logEvent(e, data) {
 const stats = {
   boot: Date.now(), joins: 0, peak: 0, chats: 0, shots: 0, hits: 0,
   corrections: 0, clientErrs: 0, kicks: 0, bans: 0,
+  heliFlights: 0, heliDowns: 0, rockets: 0, pushes: 0,
 };
 function statsLine() {
   const up = Math.round((Date.now() - stats.boot) / 60000);
   return `up ${up}m · online ${clients.size} (peak ${stats.peak}) · joins ${stats.joins}` +
     ` · chats ${stats.chats} · shots ${stats.shots} · freezes ${stats.hits}` +
+    ` · heli flights ${stats.heliFlights} · heli downs ${stats.heliDowns}` +
+    ` · rockets ${stats.rockets} · pushes ${stats.pushes}` +
     ` · move-rejects ${stats.corrections} · client-errs ${stats.clientErrs}` +
     ` · kicks ${stats.kicks} · bans ${stats.bans}`;
 }
@@ -141,12 +148,31 @@ function isBanned(ip, name) {
   return bans.some((b) => b.ip === ip || (n && b.name && b.name.toLowerCase() === n));
 }
 // per-mode speed caps (m/s): m=0 walk (run 13.5), m=1 jetpack (fly 15 h,
-// 13 v up), m=2 driving (30 h). Mode is client-declared, so a cheater can
-// claim "driving" for the highest cap — this bounds absurdity, not honesty.
+// 13 v up), m=2 driving (30 h), m=3 news chopper (36 h, 17 climb). Mode is
+// client-declared, so a cheater can claim the highest cap — this bounds
+// absurdity, not honesty.
 // `v` caps UPWARD speed only; falling is capped separately at terminal
 // velocity, otherwise legitimate falls past ~4m get rejected (rubber-band).
-const CAPS = { 0: { h: 18, v: 14 }, 1: { h: 20, v: 16 }, 2: { h: 38, v: 12 } };
+const CAPS = { 0: { h: 18, v: 14 }, 1: { h: 20, v: 16 }, 2: { h: 38, v: 12 }, 3: { h: 42, v: 20 } };
 const MAX_FALL = 34;   // client terminal velocity is 30
+
+// --- the news chopper -----------------------------------------------------
+// One shared helicopter; the server arbitrates who flies it, tracks its hp,
+// and validates shoot-down claims. Position rides along on the pilot's state
+// packets (m=3). Pad = the helipad on Big Blue.
+const HELI_PAD = { x: -127, y: 129.8, z: 11, th: 1.5708 };
+const HELI = { pilot: null, hp: 3, x: HELI_PAD.x, y: HELI_PAD.y, z: HELI_PAD.z, th: HELI_PAD.th };
+function heliSnap() {
+  return { t: 'heli', a: 'snap', pilot: HELI.pilot, hp: HELI.hp,
+    x: HELI.x, y: HELI.y, z: HELI.z, th: HELI.th };
+}
+function heliDown(by) {
+  stats.heliDowns++;
+  logEvent('heli_down', { by });
+  broadcast({ t: 'heli', a: 'down', by }, null);
+  HELI.pilot = null; HELI.hp = 3;
+  HELI.x = HELI_PAD.x; HELI.y = HELI_PAD.y; HELI.z = HELI_PAD.z; HELI.th = HELI_PAD.th;
+}
 const MAX_STATE_HZ = 15;   // packets/sec before we start dropping
 const NAME_RE = /[^A-Za-z0-9 _-]/g;
 
@@ -169,13 +195,17 @@ function validMove(c, msg, now) {
   if (!num(msg.x, WORLD.x0, WORLD.x1) || !num(msg.z, WORLD.z0, WORLD.z1) ||
       !num(msg.y, WORLD.y0, WORLD.y1) || !num(msg.ry, -10, 10)) return false;
   if (!c.pos) return true; // first packet fixes the spawn
-  const caps = CAPS[msg.m === 1 || msg.m === 2 ? msg.m : 0];
+  const m = CAPS[msg.m] ? msg.m : 0;
+  const caps = CAPS[m];
+  // entering/exiting a vehicle teleports the avatar a few meters — allow a
+  // one-packet hop when the declared mode changes
+  const slack = m !== c.lastM ? 7 : 0;
   const dt = Math.min(2, Math.max(0.03, (now - c.posAt) / 1000));
   const dh = Math.hypot(msg.x - c.pos.x, msg.z - c.pos.z);
   const up = msg.y - c.pos.y;   // + rising, - falling
-  return dh <= caps.h * dt + 0.5 &&
-    up <= caps.v * dt + 0.5 &&
-    -up <= MAX_FALL * dt + 0.5;
+  return dh <= caps.h * dt + 0.5 + slack &&
+    up <= caps.v * dt + 0.5 + slack &&
+    -up <= MAX_FALL * dt + 0.5 + slack;
 }
 
 function sys(ws, msg) {
@@ -265,6 +295,8 @@ wss.on('connection', (ws, req) => {
     shotTimes: [],
     admin: false,
     stateTimes: [],       // sliding window for packet-rate limiting
+    lastM: 0,             // last accepted mode (for mode-switch slack)
+    rocketTimes: [], sprayTimes: [], pushTimes: [], lastRhit: 0,
     chatTokens: 3, chatAt: Date.now(),
     strikes: 0,
     joinedAt: Date.now(), chatCount: 0, shotCount: 0, tagCount: 0, errCount: 0,
@@ -277,7 +309,7 @@ wss.on('connection', (ws, req) => {
   const peers = [...clients.values()]
     .filter((c) => c.id !== id && c.state)
     .map((c) => c.state);
-  ws.send(JSON.stringify({ t: 'welcome', id, peers }));
+  ws.send(JSON.stringify({ t: 'welcome', id, peers, heli: heliSnap() }));
   console.log(`[join] ${id} (${clients.size} online)`);
 
   ws.on('message', (data) => {
@@ -317,12 +349,17 @@ wss.on('connection', (ws, req) => {
       }
       client.pos = { x: msg.x, y: msg.y, z: msg.z };
       client.posAt = now;
+      const cleanM = CAPS[msg.m] ? msg.m : 0;
+      client.lastM = cleanM;
       const clean = { t: 'state', id, n: client.name || id,
         c: typeof msg.c === 'number' ? msg.c : 0x3a76c4,
-        m: msg.m === 1 || msg.m === 2 ? msg.m : 0,
+        m: cleanM,
         p: client.pvp,
         x: msg.x, y: msg.y, z: msg.z, ry: msg.ry };
       client.state = clean;
+      if (HELI.pilot === id && cleanM === 3) {   // heli rides the pilot's state
+        HELI.x = msg.x; HELI.y = msg.y + 1.2; HELI.z = msg.z; HELI.th = msg.ry;
+      }
       broadcast(clean, ws);
       return;
     }
@@ -354,6 +391,87 @@ wss.on('connection', (ws, req) => {
       stats.hits++;
       logEvent('freeze', { by: id, target: target.id });
       broadcast({ t: 'frozen', id: target.id, dur: FREEZE_MS, by: id }, null);
+      return;
+    }
+
+    if (msg.t === 'heli') {
+      if (msg.a === 'enter') {
+        if (HELI.pilot) { ws.send(JSON.stringify({ t: 'heli', a: 'deny' })); return; }
+        if (!client.pos ||
+            Math.hypot(client.pos.x - HELI.x, client.pos.z - HELI.z) > 12 ||
+            Math.abs(client.pos.y - HELI.y) > 8) return;
+        HELI.pilot = id;
+        stats.heliFlights++;
+        logEvent('heli_enter', { id, n: client.name });
+        broadcast({ t: 'heli', a: 'enter', id }, null);
+        return;
+      }
+      if (msg.a === 'exit') {
+        if (HELI.pilot !== id) return;
+        HELI.pilot = null;
+        if (msg.crash) { heliDown(id); return; }
+        if (num(msg.x, WORLD.x0, WORLD.x1) && num(msg.y, 0, WORLD.y1) &&
+            num(msg.z, WORLD.z0, WORLD.z1)) {
+          HELI.x = msg.x; HELI.y = msg.y; HELI.z = msg.z;
+          if (num(msg.th, -10, 10)) HELI.th = msg.th;
+        }
+        broadcast({ t: 'heli', a: 'exit', id, x: HELI.x, y: HELI.y, z: HELI.z, th: HELI.th }, ws);
+        return;
+      }
+      return;
+    }
+
+    if (msg.t === 'rocket') {
+      // cosmetic RPG-rocket relay (anti-chopper play; no PvP opt-in needed), max 2/s
+      client.rocketTimes = client.rocketTimes.filter((t) => now - t < 1000);
+      if (client.rocketTimes.length >= 2) return;
+      client.rocketTimes.push(now);
+      stats.rockets++;
+      if (![msg.ox, msg.oy, msg.oz, msg.dx, msg.dy, msg.dz].every((v) => num(v, -1000, 1000))) return;
+      broadcast({ t: 'rocket', id, ox: msg.ox, oy: msg.oy, oz: msg.oz,
+        dx: msg.dx, dy: msg.dy, dz: msg.dz }, ws);
+      return;
+    }
+
+    if (msg.t === 'rhit') {
+      // rocket hit the chopper: only while piloted, not by the pilot, ranged,
+      // and at most one claimed hit per shooter per rocket cooldown
+      if (!HELI.pilot || HELI.pilot === id) return;
+      if (now - client.lastRhit < 1100) return;
+      client.lastRhit = now;
+      if (!client.pos || Math.hypot(client.pos.x - HELI.x, client.pos.z - HELI.z) > 320) return;
+      HELI.hp--;
+      logEvent('heli_hit', { by: id, hp: HELI.hp });
+      if (HELI.hp > 0) broadcast({ t: 'heli', a: 'hp', hp: HELI.hp }, null);
+      else heliDown(id);
+      return;
+    }
+
+    if (msg.t === 'spray') {
+      // cosmetic water-cannon relay: pilot only, max 6/s
+      if (HELI.pilot !== id) return;
+      client.sprayTimes = client.sprayTimes.filter((t) => now - t < 1000);
+      if (client.sprayTimes.length >= 6) return;
+      client.sprayTimes.push(now);
+      if (![msg.ox, msg.oy, msg.oz, msg.dx, msg.dy, msg.dz].every((v) => num(v, -1000, 1000))) return;
+      broadcast({ t: 'spray', id, ox: msg.ox, oy: msg.oy, oz: msg.oz,
+        dx: msg.dx, dy: msg.dy, dz: msg.dz }, ws);
+      return;
+    }
+
+    if (msg.t === 'push') {
+      // water-cannon shove: pilot only, bounded impulse, target near the heli
+      if (HELI.pilot !== id) return;
+      client.pushTimes = client.pushTimes.filter((t) => now - t < 1000);
+      if (client.pushTimes.length >= 10) return;
+      client.pushTimes.push(now);
+      if (!num(msg.vx, -16, 16) || !num(msg.vz, -16, 16) || !num(msg.vy, 0, 8)) return;
+      const target = [...clients.values()].find((c) => c.id === msg.target);
+      if (!target || !target.pos) return;
+      if (Math.hypot(HELI.x - target.pos.x, HELI.z - target.pos.z) > 55 ||
+          Math.abs(HELI.y - target.pos.y) > 45) return;
+      stats.pushes++;
+      broadcast({ t: 'pushed', id: target.id, vx: msg.vx, vy: msg.vy, vz: msg.vz }, null);
       return;
     }
 
@@ -397,6 +515,7 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     clients.delete(ws);
+    if (HELI.pilot === id) heliDown(null);   // pilot vanished: chopper crashes
     broadcast({ t: 'leave', id });
     logEvent('leave', { id, n: client.name, secs: Math.round((Date.now() - client.joinedAt) / 1000),
       chats: client.chatCount, shots: client.shotCount, tags: client.tagCount,

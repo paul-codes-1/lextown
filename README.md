@@ -11,8 +11,9 @@ Built with [Three.js](https://threejs.org/) (vendored, no build step) and a smal
 The map is the real downtown core, stylized:
 
 - **Streets** — Third, Second, Short, Main, Vine, and High crossed by Broadway, Mill, Upper, Limestone, and MLK, with the correct one-way pairs (Main/Short eastbound, Vine/Second westbound, Upper northbound, Limestone southbound) and working traffic signals.
-- **Landmarks** — Big Blue (Lexington Financial Center), Kincaid Tower, City Center, Central Bank, 21c Museum Hotel, the old courthouse dome on Cheapside, the Circuit Court towers, Central Library, Phoenix Park, Triangle Park, and Rupp Arena.
+- **Landmarks** — Big Blue (Lexington Financial Center), the Central Bank Tower, City Center, 21c Museum Hotel, the old courthouse dome on Cheapside, the Circuit Court towers, City Hall, Central Library, Phoenix Park, Triangle Park, and Rupp Arena.
 - **Life** — 66 cars that queue and obey signals (steal any of them with `E`), 46 pedestrians, surface parking lots, Lexington-style green street-name blades at every corner, streetlights and neon that come on at dusk, sun shadows that rake through the afternoon.
+- **The news chopper** — a helipad juts off Big Blue's roof with the **LEXINGTON KY NEWS** helicopter parked on it. One pilot at a time; its belly-mounted water cannon shoves players around. While it's airborne, RPG crates unlock around downtown — three rockets bring it down (it respawns on the pad).
 
 ## Quick start
 
@@ -32,7 +33,10 @@ No server? Opening `web/index.html` directly (or hosting `web/` statically) runs
 | `WASD` / arrows | Walk (relative to camera) |
 | `Shift` | Run |
 | `Space` | Jump — **hold in mid-air to fly the jetpack** (fuel drains, recharges on the ground; land on rooftops) |
-| `E` | Enter / exit the nearest car — W/S to drive, A/D to steer, up to 108 km/h |
+| `E` | Enter / exit the nearest car — W/S to drive, A/D to steer, up to 108 km/h. On Big Blue's helipad it boards the **news chopper** instead |
+| In the chopper | W/S fly, A/D turn, `Space` climb, `Shift` descend, `E` lands (mid-air it bails out and the chopper crashes). Hold `F`/click for the **water cannon** — the jet pushes players around |
+| RPG | While the chopper is up, crates glow at five spots downtown. Walk over one to grab a launcher (2 rockets); `F` fires. Three hits down the chopper; rockets are harmless to people |
+| `C` | First-person / third-person camera (scrolling all the way in works too) |
 | Drag / wheel | Orbit / zoom camera |
 | `G` | Draw/holster the nerf blaster — **drawing opts you into PvP**; holstered players can't be tagged |
 | `F` / left-click | Fire a foam dart (a hit freezes the target in an ice cube for 4 s — no health, no scores) |
@@ -44,6 +48,8 @@ No server? Opening `web/index.html` directly (or hosting `web/` statically) runs
 | `1` `2` `3` | Time speed 1× / 60× / 300× |
 
 Desktop mouse: click the game once to enter mouse-look (pointer lock) — the camera follows your mouse with no buttons held, settles in behind you while you walk or drive, and Esc releases the cursor.
+
+The HUD keeps just chat, status, and a `?` help button on screen; everything else (drone cam, first-person toggle, overlay toggles, sim speed) lives under the **SIM** menu in the corner. On touch devices the NERF / FIRE / E-VEH / JUMP buttons appear alongside it.
 
 Touch: left half of the screen is a virtual movement stick, right half orbits the camera, JUMP/FIRE/NERF buttons in the control rail.
 
@@ -89,7 +95,8 @@ jq 'select(.e=="metrics") | {ts,online,rssMb}' logs/events-*.jsonl    # 5-min he
 
 `server.js` serves the static client and relays `{t:'state', x,y,z,ry}` packets (sent at 10 Hz) between connections, with server-side sanity enforcement:
 
-- **Movement validation** — every accepted state must be inside the world bounds and reachable from the last accepted state at legal speed, with per-mode caps (walking, jetpack, driving — the mode flag is client-declared, so this bounds absurdity rather than proving honesty). Rejected moves are not relayed; the offending client gets a `{t:'correct'}` that snaps it back. Names are sanitized and pinned server-side on first contact.
+- **Movement validation** — every accepted state must be inside the world bounds and reachable from the last accepted state at legal speed, with per-mode caps (walking, jetpack, driving, helicopter — the mode flag is client-declared, so this bounds absurdity rather than proving honesty). Rejected moves are not relayed; the offending client gets a `{t:'correct'}` that snaps it back. Names are sanitized and pinned server-side on first contact.
+- **The news chopper** — the server arbitrates the single pilot seat (`{t:'heli'}` enter/exit), tracks hull points, validates rocket-hit claims (`{t:'rhit'}`: shooter in range, not the pilot, rate-limited) and water-cannon shoves (`{t:'push'}`: pilot only, bounded impulse, target near the heli — relayed to everyone as `{t:'pushed'}`). Rockets and spray are cosmetic relays like darts. If the pilot disconnects, the chopper crashes and respawns on the pad.
 - **Chat** — `{t:'chat', msg}` messages are stripped to printable ASCII, capped at 120 chars, and rate-limited per client (3-message burst, ~1/1.2 s refill) before being broadcast to everyone. The client shows them in the log and as a speech bubble over the sender's head.
 - **Packet-rate limiting** — state packets beyond 15/s per client are dropped.
 

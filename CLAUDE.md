@@ -54,13 +54,23 @@ ssh -i ~/.ssh/lextown.pem ubuntu@44.211.95.210 \
 Two files carry everything:
 
 **`server.js`** — static file host for `web/` + WS relay with server-side
-sanity enforcement. Message types: `welcome`, `state` (10 Hz, per-mode speed
-caps — mode `m` is client-declared walk/fly/drive so caps bound absurdity,
-not dishonesty), `chat` (token bucket, ASCII-sanitized; leading `/` routes to
-admin commands gated by `ADMIN_TOKEN`), `shot` (cosmetic dart relay), `hit`
-(freeze-tag validation: both opted in via `p` flag, ≤80 m, no re-freeze →
-broadcasts `frozen`), `correct` (movement rejection snap-back), `sys`, `leave`.
+sanity enforcement. Message types: `welcome` (includes a heli snapshot),
+`state` (10 Hz, per-mode speed caps — mode `m` is client-declared
+walk/fly/drive/heli so caps bound absurdity, not dishonesty; a mode *switch*
+gets a one-packet 7 m slack because entering vehicles teleports the avatar),
+`chat` (token bucket, ASCII-sanitized; leading `/` routes to admin commands
+gated by `ADMIN_TOKEN`), `shot` (cosmetic dart relay), `hit` (freeze-tag
+validation: both opted in via `p` flag, ≤80 m, no re-freeze → broadcasts
+`frozen`), `heli` (single-pilot arbitration: enter needs proximity, exit can
+carry `crash:1`, pilot disconnect = crash), `rhit` (rocket-hit claim: in
+range, not the pilot, rate-limited → `hp`/`down` broadcasts, hp resets to 3
+at the pad), `rocket`/`spray` (cosmetic relays), `push` (water-cannon shove:
+pilot only, bounded impulse, target near heli → `pushed` to everyone),
+`correct` (movement rejection snap-back), `sys`, `leave`.
 Names are sanitized server-side; IP+name bans are checked at connect.
+Gotcha: client headings must be wrapped to ±π before sending (`ry` is
+bounds-checked ±10) — un-wrapped accumulating headings (heli/car circling)
+eventually get every state packet rejected.
 
 **`web/app.js`** — one IIFE, ~2,000 lines, ordered sections (renderer → grid →
 textures → world building → cars/peds → avatar/player → net/chat → bots →
@@ -87,13 +97,30 @@ Key models to keep straight:
   `handleNet` → `remotes` map → `updateRemotes` interpolation (~160 ms
   buffer). Bots are just locally-generated state packets, so multiplayer
   features must work through that one pipeline to work offline.
+- **The news chopper is a single shared object** (`heli`), not a vehicle in
+  `vehicles`. Whoever pilots it (local via `player.heli`, remote via `m:3`
+  state packets) drives the one mesh; parked position comes from
+  `heli`/`exit` messages. The pilot mirrors the heli into `player.x/y/z`
+  (y − 1.2) so netTick/camera just follow. RPG crates (`rpgSpots`) unlock
+  when `heliActive()`; rockets only damage the chopper; the water cannon
+  pushes via `{t:'push'}`→`{t:'pushed'}` with client-side knockback
+  (`player.kx/kz`) that scales walking input down so the combined speed
+  stays under the server's per-mode cap.
 - **HUD is two layers**: DOM chips/buttons (`index.html`) + a 2D overlay
   canvas (detection boxes, name tags, labels, joystick, crosshair) drawn in
   `drawOverlay` every frame.
 - **Cameras**: player mode uses pointer lock (mouse-look, LMB fire, RMB ADS
-  with over-the-shoulder offset) + soft follow-cam; drone mode is the
-  orbit/auto-tour rig. `IS_COARSE` (touch) disables pointer lock, shadows,
-  and antialiasing and swaps in the floating joystick.
+  with over-the-shoulder offset) + soft follow-cam, plus a first-person
+  toggle (`camFP`, key C / scroll all the way in; C in drone mode still
+  toggles the auto-tour). FP hides the avatar every frame in
+  `updatePlayerCam` — restore visibility when leaving player mode. Drone
+  mode is the orbit/auto-tour rig. `IS_COARSE` (touch) disables pointer
+  lock, shadows, and antialiasing and swaps in the floating joystick.
+- **HUD**: desktop shows only chat + status + `?` + the SIM menu button;
+  overlay/sim toggles live in the `#tray` popover and the touch action
+  buttons (`#touchbtns`) render only on coarse pointers. New controls belong
+  in the tutorial grid, the README table, the `#help` bar, AND usually the
+  SIM tray.
 
 ## Conventions & gotchas
 

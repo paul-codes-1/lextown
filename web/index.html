@@ -13,7 +13,7 @@
 
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>LEXTOWN — Free Multiplayer Downtown Lexington KY Game (Play in Browser)</title>
-<meta name="description" content="Walk, jetpack, and drive around a 3D multiplayer recreation of downtown Lexington, Kentucky — Main Street, Rupp Arena, Big Blue, and the courthouse square. Free, no download, no account. Everyone plays in one shared world.">
+<meta name="description" content="Walk, jetpack, drive, and fly the news helicopter around a 3D multiplayer recreation of downtown Lexington, Kentucky — Main Street, Rupp Arena, Big Blue, and the courthouse square. Free, no download, no account. Everyone plays in one shared world.">
 <link rel="canonical" href="https://playlextown.com/">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#0b0714">
@@ -37,7 +37,7 @@
   "alternateName": "LEXTOWN",
   "url": "https://playlextown.com/",
   "image": "https://playlextown.com/og.jpg",
-  "description": "A free browser-based multiplayer game set in a stylized 3D recreation of downtown Lexington, Kentucky. Walk the real street grid, fly a jetpack onto rooftops, drive cars, and chat — with live traffic, pedestrians, and a day/night cycle.",
+  "description": "A free browser-based multiplayer game set in a stylized 3D recreation of downtown Lexington, Kentucky. Walk the real street grid, fly a jetpack onto rooftops, drive cars, pilot the news helicopter, and chat — with live traffic, pedestrians, and a day/night cycle.",
   "playMode": "MultiPlayer",
   "applicationCategory": "Game",
   "gamePlatform": "Web browser",
@@ -73,15 +73,15 @@
         backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
   #topleft{position:absolute;top:14px;left:14px;display:flex;flex-direction:column;gap:8px;max-width:72vw}
   #ident b{color:var(--teal);font-weight:600}
-  #ident .sub{color:#9adfd2;font-size:10px;letter-spacing:.14em}
-  #clock{font-size:34px;font-weight:600;letter-spacing:.06em;line-height:1.05;
-         font-variant-numeric:tabular-nums;color:#f2fffb;padding:8px 12px 6px}
-  #clock small{display:block;font-size:9.5px;font-weight:400;color:#9adfd2;letter-spacing:.16em;margin-top:4px}
-  #topright{position:absolute;top:14px;right:14px;display:flex;flex-direction:column;align-items:flex-end;gap:8px}
-  #rec{font-variant-numeric:tabular-nums}
-  #rec .dot{color:var(--red);animation:blink 1.2s steps(2,start) infinite}
+  #clock{font-size:22px;font-weight:600;letter-spacing:.06em;line-height:1.1;margin-top:4px;
+         font-variant-numeric:tabular-nums;color:#f2fffb}
+  #clock small{font-size:9.5px;font-weight:400;color:#9adfd2;letter-spacing:.16em;margin-left:8px}
+  #topright{position:absolute;top:14px;right:14px;display:flex;flex-direction:column;align-items:flex-end;gap:8px;text-align:right}
+  #statusbar{font-variant-numeric:tabular-nums}
+  #statusbar .dot{color:var(--red);animation:blink 1.2s steps(2,start) infinite}
+  #camlabel{color:#9adfd2;font-size:10px}
   @keyframes blink{50%{opacity:0}}
-  @media (prefers-reduced-motion:reduce){#rec .dot{animation:none}}
+  @media (prefers-reduced-motion:reduce){#statusbar .dot{animation:none}}
   #botleft{position:absolute;left:14px;bottom:14px;display:flex;flex-direction:column;gap:8px;max-width:340px}
   #counts{font-variant-numeric:tabular-nums;color:#9adfd2}
   #counts b{color:var(--txt)}
@@ -98,8 +98,14 @@
   #hint{position:absolute;left:50%;bottom:44px;transform:translateX(-50%);
         color:#ffd28a;font-size:10.5px;letter-spacing:.14em;background:var(--ink);
         border:1px solid rgba(255,210,138,.35);padding:5px 12px;white-space:nowrap;display:none}
-  #botright{position:absolute;right:14px;bottom:14px;display:flex;flex-wrap:wrap;gap:6px;
-            justify-content:flex-end;pointer-events:auto;max-width:80vw}
+  #botright{position:absolute;right:14px;bottom:14px;display:flex;flex-direction:column;
+            align-items:flex-end;gap:6px;pointer-events:auto;max-width:80vw}
+  #tray{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+  #tray[hidden]{display:none}
+  .trayrow{display:flex;gap:6px}
+  #mainrow{display:flex;gap:6px}
+  #touchbtns{display:none;gap:6px}
+  @media (pointer:coarse){#touchbtns{display:flex}}
   .tbtn{background:var(--ink);border:1px solid var(--line);color:#9adfd2;
         font:10.5px ui-monospace,'SF Mono',Menlo,Consolas,monospace;letter-spacing:.12em;
         padding:6px 10px;cursor:pointer;user-select:none}
@@ -142,15 +148,14 @@
     #chatlog div{font-size:11.5px}
   }
   @media (max-width:760px){
-    #help{display:none} #clock{font-size:24px}
-    #ident .sub{display:none}
-    #netchip,#rec{font-size:10px}
+    #help{display:none} #clock{font-size:17px}
+    #camlabel{display:none}
+    #statusbar{font-size:10px}
     #botright{max-width:70vw;bottom:10px;right:10px}
     #botleft{max-width:56vw;bottom:10px;left:10px}
     #chatlog{max-height:96px}
     #chatin{width:150px}
     #counts{display:none}
-    .mhide{display:none}
     #hint{bottom:76px}
   }
 </style>
@@ -161,8 +166,9 @@
   <p>LEXTOWN-01 is a free browser game: a stylized 3D recreation of downtown
   Lexington, KY — Main Street, Vine, Short, Broadway, Upper and Limestone,
   with Rupp Arena, the Big Blue tower, the old Fayette County courthouse and
-  more. Walk around, fly a jetpack onto rooftops, drive cars, and chat with
-  everyone else on the page in one shared world. It requires JavaScript and
+  more. Walk around, fly a jetpack onto rooftops, drive cars, pilot the
+  LEXINGTON KY NEWS helicopter, and chat with everyone else on the page in
+  one shared world. It requires JavaScript and
   WebGL. The source code is open at
   <a href="https://github.com/paul-codes-1/lextown">github.com/paul-codes-1/lextown</a>.</p>
 </noscript>
@@ -171,38 +177,51 @@
 <div id="fx"></div>
 <div id="hud">
   <div id="topleft">
-    <div class="chip" id="ident"><b>LEXTOWN-01</b> ▮ DOWNTOWN LEXINGTON, KY<br>
-      <span class="sub">GRID: THIRD–HIGH × BROADWAY–MLK · SIM FEED</span></div>
-    <div class="chip" id="clock">19:21<small id="clocksub">DAY CYCLE 60× · DUSK</small></div>
+    <div class="chip" id="ident"><b>LEXTOWN-01</b> ▮ DOWNTOWN LEXINGTON, KY
+      <div id="clock">19:21<small id="clocksub">DAY CYCLE 60× · DUSK</small></div>
+    </div>
   </div>
   <div id="topright">
-    <div class="chip" id="rec"><span class="dot">●</span> REC <span id="elapsed">00:00:00</span></div>
-    <div class="chip" id="camlabel">CAM-FOLLOW · PLAYER</div>
-    <div class="chip" id="netchip">NET: LOCAL-SIM · PEERS 0</div>
+    <div class="chip" id="statusbar"><span class="dot">●</span> <span id="elapsed">00:00:00</span> · <span id="netchip">NET: LOCAL-SIM · PEERS 0</span><br>
+      <span id="camlabel">CAM-FOLLOW · PLAYER</span></div>
   </div>
   <div id="botleft">
     <div id="chatlog"></div>
     <input id="chatin" maxlength="120" placeholder="[ENTER] CHAT" autocomplete="off" spellcheck="false">
-    <div class="chip" id="counts">TRK <b id="ncars">0</b> CAR · <b id="npeds">0</b> PED · SIG <b id="sig">EW</b> · FUEL <b id="fuel">100</b>%</div>
   </div>
   <div class="chip" id="hint"></div>
-  <div id="help">WASD MOVE · SHIFT RUN · SPACE JUMP+JETPACK · E CAR · G NERF · F FIRE · ENTER CHAT · V DRONE
+  <div id="help">WASD MOVE · SPACE JET · E VEHICLE · G NERF · C CAMERA · ENTER CHAT · ? HELP
     &nbsp;·&nbsp; <a href="privacy.html">PRIVACY</a> · <a href="terms.html">TERMS</a></div>
   <div id="botright">
-    <button class="tbtn" id="bHelp">?</button>
-    <button class="tbtn mhide" id="bView">DRONE-CAM</button>
-    <button class="tbtn" id="bNerf">NERF</button>
-    <button class="tbtn" id="bFire">FIRE</button>
-    <button class="tbtn" id="bCar">E-CAR</button>
-    <button class="tbtn" id="bJump">JUMP</button>
-    <button class="tbtn on mhide" id="bAuto">AUTO-CAM</button>
-    <button class="tbtn on mhide" id="bBox">BOX</button>
-    <button class="tbtn on mhide" id="bTrk">TRK</button>
-    <button class="tbtn on mhide" id="bLbl">LBL</button>
-    <button class="tbtn mhide" id="bPause">||</button>
-    <button class="tbtn mhide" id="s1">1×</button>
-    <button class="tbtn on mhide" id="s60">60×</button>
-    <button class="tbtn mhide" id="s300">300×</button>
+    <div id="tray" hidden>
+      <div class="chip" id="counts">TRK <b id="ncars">0</b> CAR · <b id="npeds">0</b> PED · SIG <b id="sig">EW</b> · FUEL <b id="fuel">100</b>%</div>
+      <div class="trayrow">
+        <button class="tbtn" id="bView">DRONE-CAM</button>
+        <button class="tbtn" id="bFP">1ST-PERSON</button>
+        <button class="tbtn on" id="bAuto">AUTO-TOUR</button>
+      </div>
+      <div class="trayrow">
+        <button class="tbtn on" id="bBox">BOX</button>
+        <button class="tbtn on" id="bTrk">TRK</button>
+        <button class="tbtn on" id="bLbl">LBL</button>
+        <button class="tbtn" id="bPause">||</button>
+      </div>
+      <div class="trayrow">
+        <button class="tbtn" id="s1">1×</button>
+        <button class="tbtn on" id="s60">60×</button>
+        <button class="tbtn" id="s300">300×</button>
+      </div>
+    </div>
+    <div id="mainrow">
+      <span id="touchbtns">
+        <button class="tbtn" id="bNerf">NERF</button>
+        <button class="tbtn" id="bFire">FIRE</button>
+        <button class="tbtn" id="bCar">E-VEH</button>
+        <button class="tbtn" id="bJump">JUMP</button>
+      </span>
+      <button class="tbtn" id="bHelp">?</button>
+      <button class="tbtn" id="bMenu">SIM ▾</button>
+    </div>
   </div>
 </div>
 <div id="tut" hidden>
@@ -220,12 +239,20 @@
     <div class="tut-grid">
       <b><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></b><span>walk (arrows work too) · <kbd>Shift</kbd> run</span>
       <b><kbd>Space</kbd></b><span>jump — <b>hold it in mid-air to fly the jetpack</b>; watch the fuel gauge, it refills on the ground. You can land on rooftops.</span>
+      <b><kbd>C</kbd></b><span>first-person / third-person camera (scrolling all the way in works too)</span>
       <b>Drag / wheel</b><span>orbit / zoom the camera</span>
     </div>
     <h2>CARS</h2>
     <div class="tut-grid">
       <b><kbd>E</kbd></b><span>enter or exit the nearest car (any car — traffic or parked)</span>
       <b><kbd>W</kbd>/<kbd>S</kbd> · <kbd>A</kbd>/<kbd>D</kbd></b><span>drive / brake · steer — tops out around 108 km/h</span>
+    </div>
+    <h2>THE NEWS CHOPPER</h2>
+    <div class="tut-grid">
+      <b><kbd>E</kbd></b><span>on Big Blue's rooftop helipad — fly the <b>LEXINGTON KY NEWS chopper</b> (one pilot at a time; jetpack up there)</span>
+      <b><kbd>W</kbd>/<kbd>S</kbd> · <kbd>A</kbd>/<kbd>D</kbd></b><span>fly / turn · <kbd>Space</kbd> climb · <kbd>Shift</kbd> descend · <kbd>E</kbd> lands (or bails out — the chopper crashes)</span>
+      <b><kbd>F</kbd> / click</b><span>hold for the <b>water cannon</b> — the jet shoves players around (no damage, no opt-in needed)</span>
+      <b>RPG</b><span>while the chopper is up, RPG crates glow around downtown. Grab one and <kbd>F</kbd> fires — <b>three hits bring it down</b>, and it respawns on Big Blue. Rockets only hurt the helicopter.</span>
     </div>
     <h2>NERF TAG (OPT-IN)</h2>
     <div class="tut-grid">
@@ -235,15 +262,15 @@
     <h2>EVERYTHING ELSE</h2>
     <div class="tut-grid">
       <b><kbd>Enter</kbd></b><span>chat with everyone here (be decent — it's public)</span>
-      <b><kbd>V</kbd></b><span>drone camera · <kbd>C</kbd> auto-tour · <kbd>P</kbd> pause the city</span>
-      <b><kbd>B</kbd> <kbd>T</kbd> <kbd>L</kbd></b><span>detection boxes · motion tracks · landmark labels</span>
+      <b><kbd>V</kbd></b><span>drone camera (<kbd>C</kbd> there toggles the auto-tour) · <kbd>P</kbd> pause the city</span>
+      <b><kbd>B</kbd> <kbd>T</kbd> <kbd>L</kbd></b><span>detection boxes · motion tracks · landmark labels (also in the SIM menu)</span>
       <b><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></b><span>day-cycle speed (1× / 60× / 300×)</span>
     </div>
     <h2>ON A PHONE</h2>
     <div class="tut-grid">
       <b>Left half</b><span>touch and drag = move stick</span>
       <b>Right half</b><span>drag = look · pinch = zoom</span>
-      <b>JUMP</b><span>tap to jump, hold to jetpack · <b>E-CAR</b> enters/exits cars</span>
+      <b>JUMP</b><span>tap to jump, hold to jetpack (or climb the chopper) · <b>E-VEH</b> enters/exits cars and the chopper · hold <b>FIRE</b> in the chopper for the water cannon</span>
     </div>
     <button class="tbtn on" id="tutPlay">START WALKING</button>
     <p class="tut-links"><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> ·

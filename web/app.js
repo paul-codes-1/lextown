@@ -989,6 +989,7 @@ var myId = 'ME';
 // ---------- local player ----------
 var player = {x: 14, y: 0, z: -9.5, vy: 0, ry: -Math.PI / 2, phase: 0, swing: 0,
               grounded: true, moving: 0, fuel: 100, thrusting: false, veh: null,
+              heli: false, kx: 0, kz: 0,
               pvp: false, frozenUntil: 0,
               av: makeAvatar(myColor, 0x3f7d3f)};
 function isFrozen(){ return performance.now() < player.frozenUntil; }
@@ -1027,7 +1028,7 @@ function fireDart(){
   camera.getWorldDirection(_aim);
   player.ry = Math.atan2(_aim.x, _aim.z);     // face where you shoot
   var ox, oy, oz;
-  if (ads){   // spawn on the reticle ray so ADS shots land where the dot is
+  if (ads || camFP){   // spawn on the reticle ray so aimed shots land where the dot is
     ox = camera.position.x + _aim.x * 6;
     oy = camera.position.y + _aim.y * 6;
     oz = camera.position.z + _aim.z * 6;
@@ -1067,6 +1068,7 @@ function updateDarts(dt){
       for (var id in remotes){
         var r = remotes[id];
         if (!r.p) continue;                                   // not opted in
+        if (r.m === 3) continue;                              // chopper pilots need RPGs
         if (r.frozenUntil && now < r.frozenUntil) continue;   // already frozen
         var rp = r.av.g.position;
         var dx = p.x - rp.x, dy = p.y - (rp.y + 1.3), dz = p.z - rp.z;
@@ -1086,6 +1088,512 @@ function updateDarts(dt){
     if (dead){ scene.remove(d.g); darts.splice(i, 1); }
   }
 }
+// ---------- news chopper (LEXINGTON KY NEWS) ----------
+// One shared helicopter. It lives on a helipad cantilevered off Big Blue's
+// roof, one pilot at a time (server-arbitrated). Its water cannon shoves
+// players around; while it's airborne, RPG crates unlock around downtown —
+// three rocket hits bring it down and it respawns on the pad.
+var PAD = {x: -127, z: 11, top: 128.35, th: Math.PI / 2};
+(function(){
+  var padTex = makeTex(128, 128, function(g){
+    g.fillStyle = '#3a3d42'; g.fillRect(0, 0, 128, 128);
+    g.strokeStyle = '#e8c33a'; g.lineWidth = 5;
+    g.beginPath(); g.arc(64, 64, 46, 0, Math.PI * 2); g.stroke();
+    g.fillStyle = '#e8c33a';
+    g.font = 'bold 56px Helvetica, Arial, sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('H', 64, 66);
+  });
+  padTex.encoding = THREE.sRGBEncoding;
+  padTex.wrapS = padTex.wrapT = THREE.ClampToEdgeWrapping;
+  var side = new THREE.MeshStandardMaterial({color: 0x2c2f35, roughness: 0.9});
+  var topm = new THREE.MeshStandardMaterial({map: padTex, roughness: 0.9});
+  var deck = new THREE.Mesh(new THREE.BoxGeometry(17, 1, 18), [side, side, topm, side, side, side]);
+  deck.position.set(PAD.x, PAD.top - 0.5, PAD.z);
+  deck.castShadow = true; deck.receiveShadow = true; scene.add(deck);
+  colliders.push({x0: PAD.x - 8.5, x1: PAD.x + 8.5, z0: PAD.z - 9, z1: PAD.z + 9, h: PAD.top});
+  for (var sx = -1; sx <= 1; sx += 2){   // struts back to the tower face
+    var st = new THREE.Mesh(new THREE.BoxGeometry(0.5, 7, 0.5), side);
+    st.position.set(PAD.x + sx * 6, PAD.top - 3.6, PAD.z + 7.6);
+    st.rotation.x = -0.4; scene.add(st);
+  }
+})();
+function heliSideTex(flip){
+  var t = makeTex(256, 96, function(g){
+    g.fillStyle = '#f4f5f2'; g.fillRect(0, 0, 256, 96);
+    g.fillStyle = '#1d2f5e';                       // navy sweep
+    g.beginPath(); g.moveTo(0, 96); g.lineTo(0, 66);
+    g.quadraticCurveTo(130, 52, 256, 70); g.lineTo(256, 96);
+    g.closePath(); g.fill();
+    g.strokeStyle = '#d8b04a'; g.lineWidth = 3;    // gold pinstripe
+    g.beginPath(); g.moveTo(0, 66); g.quadraticCurveTo(130, 52, 256, 70); g.stroke();
+    drawHorseBadge(g, 10, 12, 34);
+    g.fillStyle = '#1d2f5e';
+    g.font = 'bold 22px Helvetica, Arial, sans-serif';
+    g.fillText('LEXINGTON KY', 54, 32);
+    g.fillText('NEWS', 54, 56);
+  });
+  t.encoding = THREE.sRGBEncoding;
+  if (flip){ t.wrapS = THREE.RepeatWrapping; t.repeat.x = -1; }
+  else t.wrapS = THREE.ClampToEdgeWrapping;
+  t.wrapT = THREE.ClampToEdgeWrapping;
+  return t;
+}
+function buildHeli(){
+  var g = new THREE.Group();
+  var white = new THREE.MeshStandardMaterial({color: 0xf4f5f2, roughness: 0.45, metalness: 0.15});
+  var navy = new THREE.MeshStandardMaterial({color: 0x1d2f5e, roughness: 0.55});
+  var dark = new THREE.MeshStandardMaterial({color: 0x2c2f35, roughness: 0.6});
+  var brandA = new THREE.MeshStandardMaterial({map: heliSideTex(false), roughness: 0.45});
+  var brandB = new THREE.MeshStandardMaterial({map: heliSideTex(true), roughness: 0.45});
+  var fus = new THREE.Mesh(new THREE.BoxGeometry(4.4, 2.0, 2.1),
+    [white, white, white, white, brandA, brandB]);
+  fus.castShadow = true; g.add(fus);
+  var nose = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.5, 1.9), cabMat);
+  nose.position.set(2.55, -0.05, 0); nose.castShadow = true; g.add(nose);
+  var cannon = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.18, 1.3, 8), dark);
+  cannon.rotation.z = Math.PI / 2; cannon.position.set(2.6, -0.95, 0); g.add(cannon);
+  var boom = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.55, 0.5), white);
+  boom.position.set(-3.7, 0.35, 0); boom.castShadow = true; g.add(boom);
+  var fin = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.5, 0.14), navy);
+  fin.position.set(-5.3, 0.95, 0); fin.castShadow = true; g.add(fin);
+  for (var sz = -1; sz <= 1; sz += 2){   // skids
+    var skid = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.14, 0.2), dark);
+    skid.position.set(0.2, -1.38, sz * 0.9); g.add(skid);
+    for (var kx = -1; kx <= 1; kx += 2){
+      var strut = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.55, 0.12), dark);
+      strut.position.set(0.2 + kx * 1.1, -1.12, sz * 0.9); g.add(strut);
+    }
+  }
+  var rotor = new THREE.Group(); rotor.position.set(0.2, 1.25, 0);
+  var mast = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 0.55, 6), dark);
+  rotor.add(mast);
+  for (var b = 0; b < 2; b++){
+    var blade = new THREE.Mesh(new THREE.BoxGeometry(10, 0.07, 0.42), dark);
+    blade.rotation.y = b * Math.PI / 2; blade.position.y = 0.25; rotor.add(blade);
+  }
+  g.add(rotor);
+  var tRotor = new THREE.Group(); tRotor.position.set(-5.3, 0.95, 0.14);
+  for (var tb = 0; tb < 2; tb++){
+    var tBlade = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.7, 0.1), dark);
+    tBlade.rotation.x = tb * Math.PI / 2; tRotor.add(tBlade);
+  }
+  g.add(tRotor);
+  scene.add(g);
+  return {g: g, rotor: rotor, tRotor: tRotor};
+}
+var heliParts = buildHeli();
+var heli = {
+  mesh: heliParts.g, rotor: heliParts.rotor, tRotor: heliParts.tRotor,
+  x: PAD.x, y: PAD.top + 1.45, z: PAD.z, th: PAD.th,
+  vy: 0, spd: 0, hp: 3, pilot: null,          // 'ME' | remote id | null
+  rotorSpeed: 0, rotorSpin: 0,
+  down: false, boomed: false, downAt: 0, downVy: 0,
+  lastPushAt: {}
+};
+heli.mesh.position.set(heli.x, heli.y, heli.z);
+heli.mesh.rotation.y = heli.th;
+function heliActive(){ return heli.pilot !== null && !heli.down; }
+function heliDist2(x, z){
+  var dx = heli.x - x, dz = heli.z - z;
+  return dx * dx + dz * dz;
+}
+function canEnterHeli(){
+  return mode === 'player' && !player.veh && !player.heli && !isFrozen() &&
+    heli.pilot === null && !heli.down && player.grounded &&
+    heliDist2(player.x, player.z) < 45 && Math.abs(player.y - (heli.y - 1.45)) < 5;
+}
+function enterHeliLocal(){
+  player.heli = true;
+  heli.pilot = 'ME';
+  player.av.g.visible = false;
+  rigP.r = Math.max(rigP.r, 24);
+  addChatLine('* CHOPPER', 'you are flying the LEXINGTON KY NEWS chopper', true);
+}
+function requestHeli(){
+  if (online && ws && ws.readyState === 1) ws.send(JSON.stringify({t: 'heli', a: 'enter'}));
+  else enterHeliLocal();
+}
+function exitHeli(crash){
+  player.heli = false;
+  if (heli.pilot === 'ME') heli.pilot = null;
+  // hop out to the left skid; mid-air bail-outs just fall (jetpack can save you)
+  player.x = heli.x - Math.sin(heli.th) * 1.9;
+  player.z = heli.z - Math.cos(heli.th) * 1.9;
+  player.y = Math.max(groundY(player.x, player.z, heli.y), heli.y - 1.45);
+  player.vy = 0; player.grounded = false;
+  player.av.g.visible = mode !== 'player' || !camFP;
+  collide(player, 0.55, player.y);
+  if (online && ws && ws.readyState === 1)
+    ws.send(JSON.stringify({t: 'heli', a: 'exit',
+      x: +heli.x.toFixed(1), y: +heli.y.toFixed(1), z: +heli.z.toFixed(1),
+      th: +Math.atan2(Math.sin(heli.th), Math.cos(heli.th)).toFixed(3),
+      crash: crash ? 1 : 0}));
+  if (crash) startHeliDown();
+}
+function startHeliDown(){
+  if (heli.down) return;
+  heli.down = true; heli.boomed = false;
+  heli.downAt = performance.now();
+  heli.downVy = Math.min(0, heli.vy);
+  if (player.heli){   // ejected — you're falling, hold Space
+    player.heli = false;
+    player.x = heli.x; player.y = heli.y; player.z = heli.z;
+    player.vy = 3; player.grounded = false;
+    player.av.g.visible = mode !== 'player' || !camFP;
+  }
+  heli.pilot = null;
+  addChatLine('* CHOPPER', 'NEWS CHOPPER DOWN', false);
+}
+function handleHeliMsg(m){
+  if (m.a === 'snap'){
+    heli.pilot = m.pilot === myId ? 'ME' : m.pilot;
+    heli.hp = m.hp;
+    heli.x = m.x; heli.y = m.y; heli.z = m.z; heli.th = m.th || PAD.th;
+  } else if (m.a === 'enter'){
+    if (m.id === myId) enterHeliLocal();
+    else {
+      heli.pilot = m.id;
+      addChatLine('* CHOPPER', 'NEWS CHOPPER is up - RPG crates active downtown', false);
+    }
+  } else if (m.a === 'deny'){
+    addChatLine('* CHOPPER', 'someone is already flying it', false);
+  } else if (m.a === 'exit'){
+    heli.pilot = null;
+    heli.x = m.x; heli.y = m.y; heli.z = m.z; heli.th = m.th || heli.th;
+    heli.vy = 0; heli.spd = 0;
+  } else if (m.a === 'hp'){
+    heli.hp = m.hp;
+  } else if (m.a === 'down'){
+    startHeliDown();
+  }
+}
+// updateHeliFlight: pilot-side arcade flight. W/S fly, A/D turn, Space climb,
+// Shift descend; idle input sinks gently so touch players can land by
+// releasing. Player state mirrors the heli so net + camera just follow.
+function updateHeliFlight(dt){
+  var up = keysDown[' '] || stick.jets;
+  var dn = keysDown.shift;
+  var f = 0, yaw = 0;
+  if (!isFrozen()){
+    if (keysDown.w || keysDown.arrowup) f += 1;
+    if (keysDown.s || keysDown.arrowdown) f -= 1;
+    if (keysDown.a || keysDown.arrowleft) yaw += 1;
+    if (keysDown.d || keysDown.arrowright) yaw -= 1;
+    if (stick.active){ f = -stick.y; yaw = -stick.x; }
+  }
+  heli.spd += (f ? f * (f > 0 ? 15 : 10) : -heli.spd * 1.2) * dt;
+  heli.spd = Math.max(-12, Math.min(36, heli.spd));
+  heli.th += yaw * 1.5 * dt;
+  var gy = groundY(heli.x, heli.z, heli.y) + 1.45;
+  var landed = heli.y <= gy + 0.05;
+  var tvy = up ? 17 : dn ? -13 : (landed ? 0 : -1.6);
+  heli.vy += (tvy - heli.vy) * Math.min(1, dt * 3);
+  var nx = heli.x + Math.cos(heli.th) * heli.spd * dt;
+  var nz = heli.z - Math.sin(heli.th) * heli.spd * dt;
+  var p = {x: nx, z: nz};
+  collide(p, 3.0, heli.y - 1.3);
+  if (p.x !== nx || p.z !== nz) heli.spd *= 0.25;   // scraped a building
+  heli.x = Math.max(X0 - 20, Math.min(X1 + 20, p.x));
+  heli.z = Math.max(Z0 - 20, Math.min(Z1 + 20, p.z));
+  heli.y += heli.vy * dt;
+  if (heli.y > 178){ heli.y = 178; if (heli.vy > 0) heli.vy = 0; }
+  gy = groundY(heli.x, heli.z, heli.y) + 1.45;
+  if (heli.y <= gy){
+    if (heli.vy < -9){ exitHeli(true); return; }   // hard landing = crash
+    heli.y = gy;
+    if (heli.vy < 0) heli.vy = 0;
+    heli.spd *= Math.max(0, 1 - 3 * dt);
+  }
+  player.x = heli.x; player.y = heli.y - 1.2; player.z = heli.z;
+  player.ry = Math.atan2(Math.cos(heli.th), -Math.sin(heli.th));
+  player.moving = Math.abs(heli.spd);
+  player.grounded = heli.y <= gy + 0.05;
+  player.thrusting = false;
+  player.fuel = Math.min(100, player.fuel + 30 * dt);
+  heli.mesh.position.set(heli.x, heli.y + Math.sin(performance.now() * 0.004) * 0.05, heli.z);
+  heli.mesh.rotation.y = heli.th;
+  heli.mesh.rotation.z += (-heli.spd * 0.007 - heli.mesh.rotation.z) * Math.min(1, dt * 4);
+  heli.mesh.rotation.x += ((yaw * -0.12) - heli.mesh.rotation.x) * Math.min(1, dt * 4);
+  updateSprayPilot(dt);
+}
+// master heli tick: rotor spool, parked pose, crash animation + respawn
+function updateHeli(dt){
+  var now = performance.now();
+  if (heli.down){
+    heli.rotorSpeed = Math.max(0, heli.rotorSpeed - dt * 0.6);
+    if (!heli.boomed){
+      heli.downVy -= 26 * dt;
+      heli.y += heli.downVy * dt;
+      heli.th += 2.6 * dt;
+      heli.mesh.position.set(heli.x, heli.y, heli.z);
+      heli.mesh.rotation.y = heli.th;
+      heli.mesh.rotation.z = Math.sin(now * 0.012) * 0.35;
+      if (Math.random() < dt * 12)
+        puff(heli.x, heli.y + 0.5, heli.z, 0x333333, 0.9, 3.5, 900, 2, 0.55);
+      var gyd = groundY(heli.x, heli.z, heli.y) + 1.0;
+      if (heli.y <= gyd){
+        heli.boomed = true;
+        explosion(heli.x, gyd, heli.z, true);
+        heli.mesh.visible = false;
+      }
+    }
+    if (now - heli.downAt > 6000){   // respawn on Big Blue
+      heli.down = false; heli.boomed = false;
+      heli.hp = 3; heli.vy = 0; heli.spd = 0;
+      heli.x = PAD.x; heli.y = PAD.top + 1.45; heli.z = PAD.z; heli.th = PAD.th;
+      heli.mesh.visible = true;
+      heli.mesh.position.set(heli.x, heli.y, heli.z);
+      heli.mesh.rotation.set(0, heli.th, 0);
+      addChatLine('* CHOPPER', 'news chopper respawned on Big Blue', false);
+    }
+  } else {
+    var occ = heli.pilot !== null;
+    heli.rotorSpeed += ((occ ? 1 : 0) - heli.rotorSpeed) * Math.min(1, dt * (occ ? 1.1 : 0.4));
+    if (!occ){
+      heli.mesh.position.set(heli.x, heli.y, heli.z);
+      heli.mesh.rotation.y = heli.th;
+      heli.mesh.rotation.z *= Math.max(0, 1 - dt * 2);
+      heli.mesh.rotation.x *= Math.max(0, 1 - dt * 2);
+    }
+  }
+  heli.rotorSpin += heli.rotorSpeed * 26 * dt;
+  heli.rotor.rotation.y = heli.rotorSpin;
+  heli.tRotor.rotation.x = heli.rotorSpin * 3;
+}
+
+// ---------- water cannon ----------
+var drops = [];
+var dropGeo = new THREE.SphereGeometry(0.1, 5, 4);
+var dropMat = new THREE.MeshBasicMaterial({color: 0xbfe6ff, transparent: true, opacity: 0.8});
+var mouse0Held = false, fireTouchHeld = false;
+function sprayHeld(){ return player.heli && (keysDown.f || mouse0Held || fireTouchHeld); }
+function spawnDrops(ox, oy, oz, d, n){
+  for (var k = 0; k < n && drops.length < 150; k++){
+    var m = new THREE.Mesh(dropGeo, dropMat);
+    m.position.set(ox, oy, oz);
+    var s = 26 + Math.random() * 8;
+    drops.push({m: m,
+      vx: (d.x + (Math.random() - 0.5) * 0.14) * s,
+      vy: (d.y + (Math.random() - 0.5) * 0.14) * s,
+      vz: (d.z + (Math.random() - 0.5) * 0.14) * s,
+      born: performance.now()});
+    scene.add(m);
+  }
+}
+function sprayBurst(ox, oy, oz, dx, dy, dz){
+  _aim.set(dx, dy, dz);
+  spawnDrops(ox, oy, oz, _aim, 12);
+}
+function updateDrops(dt){
+  var now = performance.now();
+  for (var i = drops.length - 1; i >= 0; i--){
+    var d = drops[i];
+    d.vy -= 22 * dt;
+    d.m.position.x += d.vx * dt;
+    d.m.position.y += d.vy * dt;
+    d.m.position.z += d.vz * dt;
+    if (now - d.born > 900 || d.m.position.y < 0.1){
+      scene.remove(d.m); drops.splice(i, 1);
+    }
+  }
+}
+var lastSprayNet = 0, lastPushCheck = 0;
+function updateSprayPilot(dt){
+  if (!sprayHeld() || isFrozen()) return;
+  camera.getWorldDirection(_aim);
+  if (_aim.y > 0.2){ _aim.y = 0.2; _aim.normalize(); }
+  var ox = heli.x + Math.cos(heli.th) * 2.9;
+  var oy = heli.y - 0.8;
+  var oz = heli.z - Math.sin(heli.th) * 2.9;
+  spawnDrops(ox, oy, oz, _aim, Math.min(4, Math.ceil(dt * 90)));
+  var now = performance.now();
+  if (now - lastSprayNet > 200){
+    lastSprayNet = now;
+    if (online && ws && ws.readyState === 1)
+      ws.send(JSON.stringify({t: 'spray',
+        ox: +ox.toFixed(1), oy: +oy.toFixed(1), oz: +oz.toFixed(1),
+        dx: +_aim.x.toFixed(3), dy: +_aim.y.toFixed(3), dz: +_aim.z.toFixed(3)}));
+  }
+  if (now - lastPushCheck > 160){
+    lastPushCheck = now;
+    pushTargets(ox, oy, oz, _aim);
+  }
+}
+// pilot-side hit test: anyone standing in the jet cone gets a shove.
+// Online: {t:'push'} to the server (validated, relayed to the target).
+// Offline: bots get bounced directly.
+function pushTargets(ox, oy, oz, d){
+  var now = performance.now();
+  var hx = d.x, hz = d.z, hl = Math.hypot(hx, hz) || 1;
+  hx /= hl; hz /= hl;
+  function inJet(px, py, pz){
+    var rx = px - ox, ry = py - oy, rz = pz - oz;
+    var proj = rx * d.x + ry * d.y + rz * d.z;
+    if (proj < 2 || proj > 40) return false;
+    var qx = rx - d.x * proj, qy = ry - d.y * proj, qz = rz - d.z * proj;
+    var rad = 3 + proj * 0.12;
+    return qx * qx + qy * qy + qz * qz < rad * rad;
+  }
+  for (var id in remotes){
+    var r = remotes[id];
+    if (r.m === 3) continue;
+    var pp = r.av.g.position;
+    if (!inJet(pp.x, pp.y + 1.2, pp.z)) continue;
+    if (now - (heli.lastPushAt[id] || 0) < 320) continue;
+    heli.lastPushAt[id] = now;
+    if (online && ws && ws.readyState === 1 && id.indexOf('BOT') !== 0){
+      ws.send(JSON.stringify({t: 'push', target: id,
+        vx: +(hx * 12).toFixed(1), vy: 5.5, vz: +(hz * 12).toFixed(1)}));
+    } else {   // offline bots bounce locally
+      for (var bk = 0; bk < bots.length; bk++){
+        if (bots[bk].id !== id) continue;
+        var b = bots[bk];
+        b.vy = 6;
+        b.s += (b.axis === 'x' ? hx : hz) * 5;
+        b.c2 += (b.axis === 'x' ? hz : hx) * 5;
+      }
+    }
+  }
+}
+
+// ---------- RPGs (anti-chopper only) ----------
+// Crates glow at fixed spots while the chopper is up. Walk over one to grab
+// a launcher (2 rockets). Rockets only hurt the helicopter — they burst
+// harmlessly on everything else.
+var RPG_SPOTS = [[-168, 58], [30, -20], [120, 40], [-115, -20], [-290, 40]];
+var rpgSpots = RPG_SPOTS.map(function(p){
+  var g = new THREE.Group();
+  var crate = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.9, 1.2),
+    new THREE.MeshStandardMaterial({color: 0x4a5232, roughness: 0.85}));
+  crate.position.y = 0.45; crate.castShadow = true; g.add(crate);
+  var tube = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.16, 1.8, 8),
+    new THREE.MeshStandardMaterial({color: 0x33381f, roughness: 0.7}));
+  tube.rotation.z = 0.5; tube.position.y = 1.25; g.add(tube);
+  var ring = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.05, 6, 24),
+    new THREE.MeshBasicMaterial({color: 0x6ef7df, transparent: true, opacity: 0.7}));
+  ring.rotation.x = Math.PI / 2; ring.position.y = 0.2; g.add(ring);
+  g.position.set(p[0], groundY(p[0], p[1]), p[1]);
+  g.visible = false;
+  scene.add(g);
+  return {g: g, cool: 0};
+});
+var myRpg = 0, lastRocket = 0;
+function updatePickups(dt){
+  var act = heliActive();
+  var now = performance.now();
+  if (!act && myRpg){ myRpg = 0; }
+  for (var k = 0; k < rpgSpots.length; k++){
+    var s = rpgSpots[k];
+    var vis = act && now > s.cool;
+    s.g.visible = vis;
+    if (!vis) continue;
+    s.g.rotation.y += dt * 1.2;
+    if (!player.heli && !player.veh && mode === 'player'){
+      var dx = s.g.position.x - player.x, dz = s.g.position.z - player.z;
+      if (dx * dx + dz * dz < 6.5 && Math.abs(s.g.position.y - player.y) < 3){
+        myRpg = 2;
+        s.cool = now + 20000;
+        addChatLine('* RPG', 'launcher acquired - F fires at the chopper', true);
+      }
+    }
+  }
+}
+var rockets = [];
+var rocketBodyGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.75, 6);
+var rocketBodyMat = new THREE.MeshStandardMaterial({color: 0x5a5f52, roughness: 0.6});
+var rocketTipMat = new THREE.MeshStandardMaterial({color: 0x8a2f2a, roughness: 0.5});
+function spawnRocket(ox, oy, oz, dx, dy, dz, mine){
+  var g = new THREE.Group();
+  var body = new THREE.Mesh(rocketBodyGeo, rocketBodyMat);
+  body.rotation.x = Math.PI / 2; g.add(body);
+  var tip = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.3, 6), rocketTipMat);
+  tip.rotation.x = Math.PI / 2; tip.position.z = 0.5; g.add(tip);
+  g.position.set(ox, oy, oz);
+  g.lookAt(ox + dx, oy + dy, oz + dz);
+  scene.add(g);
+  rockets.push({g: g, vx: dx * 55, vy: dy * 55, vz: dz * 55,
+                born: performance.now(), puffAt: 0, mine: !!mine});
+}
+function fireRocket(){
+  var now = performance.now();
+  if (now - lastRocket < 1100 || isFrozen()) return;
+  lastRocket = now;
+  myRpg--;
+  camera.getWorldDirection(_aim);
+  player.ry = Math.atan2(_aim.x, _aim.z);
+  var ox = player.x + _aim.x * 1.5;
+  var oy = player.y + 1.9 + _aim.y * 1.5;
+  var oz = player.z + _aim.z * 1.5;
+  spawnRocket(ox, oy, oz, _aim.x, _aim.y, _aim.z, true);
+  if (online && ws && ws.readyState === 1)
+    ws.send(JSON.stringify({t: 'rocket',
+      ox: +ox.toFixed(1), oy: +oy.toFixed(1), oz: +oz.toFixed(1),
+      dx: +_aim.x.toFixed(3), dy: +_aim.y.toFixed(3), dz: +_aim.z.toFixed(3)}));
+}
+function updateRockets(dt){
+  var now = performance.now();
+  for (var i = rockets.length - 1; i >= 0; i--){
+    var r = rockets[i];
+    r.vy -= 3 * dt;
+    r.g.position.x += r.vx * dt;
+    r.g.position.y += r.vy * dt;
+    r.g.position.z += r.vz * dt;
+    if (now - r.puffAt > 55){
+      r.puffAt = now;
+      puff(r.g.position.x, r.g.position.y, r.g.position.z, 0x9a9a92, 0.28, 1.4, 500, 0.6, 0.5);
+    }
+    var p = r.g.position, boom = false, big = false;
+    if (heli.pilot !== null && !heli.down){
+      var hdx = p.x - heli.x, hdy = p.y - heli.y, hdz = p.z - heli.z;
+      if (hdx * hdx + hdy * hdy + hdz * hdz < 22){
+        boom = true; big = true;
+        if (r.mine){
+          if (online && ws && ws.readyState === 1) ws.send(JSON.stringify({t: 'rhit'}));
+          else { heli.hp--; if (heli.hp <= 0) startHeliDown(); }
+        }
+      }
+    }
+    if (!boom && (now - r.born > 4500 || p.y < 0.1 || pointInBuilding(p.x, p.y, p.z))) boom = true;
+    if (boom){
+      explosion(p.x, p.y, p.z, big);
+      scene.remove(r.g); rockets.splice(i, 1);
+    }
+  }
+}
+
+// ---------- puffs / explosions (pooled-ish transient sprites) ----------
+var puffs = [];
+var puffGeo = new THREE.SphereGeometry(1, 6, 5);
+function puff(x, y, z, col, r0, grow, life, vy, op){
+  if (puffs.length > 90) return;
+  var m = new THREE.Mesh(puffGeo, new THREE.MeshBasicMaterial({
+    color: col, transparent: true, opacity: op, depthWrite: false}));
+  m.position.set(x, y, z);
+  m.scale.setScalar(r0);
+  scene.add(m);
+  puffs.push({m: m, born: performance.now(), life: life, grow: grow, vy: vy, op: op});
+}
+function explosion(x, y, z, big){
+  puff(x, y, z, 0xffb54a, big ? 2.5 : 1.1, big ? 26 : 11, 380, 0, 0.95);
+  puff(x, y, z, 0xff5f3a, big ? 1.6 : 0.7, big ? 18 : 8, 300, 0, 0.9);
+  puff(x, y + 1, z, 0x444444, big ? 2 : 0.9, big ? 8 : 4, 900, 3, 0.5);
+}
+function updatePuffs(dt){
+  var now = performance.now();
+  for (var i = puffs.length - 1; i >= 0; i--){
+    var p = puffs[i];
+    var age = now - p.born;
+    if (age > p.life){
+      scene.remove(p.m); p.m.material.dispose(); puffs.splice(i, 1);
+      continue;
+    }
+    p.m.scale.addScalar(p.grow * dt);
+    p.m.position.y += p.vy * dt;
+    p.m.material.opacity = p.op * (1 - age / p.life);
+  }
+}
+
 var rigP = {az: Math.PI / 2, el: 0.32, r: 13};
 var jumpQueued = false;
 var mode = 'player';   // 'player' | 'drone'
@@ -1099,8 +1607,20 @@ function nearestVehicle(){
   }
   return best;
 }
+function fireAction(){
+  if (player.heli) return;   // water cannon is hold-to-spray, handled in flight
+  if (myRpg > 0 && heliActive() && !player.veh){ fireRocket(); return; }
+  fireDart();
+}
 function tryEnterExit(){
   if (mode !== 'player') return;
+  if (player.heli){
+    // bailing out above the ground crashes the chopper (it respawns on Big Blue)
+    var hgy = groundY(heli.x, heli.z, heli.y) + 1.45;
+    exitHeli(heli.y > hgy + 3);
+    return;
+  }
+  if (canEnterHeli()){ requestHeli(); return; }
   if (player.veh){
     var v = player.veh;
     var px = v.g.position.x + Math.sin(v.th) * 3.4;
@@ -1156,6 +1676,7 @@ function updateDrive(dt){
 }
 function updatePlayer(dt){
   player.av.ice.visible = isFrozen();
+  if (player.heli && mode === 'player'){ updateHeliFlight(dt); return; }
   if (player.veh && mode === 'player'){ updateDrive(dt); return; }
   var f = 0, r = 0;
   if (mode === 'player' && !isFrozen()){
@@ -1167,6 +1688,16 @@ function updatePlayer(dt){
   }
   var sp = keysDown.shift ? 13.5 : 7.5;
   if (!player.grounded && player.thrusting) sp = 15;
+  // water-cannon knockback: an impulse that decays; while it's strong you
+  // can't fight it at full walking speed (also keeps combined speed under
+  // the server's per-mode cap so pushes don't rubber-band)
+  var kmag = Math.hypot(player.kx || 0, player.kz || 0);
+  if (kmag > 0.05){
+    player.x += player.kx * dt; player.z += player.kz * dt;
+    var kdec = Math.max(0, 1 - 2.2 * dt);
+    player.kx *= kdec; player.kz *= kdec;
+    sp *= Math.max(0.25, 1 - kmag / 10);
+  } else { player.kx = 0; player.kz = 0; }
   var mag = Math.hypot(f, r);
   if (mag > 0.15){
     f /= Math.max(1, mag); r /= Math.max(1, mag);
@@ -1212,29 +1743,52 @@ function updatePlayer(dt){
   player.av.g.position.set(player.x, player.y, player.z);
   player.av.g.rotation.y = player.ry;
 }
-var camR = 13, aimBlend = 0;
+var camR = 13, aimBlend = 0, camFP = false;
 function updatePlayerCam(dt){
   followPause -= dt;
-  // soft follow: settle behind the character/car when the mouse is idle
-  if (followPause <= 0){
-    var tAz = null;
-    if (player.veh)
-      tAz = Math.atan2(Math.cos(player.veh.th), -Math.sin(player.veh.th)) + Math.PI;
-    else if (player.moving > 0)
-      tAz = player.ry + Math.PI;
-    if (tAz !== null)
-      rigP.az += angDelta(rigP.az, tAz) * Math.min(1, dt * (player.veh ? 1.7 : 2.1));
-  }
-  rigP.el = Math.max(-0.15, Math.min(1.35, rigP.el));
-  rigP.r = Math.max(4, Math.min(90, rigP.r));
-  var aiming = ads && player.pvp && !player.veh;
+  var aiming = ads && !player.veh && (player.pvp || player.heli || (myRpg > 0 && heliActive()));
   aimBlend += ((aiming ? 1 : 0) - aimBlend) * Math.min(1, dt * 9);
-  camR += ((aiming ? 4.4 : rigP.r) - camR) * Math.min(1, dt * 9);
   var tf = aiming ? 42 : 55;
   if (Math.abs(camera.fov - tf) > 0.05){
     camera.fov += (tf - camera.fov) * Math.min(1, dt * 9);
     camera.updateProjectionMatrix();
   }
+  player.av.g.visible = !camFP && !player.veh && !player.heli;
+  rigP.el = Math.max(-0.15, Math.min(1.35, rigP.el));
+  if (camFP){
+    // first person: eye / hood / cockpit; same az-el mapping as third person
+    var ex, ey, ez;
+    if (player.heli){
+      ex = heli.x + Math.cos(heli.th) * 1.7; ey = heli.y + 0.45;
+      ez = heli.z - Math.sin(heli.th) * 1.7;
+    } else if (player.veh){
+      var vg = player.veh.g.position;
+      ex = vg.x + Math.cos(player.veh.th) * 0.4; ey = vg.y + 1.95;
+      ez = vg.z - Math.sin(player.veh.th) * 0.4;
+    } else {
+      ex = player.x; ey = player.y + 2.35; ez = player.z;
+    }
+    camera.position.set(ex, ey, ez);
+    camera.lookAt(
+      ex - Math.cos(rigP.el) * Math.sin(rigP.az),
+      ey - Math.sin(rigP.el),
+      ez - Math.cos(rigP.el) * Math.cos(rigP.az));
+    return;
+  }
+  // soft follow: settle behind the character/vehicle when the mouse is idle
+  if (followPause <= 0){
+    var tAz = null;
+    if (player.heli)
+      tAz = Math.atan2(Math.cos(heli.th), -Math.sin(heli.th)) + Math.PI;
+    else if (player.veh)
+      tAz = Math.atan2(Math.cos(player.veh.th), -Math.sin(player.veh.th)) + Math.PI;
+    else if (player.moving > 0)
+      tAz = player.ry + Math.PI;
+    if (tAz !== null)
+      rigP.az += angDelta(rigP.az, tAz) * Math.min(1, dt * (player.veh || player.heli ? 1.7 : 2.1));
+  }
+  rigP.r = Math.max(4, Math.min(90, rigP.r));
+  camR += ((aiming ? (player.heli ? 9 : 4.4) : rigP.r) - camR) * Math.min(1, dt * 9);
   // over-the-shoulder shift while aiming so the reticle clears the head
   var offX = Math.cos(rigP.az) * 1.25 * aimBlend;
   var offZ = -Math.sin(rigP.az) * 1.25 * aimBlend;
@@ -1259,6 +1813,7 @@ function removeRemote(id){
   if (r){
     scene.remove(r.av.g);
     if (r.carG) scene.remove(r.carG);
+    if (heli.pilot === id) heli.pilot = null;   // server broadcasts the crash
     delete remotes[id]; setNetChip();
   }
 }
@@ -1278,6 +1833,7 @@ function handleNet(m){
     myId = m.id; online = true;
     Object.keys(remotes).forEach(function(id){ if (id.indexOf('BOT') === 0) removeRemote(id); });
     (m.peers || []).forEach(handleNet);
+    if (m.heli) handleHeliMsg(m.heli);
     setNetChip();
     var adm = /admin=([^&#]+)/.exec(hashStr);   // #admin=<token> auto-auth
     if (adm) ws.send(JSON.stringify({t: 'chat', msg: '/admin ' + decodeURIComponent(adm[1])}));
@@ -1312,6 +1868,19 @@ function handleNet(m){
   } else if (m.t === 'shot'){
     if (m.id !== myId)
       spawnDart(m.ox, m.oy, m.oz, m.dx, m.dy, m.dz, false);
+  } else if (m.t === 'heli'){
+    handleHeliMsg(m);
+  } else if (m.t === 'pushed'){
+    if (m.id === myId){   // caught in the water cannon jet
+      player.kx += m.vx || 0; player.kz += m.vz || 0;
+      if (m.vy){ player.vy = Math.max(player.vy, m.vy); player.grounded = false; }
+    }
+  } else if (m.t === 'rocket'){
+    if (m.id !== myId)
+      spawnRocket(m.ox, m.oy, m.oz, m.dx, m.dy, m.dz, false);
+  } else if (m.t === 'spray'){
+    if (m.id !== myId)
+      sprayBurst(m.ox, m.oy, m.oz, m.dx, m.dy, m.dz);
   } else if (m.t === 'sys'){
     addChatLine('⚙ SERVER', String(m.msg || ''), false);
   } else if (m.t === 'leave') removeRemote(m.id);
@@ -1365,6 +1934,17 @@ function updateRemotes(dt){
       r.carG.visible = true; r.av.g.visible = false;
       r.carG.position.set(x, y + 0.15, z);
       r.carG.rotation.y = r.ry;
+    } else if (r.m === 3){ // flying the news chopper: the one heli follows them
+      if (r.carG) r.carG.visible = false;
+      r.av.g.visible = false;
+      r.av.g.position.set(x, y, z);   // tag/dart anchor
+      heli.pilot = id;
+      heli.x = x; heli.y = y + 1.2; heli.z = z; heli.th = r.ry;
+      if (!heli.down){
+        heli.mesh.position.set(heli.x, heli.y, heli.z);
+        heli.mesh.rotation.y = heli.th;
+        heli.mesh.rotation.z += (-Math.min(36, spd) * 0.007 - heli.mesh.rotation.z) * Math.min(1, dt * 4);
+      }
     } else {
       if (r.carG) r.carG.visible = false;
       r.av.g.visible = true;
@@ -1426,12 +2006,17 @@ function netTick(dt){
   netAcc += dt;
   if (netAcc < 0.1) return;
   netAcc = 0;
-  if (online && ws && ws.readyState === 1)
+  if (online && ws && ws.readyState === 1){
+    // headings accumulate past ±2π with continued turning — normalize before
+    // sending or the server's ry bounds check starts rejecting every move
+    var sry = player.heli ? heli.th : player.veh ? player.veh.th : player.ry;
+    sry = Math.atan2(Math.sin(sry), Math.cos(sry));
     ws.send(JSON.stringify({t: 'state', n: myName, c: myColor,
-      m: player.veh ? 2 : (player.thrusting ? 1 : 0),
+      m: player.heli ? 3 : player.veh ? 2 : (player.thrusting ? 1 : 0),
       p: player.pvp ? 1 : 0,
       x: +player.x.toFixed(2), y: +player.y.toFixed(2), z: +player.z.toFixed(2),
-      ry: +(player.veh ? player.veh.th : player.ry).toFixed(3)}));
+      ry: +sry.toFixed(3)}));
+  }
 }
 
 // ---------- local bots (stand-ins so the MMO pipeline always runs) ----------
@@ -1566,10 +2151,13 @@ document.addEventListener('mousemove', function(e){
 });
 document.addEventListener('mousedown', function(e){
   if (!ptrLocked || mode !== 'player') return;
-  if (e.button === 0) fireDart();
-  if (e.button === 2 && player.pvp) ads = true;
+  if (e.button === 0){ mouse0Held = true; if (!player.heli) fireAction(); }
+  if (e.button === 2 && (player.pvp || player.heli || (myRpg > 0 && heliActive()))) ads = true;
 });
-document.addEventListener('mouseup', function(e){ if (e.button === 2) ads = false; });
+document.addEventListener('mouseup', function(e){
+  if (e.button === 0) mouse0Held = false;
+  if (e.button === 2) ads = false;
+});
 document.addEventListener('contextmenu', function(e){ if (ptrLocked) e.preventDefault(); });
 glCanvas.style.touchAction = 'none';
 glCanvas.addEventListener('pointerdown', function(e){
@@ -1577,12 +2165,12 @@ glCanvas.addEventListener('pointerdown', function(e){
   if (mode === 'player' && e.pointerType === 'touch' && e.clientX < window.innerWidth * 0.4){
     stick.active = true; stick.id = e.pointerId;
     stick.ox = e.clientX; stick.oy = e.clientY; stick.x = 0; stick.y = 0;
-    glCanvas.setPointerCapture(e.pointerId);
+    try { glCanvas.setPointerCapture(e.pointerId); } catch (err){}
     return;
   }
   drag = {id: e.pointerId, x: e.clientX, y: e.clientY,
           pan: mode === 'drone' && (e.shiftKey || e.button === 2)};
-  glCanvas.setPointerCapture(e.pointerId);
+  try { glCanvas.setPointerCapture(e.pointerId); } catch (err){}
 });
 glCanvas.addEventListener('pointermove', function(e){
   if (stick.active && e.pointerId === stick.id){
@@ -1615,7 +2203,15 @@ window.addEventListener('pointerup', function(e){
 glCanvas.addEventListener('contextmenu', function(e){ e.preventDefault(); });
 glCanvas.addEventListener('wheel', function(e){
   e.preventDefault();
-  if (mode === 'player'){ rigP.r *= Math.exp(e.deltaY * 0.0011); return; }
+  if (mode === 'player'){
+    if (camFP){   // scroll out of first person
+      if (e.deltaY > 0){ camFP = false; rigP.r = 6; syncBtns(); }
+      return;
+    }
+    rigP.r *= Math.exp(e.deltaY * 0.0011);
+    if (rigP.r < 4.05){ camFP = true; syncBtns(); }   // scroll all the way in
+    return;
+  }
   manual();
   rig.r *= Math.exp(e.deltaY * 0.0011);
 }, {passive: false});
@@ -1661,11 +2257,14 @@ window.addEventListener('keydown', function(e){
   if (k === 'v') toggleMode();
   if (k === 'e') tryEnterExit();
   if (k === 'g') setPvp(!player.pvp);
-  if (k === 'f') fireDart();
+  if (k === 'f') fireAction();
   if (k === 'b') setToggle('box');
   if (k === 't') setToggle('trk');
   if (k === 'l') setToggle('lbl');
-  if (k === 'c'){ autoCam = !autoCam; tween = null; pTimer = 0; syncBtns(); }
+  if (k === 'c'){
+    if (mode === 'player'){ camFP = !camFP; syncBtns(); }
+    else { autoCam = !autoCam; tween = null; pTimer = 0; syncBtns(); }
+  }
   if (k === '1') setSpeed(1);
   if (k === '2') setSpeed(60);
   if (k === '3') setSpeed(300);
@@ -1675,7 +2274,10 @@ function toggleMode(){
   mode = mode === 'player' ? 'drone' : 'player';
   if (mode === 'player'){
     rigP.az = player.ry + Math.PI;   // camera settles behind the character
-  } else if (document.exitPointerLock) document.exitPointerLock();
+  } else {
+    if (document.exitPointerLock) document.exitPointerLock();
+    player.av.g.visible = !player.veh && !player.heli;   // FP hid it
+  }
   syncBtns();
 }
 function applyWASD(dt){
@@ -1711,12 +2313,15 @@ var els = {
   bAuto: document.getElementById('bAuto'), bBox: document.getElementById('bBox'),
   bTrk: document.getElementById('bTrk'), bLbl: document.getElementById('bLbl'),
   bPause: document.getElementById('bPause'),
+  bFP: document.getElementById('bFP'), bMenu: document.getElementById('bMenu'),
+  tray: document.getElementById('tray'),
   s1: document.getElementById('s1'), s60: document.getElementById('s60'), s300: document.getElementById('s300')
 };
 els.ncars.textContent = cars.length; els.npeds.textContent = peds.length;
 function syncBtns(){
   els.bView.classList.toggle('on', mode === 'drone');
   els.bNerf.classList.toggle('on', player.pvp);
+  els.bFP.classList.toggle('on', camFP);
   els.bAuto.classList.toggle('on', autoCam);
   els.bBox.classList.toggle('on', show.box);
   els.bTrk.classList.toggle('on', show.trk);
@@ -1726,8 +2331,9 @@ function syncBtns(){
   els.s1.classList.toggle('on', speed === 1 && !paused);
   els.s60.classList.toggle('on', speed === 60 && !paused);
   els.s300.classList.toggle('on', speed === 300 && !paused);
+  els.bMenu.classList.toggle('on', !els.tray.hidden);
   els.camlabel.textContent = mode === 'player'
-    ? 'CAM-FOLLOW · ' + myName
+    ? (camFP ? 'CAM-FP · ' : 'CAM-FOLLOW · ') + myName
     : 'CAM-ORBIT · ' + (autoCam ? 'AUTO' : 'MANUAL');
 }
 function setToggle(k){ show[k] = !show[k]; syncBtns(); }
@@ -1736,9 +2342,17 @@ function togglePause(){ paused = !paused; syncBtns(); }
 els.bView.onclick = toggleMode;
 els.bCar.onclick = tryEnterExit;
 els.bNerf.onclick = function(){ setPvp(!player.pvp); };
-els.bFire.addEventListener('pointerdown', function(){ fireDart(); });
+els.bFP.onclick = function(){
+  if (mode !== 'player') toggleMode();
+  camFP = !camFP; syncBtns();
+};
+els.bMenu.onclick = function(){ els.tray.hidden = !els.tray.hidden; syncBtns(); };
+els.bFire.addEventListener('pointerdown', function(){
+  fireTouchHeld = true;
+  if (!player.heli) fireAction();
+});
 els.bJump.addEventListener('pointerdown', function(){ jumpQueued = true; stick.jets = true; });
-window.addEventListener('pointerup', function(){ stick.jets = false; });
+window.addEventListener('pointerup', function(){ stick.jets = false; fireTouchHeld = false; });
 els.bAuto.onclick = function(){ autoCam = !autoCam; tween = null; pTimer = 0; syncBtns(); };
 els.bBox.onclick = function(){ setToggle('box'); };
 els.bTrk.onclick = function(){ setToggle('trk'); };
@@ -1843,12 +2457,25 @@ function drawOverlay(){
     ov.arc(stick.ox + stick.x * 34, stick.oy + stick.y * 34, 16, 0, Math.PI * 2);
     ov.fill();
   }
-  if (mode === 'player' && player.pvp && !player.veh){   // crosshair
+  if (mode === 'player' && !player.veh &&
+      (player.pvp || player.heli || (myRpg > 0 && heliActive()) || camFP)){   // crosshair
     ov.fillStyle = 'rgba(255,157,90,0.95)';
     ov.fillRect(vw / 2 - 1.5, vh / 2 - 1.5, 3, 3);
     if (ads){
       ov.strokeStyle = 'rgba(255,157,90,0.8)'; ov.lineWidth = 1.2;
       ov.beginPath(); ov.arc(vw / 2, vh / 2, 11, 0, Math.PI * 2); ov.stroke();
+    }
+  }
+  if (!heli.down){   // news chopper tag + hp
+    var hDist = camPos.distanceTo(_v.set(heli.x, heli.y, heli.z));
+    if (hDist < 900){
+      var hTag = project(heli.x, heli.y + 3.4, heli.z);
+      if (hTag){
+        var hTxt = 'LEX NEWS CHOPPER' + (heliActive() ? ' · HP ' + heli.hp + '/3' : '');
+        ov.font = '9.5px ui-monospace, Menlo, Consolas, monospace';
+        chip(hTag[0] - ov.measureText(hTxt).width / 2, hTag[1], hTxt,
+          heliActive() ? '#ff9d5a' : '#ffd28a');
+      }
     }
   }
   if (show.trk){
@@ -1986,6 +2613,11 @@ function frame(now){
   updateDarts(dt);
   runBots(dt);
   updateRemotes(dt);
+  updateHeli(dt);
+  updateRockets(dt);
+  updateDrops(dt);
+  updatePuffs(dt);
+  updatePickups(dt);
   netTick(dt);
   diagTick(dt);
   if (mode === 'drone'){
@@ -2025,9 +2657,12 @@ function frame(now){
   var hint = '';
   if (mode === 'player'){
     if (isFrozen()) hint = 'FROZEN — ' + Math.ceil((player.frozenUntil - performance.now()) / 1000) + 's';
+    else if (player.heli) hint = 'W/S A/D FLY · SPACE UP · SHIFT DOWN · HOLD F/CLICK — WATER CANNON · E — EXIT · HP ' + heli.hp + '/3';
     else if (player.veh) hint = 'E — EXIT · W/S DRIVE · A/D STEER · ' + Math.round(Math.abs(player.veh.spd) * 3.6) + ' KM/H';
+    else if (canEnterHeli()) hint = 'E — FLY THE NEWS CHOPPER';
     else if (player.grounded && nearestVehicle()) hint = 'E — ENTER CAR';
     else if (!player.grounded && player.thrusting) hint = 'JETPACK · FUEL ' + Math.round(player.fuel) + '%';
+    else if (myRpg > 0 && heliActive()) hint = 'RPG ×' + myRpg + ' · F/CLICK — FIRE AT THE CHOPPER · RMB — AIM';
     else if (player.pvp) hint = 'CLICK/F — FIRE · RMB — AIM · G — HOLSTER';
   }
   els.hint.textContent = hint;
