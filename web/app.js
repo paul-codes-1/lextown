@@ -1278,6 +1278,8 @@ function handleNet(m){
     Object.keys(remotes).forEach(function(id){ if (id.indexOf('BOT') === 0) removeRemote(id); });
     (m.peers || []).forEach(handleNet);
     setNetChip();
+    var adm = /admin=([^&#]+)/.exec(hashStr);   // #admin=<token> auto-auth
+    if (adm) ws.send(JSON.stringify({t: 'chat', msg: '/admin ' + decodeURIComponent(adm[1])}));
   } else if (m.t === 'state'){
     if (m.id === myId) return;
     var r = remotes[m.id];
