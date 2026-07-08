@@ -885,6 +885,23 @@ function makeAvatar(torsoCol, legCol){
   var av = {g: g,
     armL: limb(0.45, -0.9, 2.05, skin), armR: limb(0.45, 0.9, 2.05, skin),
     legL: limb(0.55, -0.35, 1.0, leg),  legR: limb(0.55, 0.35, 1.0, leg)};
+  // nerf blaster in the right hand (visible only when PvP is on)
+  var gun = new THREE.Group();
+  var gBody = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.3, 0.85),
+    new THREE.MeshStandardMaterial({color: 0x2f6fd4, roughness: 0.55}));
+  gBody.position.set(0, -0.9, 0.42); gun.add(gBody);
+  var gTip = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.32, 8),
+    new THREE.MeshStandardMaterial({color: 0xff7a1a, roughness: 0.5}));
+  gTip.rotation.x = Math.PI / 2; gTip.position.set(0, -0.9, 0.95); gun.add(gTip);
+  gun.visible = false;
+  av.armR.add(gun);
+  av.gun = gun;
+  // freeze ice cube
+  var ice = new THREE.Mesh(new THREE.BoxGeometry(1.9, 3.1, 1.9),
+    new THREE.MeshStandardMaterial({color: 0x9adfff, transparent: true, opacity: 0.4,
+      roughness: 0.15, metalness: 0.1}));
+  ice.position.y = 1.45; ice.visible = false; g.add(ice);
+  av.ice = ice;
   // jetpack (face is on +z, so the pack rides at -z)
   var pack = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.95, 0.38),
     new THREE.MeshStandardMaterial({color: 0x6a6f76, roughness: 0.5, metalness: 0.35}));
@@ -972,7 +989,95 @@ var myId = 'ME';
 // ---------- local player ----------
 var player = {x: 14, y: 0, z: -9.5, vy: 0, ry: -Math.PI / 2, phase: 0, swing: 0,
               grounded: true, moving: 0, fuel: 100, thrusting: false, veh: null,
+              pvp: false, frozenUntil: 0,
               av: makeAvatar(myColor, 0x3f7d3f)};
+function isFrozen(){ return performance.now() < player.frozenUntil; }
+
+// ---------- nerf darts ----------
+var darts = [];
+var dartGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.4, 8);
+var dartMat = new THREE.MeshStandardMaterial({color: 0x2f6fd4, roughness: 0.6});
+var dartTipMat = new THREE.MeshStandardMaterial({color: 0xff7a1a, roughness: 0.4});
+var lastFire = 0;
+function spawnDart(ox, oy, oz, dx, dy, dz, mine){
+  var g = new THREE.Group();
+  var body = new THREE.Mesh(dartGeo, dartMat);
+  body.rotation.x = Math.PI / 2; g.add(body);
+  var tip = new THREE.Mesh(new THREE.SphereGeometry(0.09, 6, 6), dartTipMat);
+  tip.position.z = 0.22; g.add(tip);
+  g.position.set(ox, oy, oz);
+  g.lookAt(ox + dx, oy + dy, oz + dz);
+  scene.add(g);
+  darts.push({g: g, vx: dx * 38, vy: dy * 38, vz: dz * 38,
+              born: performance.now(), mine: !!mine});
+}
+function setPvp(on){
+  if (player.pvp === on) return;
+  player.pvp = on;
+  player.av.gun.visible = on;
+  syncBtns();
+}
+var _aim = new THREE.Vector3();
+function fireDart(){
+  if (mode !== 'player' || player.veh || isFrozen()) return;
+  if (!player.pvp){ setPvp(true); return; }   // first press draws = opts in
+  var now = performance.now();
+  if (now - lastFire < 450) return;
+  lastFire = now;
+  camera.getWorldDirection(_aim);
+  player.ry = Math.atan2(_aim.x, _aim.z);     // face where you shoot
+  var ox = player.x + _aim.x * 1.1, oy = player.y + 1.7 + _aim.y * 1.1,
+      oz = player.z + _aim.z * 1.1;
+  spawnDart(ox, oy, oz, _aim.x, _aim.y, _aim.z, true);
+  if (online && ws && ws.readyState === 1)
+    ws.send(JSON.stringify({t: 'shot',
+      ox: +ox.toFixed(1), oy: +oy.toFixed(1), oz: +oz.toFixed(1),
+      dx: +_aim.x.toFixed(3), dy: +_aim.y.toFixed(3), dz: +_aim.z.toFixed(3)}));
+}
+function pointInBuilding(x, y, z){
+  for (var k = 0; k < colliders.length; k++){
+    var c = colliders[k];
+    if (y >= c.h) continue;
+    if (c.ell){
+      var ex = (x - c.cx) / c.rx, ez = (z - c.cz) / c.rz;
+      if (ex * ex + ez * ez < 1) return true;
+    } else if (x >= c.x0 && x <= c.x1 && z >= c.z0 && z <= c.z1) return true;
+  }
+  return false;
+}
+function updateDarts(dt){
+  var now = performance.now();
+  for (var i = darts.length - 1; i >= 0; i--){
+    var d = darts[i];
+    d.vy -= 6 * dt;   // foam-dart droop
+    d.g.position.x += d.vx * dt;
+    d.g.position.y += d.vy * dt;
+    d.g.position.z += d.vz * dt;
+    var p = d.g.position;
+    var dead = now - d.born > 2000 || p.y < 0.05 || pointInBuilding(p.x, p.y, p.z);
+    if (!dead && d.mine){
+      for (var id in remotes){
+        var r = remotes[id];
+        if (!r.p) continue;                                   // not opted in
+        if (r.frozenUntil && now < r.frozenUntil) continue;   // already frozen
+        var rp = r.av.g.position;
+        var dx = p.x - rp.x, dy = p.y - (rp.y + 1.3), dz = p.z - rp.z;
+        if (dx * dx + dz * dz < 0.85 && dy * dy < 2.6){
+          dead = true;
+          if (online && ws && ws.readyState === 1)
+            ws.send(JSON.stringify({t: 'hit', target: id}));
+          else {   // offline: freeze bots locally
+            r.frozenUntil = now + 4000;
+            var bot = bots.filter(function(b){ return b.id === id; })[0];
+            if (bot) bot.frozenUntil = now + 4000;
+          }
+          break;
+        }
+      }
+    }
+    if (dead){ scene.remove(d.g); darts.splice(i, 1); }
+  }
+}
 var rigP = {az: Math.PI / 2, el: 0.32, r: 13};
 var jumpQueued = false;
 var mode = 'player';   // 'player' | 'drone'
@@ -1019,6 +1124,7 @@ function updateDrive(dt){
   var left = keysDown.a || keysDown.arrowleft, right = keysDown.d || keysDown.arrowright;
   if (stick.active){ fwd = stick.y < -0.25; back = stick.y > 0.25;
                      left = stick.x < -0.3; right = stick.x > 0.3; }
+  if (isFrozen()){ fwd = back = left = right = false; }
   if (fwd) v.spd += 13 * dt;
   else if (back) v.spd -= 20 * dt;
   else v.spd -= Math.sign(v.spd) * Math.min(Math.abs(v.spd), (2 + Math.abs(v.spd) * 0.35) * dt);
@@ -1041,9 +1147,10 @@ function updateDrive(dt){
   player.fuel = Math.min(100, player.fuel + 30 * dt);
 }
 function updatePlayer(dt){
+  player.av.ice.visible = isFrozen();
   if (player.veh && mode === 'player'){ updateDrive(dt); return; }
   var f = 0, r = 0;
-  if (mode === 'player'){
+  if (mode === 'player' && !isFrozen()){
     if (keysDown.w || keysDown.arrowup) f += 1;
     if (keysDown.s || keysDown.arrowdown) f -= 1;
     if (keysDown.d || keysDown.arrowright) r += 1;
@@ -1066,7 +1173,7 @@ function updatePlayer(dt){
   player.x = Math.max(X0 - 20, Math.min(X1 + 20, player.x));
   player.z = Math.max(Z0 - 20, Math.min(Z1 + 20, player.z));
   var gy = groundY(player.x, player.z, player.y);
-  if ((keysDown[' '] || jumpQueued) && player.grounded && mode === 'player'){
+  if ((keysDown[' '] || jumpQueued) && player.grounded && mode === 'player' && !isFrozen()){
     player.vy = 11.5; player.grounded = false;
   }
   jumpQueued = false;
@@ -1091,17 +1198,37 @@ function updatePlayer(dt){
   player.swing += (Math.min(0.8, player.moving / 12) - player.swing) * Math.min(1, dt * 8);
   setSwing(player.av, player.phase, player.swing);
   if (!player.grounded){ player.av.armL.rotation.x = -2.6; player.av.armR.rotation.x = -2.6; }
+  if (player.pvp && player.grounded) player.av.armR.rotation.x = -1.35;  // aiming pose
   player.av.flames.forEach(function(fl){ fl.visible = thrusting; });
   player.av.g.position.set(player.x, player.y, player.z);
   player.av.g.rotation.y = player.ry;
 }
-function updatePlayerCam(){
+var camR = 13;
+function updatePlayerCam(dt){
+  followPause -= dt;
+  // soft follow: settle behind the character/car when the mouse is idle
+  if (followPause <= 0){
+    var tAz = null;
+    if (player.veh)
+      tAz = Math.atan2(Math.cos(player.veh.th), -Math.sin(player.veh.th)) + Math.PI;
+    else if (player.moving > 0)
+      tAz = player.ry + Math.PI;
+    if (tAz !== null)
+      rigP.az += angDelta(rigP.az, tAz) * Math.min(1, dt * (player.veh ? 1.7 : 2.1));
+  }
   rigP.el = Math.max(-0.15, Math.min(1.35, rigP.el));
   rigP.r = Math.max(4, Math.min(90, rigP.r));
+  var aiming = ads && player.pvp && !player.veh;
+  camR += ((aiming ? 4.6 : rigP.r) - camR) * Math.min(1, dt * 9);
+  var tf = aiming ? 42 : 55;
+  if (Math.abs(camera.fov - tf) > 0.05){
+    camera.fov += (tf - camera.fov) * Math.min(1, dt * 9);
+    camera.updateProjectionMatrix();
+  }
   camera.position.set(
-    player.x + rigP.r * Math.cos(rigP.el) * Math.sin(rigP.az),
-    player.y + 1.6 + rigP.r * Math.sin(rigP.el),
-    player.z + rigP.r * Math.cos(rigP.el) * Math.cos(rigP.az));
+    player.x + camR * Math.cos(rigP.el) * Math.sin(rigP.az),
+    player.y + 1.6 + camR * Math.sin(rigP.el),
+    player.z + camR * Math.cos(rigP.el) * Math.cos(rigP.az));
   camera.lookAt(player.x, player.y + 2.2, player.z);
 }
 
@@ -1148,6 +1275,7 @@ function handleNet(m){
       setNetChip();
     }
     r.m = m.m | 0;
+    r.p = m.p | 0;
     if (m.n && m.n !== r.name) r.name = m.n;   // live rename
     r.buf.push({t: performance.now(), x: m.x, y: m.y, z: m.z, ry: m.ry || 0});
     if (r.buf.length > 12) r.buf.shift();
@@ -1161,6 +1289,15 @@ function handleNet(m){
   } else if (m.t === 'correct'){
     // server rejected our movement — snap back to the last accepted position
     player.x = m.x; player.y = m.y; player.z = m.z; player.vy = 0;
+  } else if (m.t === 'frozen'){
+    var until = performance.now() + (typeof m.dur === 'number' ? m.dur : 4000);
+    if (m.id === myId) player.frozenUntil = m.dur === 0 ? 0 : until;
+    else if (remotes[m.id]) remotes[m.id].frozenUntil = m.dur === 0 ? 0 : until;
+  } else if (m.t === 'shot'){
+    if (m.id !== myId)
+      spawnDart(m.ox, m.oy, m.oz, m.dx, m.dy, m.dz, false);
+  } else if (m.t === 'sys'){
+    addChatLine('⚙ SERVER', String(m.msg || ''), false);
   } else if (m.t === 'leave') removeRemote(m.id);
 }
 
@@ -1218,6 +1355,9 @@ function updateRemotes(dt){
       setSwing(r.av, r.phase, r.swing);
       r.av.flames.forEach(function(fl){ fl.visible = r.m === 1; });
       if (r.m === 1){ r.av.armL.rotation.x = -2.6; r.av.armR.rotation.x = -2.6; }
+      r.av.gun.visible = !!r.p;
+      if (r.p && r.m !== 1) r.av.armR.rotation.x = -1.35;
+      r.av.ice.visible = !!(r.frozenUntil && now < r.frozenUntil);
       r.av.g.position.set(x, y, z);
       r.av.g.rotation.y = r.ry;
     }
@@ -1248,6 +1388,7 @@ function netTick(dt){
   if (online && ws && ws.readyState === 1)
     ws.send(JSON.stringify({t: 'state', n: myName, c: myColor,
       m: player.veh ? 2 : (player.thrusting ? 1 : 0),
+      p: player.pvp ? 1 : 0,
       x: +player.x.toFixed(2), y: +player.y.toFixed(2), z: +player.z.toFixed(2),
       ry: +(player.veh ? player.veh.th : player.ry).toFixed(3)}));
 }
@@ -1271,7 +1412,8 @@ function runBots(dt){
   while (botAcc > 0.1){
     botAcc -= 0.1;
     bots.forEach(function(b){
-      b.s += b.dir * b.sp * 0.1;
+      var botFrozen = b.frozenUntil && performance.now() < b.frozenUntil;
+      if (!botFrozen) b.s += b.dir * b.sp * 0.1;
       var lo = b.axis === 'x' ? -230 : -320, hi = 230;
       if (b.s > hi){ b.s = hi; b.dir = -1; }
       if (b.s < lo){ b.s = lo; b.dir = 1; }
@@ -1284,7 +1426,8 @@ function runBots(dt){
       var x = b.axis === 'x' ? b.s : b.c2, z = b.axis === 'x' ? b.c2 : b.s;
       var ry = b.axis === 'x' ? (b.dir > 0 ? Math.PI / 2 : -Math.PI / 2)
                               : (b.dir > 0 ? 0 : Math.PI);
-      handleNet({t: 'state', id: b.id, n: b.n, c: b.c, x: x, y: b.y + groundY(x, z), z: z, ry: ry});
+      handleNet({t: 'state', id: b.id, n: b.n, c: b.c, p: 1,
+        x: x, y: b.y + groundY(x, z), z: z, ry: ry});
     });
   }
 }
@@ -1364,8 +1507,32 @@ function manual(){ if (autoCam){ autoCam = false; tween = null; syncBtns(); } }
 // pointer controls
 var drag = null;
 var stick = {active: false, id: null, ox: 0, oy: 0, x: 0, y: 0, jets: false};
+var ptrLocked = false, ads = false, followPause = 0;
+// pointer lock: free mouse-look in player mode; LMB fires, RMB aims
+glCanvas.addEventListener('click', function(){
+  if (mode === 'player' && !IS_COARSE && !ptrLocked && els.tut.hidden)
+    glCanvas.requestPointerLock();
+});
+document.addEventListener('pointerlockchange', function(){
+  ptrLocked = document.pointerLockElement === glCanvas;
+  if (!ptrLocked) ads = false;
+});
+document.addEventListener('mousemove', function(e){
+  if (!ptrLocked || mode !== 'player') return;
+  rigP.az -= e.movementX * 0.0032;
+  rigP.el += e.movementY * 0.0032;
+  if (Math.abs(e.movementX) + Math.abs(e.movementY) > 2) followPause = 1.4;
+});
+document.addEventListener('mousedown', function(e){
+  if (!ptrLocked || mode !== 'player') return;
+  if (e.button === 0) fireDart();
+  if (e.button === 2 && player.pvp) ads = true;
+});
+document.addEventListener('mouseup', function(e){ if (e.button === 2) ads = false; });
+document.addEventListener('contextmenu', function(e){ if (ptrLocked) e.preventDefault(); });
 glCanvas.style.touchAction = 'none';
 glCanvas.addEventListener('pointerdown', function(e){
+  if (ptrLocked) return;
   if (mode === 'player' && e.pointerType === 'touch' && e.clientX < window.innerWidth * 0.4){
     stick.active = true; stick.id = e.pointerId;
     stick.ox = e.clientX; stick.oy = e.clientY; stick.x = 0; stick.y = 0;
@@ -1440,7 +1607,11 @@ window.addEventListener('keydown', function(e){
   }
   if (e.key === 'Escape' && !els.tut.hidden){ tutClose(); return; }
   if (e.key === '?'){ if (els.tut.hidden) tutOpen(); else tutClose(); return; }
-  if (e.key === 'Enter'){ e.preventDefault(); chatIn.focus(); return; }
+  if (e.key === 'Enter'){
+    e.preventDefault();
+    if (document.exitPointerLock) document.exitPointerLock();
+    chatIn.focus(); return;
+  }
   var k = e.key.toLowerCase();
   keysDown[k] = true;
   if (k === 'h'){ if (els.tut.hidden) tutOpen(); else tutClose(); }
@@ -1448,6 +1619,8 @@ window.addEventListener('keydown', function(e){
   if (k === 'p') togglePause();
   if (k === 'v') toggleMode();
   if (k === 'e') tryEnterExit();
+  if (k === 'g') setPvp(!player.pvp);
+  if (k === 'f') fireDart();
   if (k === 'b') setToggle('box');
   if (k === 't') setToggle('trk');
   if (k === 'l') setToggle('lbl');
@@ -1461,7 +1634,7 @@ function toggleMode(){
   mode = mode === 'player' ? 'drone' : 'player';
   if (mode === 'player'){
     rigP.az = player.ry + Math.PI;   // camera settles behind the character
-  }
+  } else if (document.exitPointerLock) document.exitPointerLock();
   syncBtns();
 }
 function applyWASD(dt){
@@ -1492,6 +1665,7 @@ var els = {
   bView: document.getElementById('bView'), bJump: document.getElementById('bJump'),
   bCar: document.getElementById('bCar'), hint: document.getElementById('hint'),
   fuel: document.getElementById('fuel'), bHelp: document.getElementById('bHelp'),
+  bNerf: document.getElementById('bNerf'), bFire: document.getElementById('bFire'),
   tut: document.getElementById('tut'),
   bAuto: document.getElementById('bAuto'), bBox: document.getElementById('bBox'),
   bTrk: document.getElementById('bTrk'), bLbl: document.getElementById('bLbl'),
@@ -1501,6 +1675,7 @@ var els = {
 els.ncars.textContent = cars.length; els.npeds.textContent = peds.length;
 function syncBtns(){
   els.bView.classList.toggle('on', mode === 'drone');
+  els.bNerf.classList.toggle('on', player.pvp);
   els.bAuto.classList.toggle('on', autoCam);
   els.bBox.classList.toggle('on', show.box);
   els.bTrk.classList.toggle('on', show.trk);
@@ -1519,6 +1694,8 @@ function setSpeed(s){ speed = s; paused = false; syncBtns(); }
 function togglePause(){ paused = !paused; syncBtns(); }
 els.bView.onclick = toggleMode;
 els.bCar.onclick = tryEnterExit;
+els.bNerf.onclick = function(){ setPvp(!player.pvp); };
+els.bFire.addEventListener('pointerdown', function(){ fireDart(); });
 els.bJump.addEventListener('pointerdown', function(){ jumpQueued = true; stick.jets = true; });
 window.addEventListener('pointerup', function(){ stick.jets = false; });
 els.bAuto.onclick = function(){ autoCam = !autoCam; tween = null; pTimer = 0; syncBtns(); };
@@ -1542,7 +1719,10 @@ function applyName(){
   try { localStorage.setItem('lt_name', n); } catch (e){}
   syncBtns();   // camlabel shows the call sign
 }
-function tutOpen(){ els.tut.hidden = false; nameIn.value = myName; }
+function tutOpen(){
+  els.tut.hidden = false; nameIn.value = myName;
+  if (document.exitPointerLock) document.exitPointerLock();
+}
 function tutClose(){
   applyName();
   els.tut.hidden = true;
@@ -1622,6 +1802,14 @@ function drawOverlay(){
     ov.arc(stick.ox + stick.x * 34, stick.oy + stick.y * 34, 16, 0, Math.PI * 2);
     ov.fill();
   }
+  if (mode === 'player' && player.pvp && !player.veh){   // crosshair
+    ov.fillStyle = 'rgba(255,157,90,0.95)';
+    ov.fillRect(vw / 2 - 1.5, vh / 2 - 1.5, 3, 3);
+    if (ads){
+      ov.strokeStyle = 'rgba(255,157,90,0.8)'; ov.lineWidth = 1.2;
+      ov.beginPath(); ov.arc(vw / 2, vh / 2, 11, 0, Math.PI * 2); ov.stroke();
+    }
+  }
   if (show.trk){
     ov.globalAlpha = 0.55;
     for (k = 0; k < cars.length; k++){
@@ -1687,14 +1875,17 @@ function drawOverlay(){
     }
     for (var id in remotes){
       var r = remotes[id];
-      var pos = r.av.g.position;
+      var pos = r.m === 2 && r.carG ? r.carG.position : r.av.g.position;
       var dist = camPos.distanceTo(pos);
       if (dist > 600) continue;
       var p = project(pos.x, pos.y + 2.9, pos.z);
       if (!p) continue;
       ov.font = '9.5px ui-monospace, Menlo, Consolas, monospace';
-      var tw = ov.measureText(r.name).width;
-      chip(p[0] - tw / 2, p[1], r.name, '#ffd28a');
+      var tag = (r.p ? '⌖ ' : '') + r.name;
+      var tw = ov.measureText(tag).width;
+      chip(p[0] - tw / 2, p[1], tag, r.p ? '#ff9d5a' : '#ffd28a');
+      if (r.frozenUntil && r.frozenUntil > nowMs)
+        chip(p[0] - 18, p[1] + 13, 'FROZEN', '#9adfff');
       if (r.bubble && r.bubble.until > nowMs) speech(p[0], p[1], r.bubble.msg);
       if (show.box){
         var bp = project(pos.x, pos.y + 1.2, pos.z);
@@ -1751,13 +1942,14 @@ function frame(now){
     updatePeds(dt, simT);
   }
   updatePlayer(dt);
+  updateDarts(dt);
   runBots(dt);
   updateRemotes(dt);
   netTick(dt);
   if (mode === 'drone'){
     applyWASD(dt);
     updateRig(dt);
-  } else updatePlayerCam();
+  } else updatePlayerCam(dt);
 
   // environment
   var env = envAt(simH);
@@ -1790,9 +1982,11 @@ function frame(now){
   els.fuel.textContent = Math.round(player.fuel);
   var hint = '';
   if (mode === 'player'){
-    if (player.veh) hint = 'E — EXIT · W/S DRIVE · A/D STEER · ' + Math.round(Math.abs(player.veh.spd) * 3.6) + ' KM/H';
+    if (isFrozen()) hint = 'FROZEN — ' + Math.ceil((player.frozenUntil - performance.now()) / 1000) + 's';
+    else if (player.veh) hint = 'E — EXIT · W/S DRIVE · A/D STEER · ' + Math.round(Math.abs(player.veh.spd) * 3.6) + ' KM/H';
     else if (player.grounded && nearestVehicle()) hint = 'E — ENTER CAR';
     else if (!player.grounded && player.thrusting) hint = 'JETPACK · FUEL ' + Math.round(player.fuel) + '%';
+    else if (player.pvp) hint = 'CLICK/F — FIRE · RMB — AIM · G — HOLSTER';
   }
   els.hint.textContent = hint;
   els.hint.style.display = hint ? 'block' : 'none';

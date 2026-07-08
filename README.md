@@ -34,13 +34,32 @@ No server? Opening `web/index.html` directly (or hosting `web/` statically) runs
 | `Space` | Jump — **hold in mid-air to fly the jetpack** (fuel drains, recharges on the ground; land on rooftops) |
 | `E` | Enter / exit the nearest car — W/S to drive, A/D to steer, up to 108 km/h |
 | Drag / wheel | Orbit / zoom camera |
+| `G` | Draw/holster the nerf blaster — **drawing opts you into PvP**; holstered players can't be tagged |
+| `F` / left-click | Fire a foam dart (a hit freezes the target in an ice cube for 4 s — no health, no scores) |
+| Right-click (hold) | Aim-down-sights zoom while the blaster is out |
 | `Enter` | Chat (Esc to cancel; messages appear in the log and as a bubble over your head) |
 | `V` | Toggle player / drone camera (drone mode has an auto-tour: `C`) |
 | `P` | Pause the city sim |
 | `B` / `T` / `L` | Toggle detection boxes / motion tracks / landmark labels |
 | `1` `2` `3` | Time speed 1× / 60× / 300× |
 
-Touch: left half of the screen is a virtual movement stick, right half orbits the camera, JUMP button in the control rail.
+Desktop mouse: click the game once to enter mouse-look (pointer lock) — the camera follows your mouse with no buttons held, settles in behind you while you walk or drive, and Esc releases the cursor.
+
+Touch: left half of the screen is a virtual movement stick, right half orbits the camera, JUMP/FIRE/NERF buttons in the control rail.
+
+## Admin
+
+Set `ADMIN_TOKEN` in the server environment (e.g. a systemd drop-in). In-game, an admin authenticates and moderates through chat:
+
+```
+/admin <token>      become admin for this session
+/list               players with ids + ips
+/kick <name>        disconnect a player
+/ban <name>         kick + persist an ip/name ban (bans.json)
+/unban <name|ip>    lift a ban
+/unfreeze <name>    thaw someone
+/announce <msg>     server-wide message
+```
 
 ### URL options
 
