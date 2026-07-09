@@ -2457,6 +2457,29 @@ if (/debug=1/.test(hashStr)){
     unlock: function(){ return heliUnlocked; },
     m2stage: function(){ return mission2.stage; },
     tp: function(x, z){ player.x = x; player.z = z; player.y = groundY(x, z); },
+    audio: function(){ pokeAudio(); return AC ? AC.state : 'none'; },
+    audioTap: function(){   // MediaStream of the game's synth audio (for capture rigs)
+      pokeAudio();
+      if (!AC) return null;
+      var d = AC.createMediaStreamDestination();
+      sndMaster.connect(d);
+      return d.stream;
+    },
+    aimHeli: function(){    // point the FP camera at the mission chopper, with lead
+      if (!mh) return false;
+      var ex = player.x, ey = player.y + 2.35, ez = player.z;
+      var L0 = Math.hypot(mh.x - ex, mh.y - ey, mh.z - ez);
+      var t = L0 / 55;      // rocket flight time
+      var ang2 = mh.ang + 0.55 * t;
+      var r = mh.r === undefined ? 32 : mh.r;
+      var px = MISSION_C.x + Math.cos(ang2) * r;
+      var pz = MISSION_C.z + Math.sin(ang2) * r;
+      var dx = px - ex, dy = mh.y - ey, dz = pz - ez;
+      var L = Math.hypot(dx, dy, dz);
+      rigP.el = -Math.asin(dy / L);
+      rigP.az = Math.atan2(-dx, -dz);
+      return true;
+    },
     m2: function(){ return {t0: mission2.t0, penalty: mission2.penalty,
       zones: zoneState.map(function(z){ return z.cleared + '/' + z.total; })}; },
     plowZone: function(zi){   // clear one zone's snow instantly
