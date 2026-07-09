@@ -36,8 +36,9 @@ ssh -i ~/.ssh/lextown.pem ubuntu@44.211.95.210 \
   'cd /opt/lextown && git pull -q && sudo systemctl restart lextown'
 ```
 
-- Restarting the server drops connected players to LOCAL-SIM until they
-  refresh (no client auto-reconnect yet) — deploy accordingly.
+- Restarting the server briefly drops connected players to LOCAL-SIM; the
+  client auto-reconnects with backoff (2s → 30s cap) and re-syncs via the
+  welcome handshake, so deploys are safe mid-session.
 - `ADMIN_TOKEN` lives in `/etc/systemd/system/lextown.service.d/admin.conf`
   on the box, never in the repo. Bans persist to `/opt/lextown/bans.json`
   (gitignored).

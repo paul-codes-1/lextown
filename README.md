@@ -105,7 +105,7 @@ jq 'select(.e=="metrics") | {ts,online,rssMb}' logs/events-*.jsonl    # 5-min he
 - **Chat** — `{t:'chat', msg}` messages are stripped to printable ASCII, capped at 120 chars, and rate-limited per client (3-message burst, ~1/1.2 s refill) before being broadcast to everyone. The client shows them in the log and as a speech bubble over the sender's head.
 - **Packet-rate limiting** — state packets beyond 15/s per client are dropped.
 
-The client renders remote players through a small interpolation buffer (~160 ms), so movement is smooth at any reasonable latency. There is no persistence — the world resets when the server does.
+The client renders remote players through a small interpolation buffer (~160 ms), so movement is smooth at any reasonable latency, and auto-reconnects with backoff if the relay drops. There is no world persistence — only the mission leaderboards survive a server restart.
 
 Ideas for where to take it: spatial interest management, persistence, private worlds, riding the cars.
 
