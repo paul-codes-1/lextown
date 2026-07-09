@@ -72,7 +72,10 @@ const server = http.createServer((req, res) => {
 // vertical — enforced with tolerance for network jitter). Violations are not
 // relayed; the client gets a {t:'correct'} snapping it back.
 
-const WORLD = { x0: -545, x1: 325, z0: -425, z1: 325, y0: -1, y1: 190 };
+// KEEP IN SYNC with X0/X1/Z0/Z1 in web/app.js (+25 clamp slack): the client
+// clamps to extents+20, and anything outside these bounds gets move-rejected
+// (the "invisible wall" bug of 2026-07-09 was this constant going stale).
+const WORLD = { x0: -545, x1: 645, z0: -1525, z1: 825, y0: -1, y1: 190 };
 const FREEZE_MS = 4000;
 const HIT_RANGE = 80;          // max shooter->target distance for a valid tag
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';

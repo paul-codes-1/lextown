@@ -4659,6 +4659,61 @@ function chip(x, y, text, col){
   ov.fillStyle = col;
   ov.fillText(text, x + 1, y);
 }
+// mission objective tracker: gold brackets on the live target, edge arrow
+// with bearing + distance when it's off-screen
+function missionTarget(){
+  if (mission3.stage === 'tail'){
+    if (m3Car && m3Car.boarded && !m3Car.done)
+      return {x: m3Car.g.position.x, y: 2.4, z: m3Car.g.position.z, label: 'GRAFT'};
+    return m3Graft ? {x: m3Graft.position.x, y: 2.6, z: m3Graft.position.z, label: 'GRAFT'} : null;
+  }
+  if (mission3.stage === 'listen' || mission3.stage === 'photo')
+    return m3Graft ? {x: m3Graft.position.x, y: 2.6, z: m3Graft.position.z, label: 'GRAFT'} : null;
+  if (mission3.stage === 'scout') return {x: M3_QUAD.x, y: 3, z: M3_QUAD.z, label: 'UK QUAD'};
+  if (mission3.stage === 'return') return {x: M3_TRIG.x, y: 3, z: M3_TRIG.z, label: 'THE MAYOR'};
+  if (mission4.stage === 'wrangle'){
+    if (m4ActiveHorse()) return {x: -228, y: 3, z: -1180, label: 'ELMENDORF PADDOCK'};
+    var best = null, bd = 1e12;
+    for (var k = 0; k < m4Horses.length; k++){
+      var h = m4Horses[k];
+      if (h.state === 'penned') continue;
+      var dx = h.g.position.x - player.x, dz = h.g.position.z - player.z;
+      var d2 = dx * dx + dz * dz;
+      if (d2 < bd){ bd = d2; best = h; }
+    }
+    if (best) return {x: best.g.position.x, y: 3, z: best.g.position.z, label: best.name};
+  }
+  return null;
+}
+function drawMissionTarget(){
+  var t = missionTarget();
+  if (!t) return;
+  var col = '#ffd28a';
+  var dTxt = ' · ' + Math.round(Math.hypot(t.x - player.x, t.z - player.z)) + 'M';
+  var d = Math.hypot(t.x - camPos.x, t.z - camPos.z);
+  var p = project(t.x, t.y, t.z);
+  if (p && p[0] > 20 && p[0] < vw - 20 && p[1] > 20 && p[1] < vh - 20){
+    var s = Math.max(16, Math.min(46, pxSize(3.4, d)));
+    bracket(p[0] - s / 2, p[1] - s / 2, s, s, col);
+    chip(p[0] + s / 2 + 4, p[1] - s / 2 + 8, t.label + dTxt, col);
+  } else {
+    camera.getWorldDirection(_camDir);
+    var fa = Math.atan2(_camDir.x, _camDir.z);
+    var ta = Math.atan2(t.x - camPos.x, t.z - camPos.z);
+    var rel = ((ta - fa + Math.PI * 3) % (Math.PI * 2)) - Math.PI;   // 0 = dead ahead
+    var cx = vw / 2 + Math.sin(rel) * Math.min(vw, vh) * 0.36;
+    var cy = vh / 2 - Math.cos(rel) * Math.min(vw, vh) * 0.30;
+    ov.save();
+    ov.translate(cx, cy);
+    ov.rotate(rel);
+    ov.fillStyle = col;
+    ov.beginPath(); ov.moveTo(0, -11); ov.lineTo(6.5, 2); ov.lineTo(-6.5, 2); ov.closePath(); ov.fill();
+    ov.restore();
+    ov.font = '9.5px ui-monospace, Menlo, Consolas, monospace';
+    var tw = ov.measureText(t.label + dTxt).width;
+    chip(Math.max(6, Math.min(vw - tw - 10, cx - tw / 2)), cy + 18, t.label + dTxt, col);
+  }
+}
 var camPos = new THREE.Vector3();
 function drawOverlay(){
   ov.clearRect(0, 0, vw, vh);
@@ -4868,6 +4923,7 @@ function drawOverlay(){
       chip(lp[0] + 4, lp[1] - 18, lb.name, lb.col || '#d9fff6');
     }
   }
+  drawMissionTarget();
 }
 
 // ---------- main loop ----------

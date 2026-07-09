@@ -84,7 +84,9 @@ fills them runs — a `vehicles`-before-init crash has happened once already.
 Key models to keep straight:
 
 - **World grid**: stylized orthogonal, 1 unit = 1 m, x=east z=south, 100 m
-  blocks. `EW`/`NS` street tables encode real one-way directions. Streets can
+  blocks. ⚠️ Growing the map (X0/X1/Z0/Z1) REQUIRES updating `WORLD` in
+  server.js — otherwise the server move-rejects players at the old edge
+  (invisible wall + rubber-banding). `EW`/`NS` street tables encode real one-way directions. Streets can
   carry a partial extent (`x0`/`x1` on EW rows, `z0`/`z1` on NS rows) so they
   end where they really end (MLK/Upper stop at Euclid, Rose starts at Main);
   `meets(e, n)` + the `XINGS` list gate every per-intersection consumer
