@@ -8,9 +8,11 @@ Built with [Three.js](https://threejs.org/) (vendored, no build step) and a smal
 
 ## The city
 
-The map is the real downtown core plus the UK campus and Chevy Chase, stylized:
+The map runs from the horse farms north of New Circle Road down through NoLi, the downtown core, the UK campus, and Chevy Chase, stylized:
 
-- **Streets** — Third, Second, Short, Main, Vine, High, Maxwell, and Euclid crossed by Broadway, Mill, Upper, Limestone, MLK, Rose, Woodland, and Ashland, with the correct one-way pairs (Main/Short/Maxwell eastbound, Vine/Second westbound, Upper northbound, Limestone southbound) and working traffic signals. Streets end where they really end — MLK and Upper stop at Euclid; Rose starts at Main.
+- **Streets** — Fourth through Seventh, Loudon, and New Circle up north; Third, Second, Short, Main, Vine, High, Maxwell, and Euclid crossed by Broadway, Mill, Upper, Limestone, MLK, Rose, Woodland, and Ashland — with the correct one-way pairs (Main/Short/Maxwell eastbound, Vine/Second westbound, Upper northbound, Limestone southbound) and working traffic signals. Streets end where they really end — MLK and Upper stop at Euclid; Rose starts at Main; north of New Circle the grid gives way entirely.
+- **The horse farms** — past the Urban Service Boundary (New Circle Rd, board fence and all), Broadway becomes Paris Pike and Limestone becomes Russell Cave Road, running between black four-board paddocks: Elmendorf (with the lone white columns standing in the pasture), Gainesway, Mt. Brilliant, and Spindletop. Tobacco-black and green-roofed barns, ponds, and grazing horses in five coat colors.
+- **NoLi** — shotgun houses line the North Limestone corridor, with Al's Bar on the corner at Sixth & Lime, Duncan Park beside it, and Castlewood Park up by Loudon.
 - **Landmarks** — Big Blue (Lexington Financial Center), the Central Bank Tower, City Center, 21c Museum Hotel, the old courthouse dome on Cheapside, the Circuit Court towers, City Hall, Central Library, Phoenix Park, Triangle Park, Thoroughbred Park (bronze horses included), and Rupp Arena.
 - **The University of Kentucky** — Memorial Coliseum, the Gatton Student Center, the Main Building, Memorial Hall's white steeple, Patterson Office Tower, William T. Young Library, and the quad walks — with Kroger Field's blue ring glowing off S Broadway at night.
 - **Chevy Chase & the neighborhoods** — the Euclid storefront strip (say hi to Wheeler Pharmacy), Woodland Park, the wooded Ashland Henry Clay estate, and instanced bungalow blocks with lit windows filling the south and east sides.

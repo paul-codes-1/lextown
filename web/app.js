@@ -29,12 +29,22 @@ scene.fog = new THREE.FogExp2(0x1a1030, 0.0011);
 
 // ---------- street grid ----------
 var SW = 16;                      // street width
-var X0 = -520, X1 = 620, Z0 = -400, Z1 = 800;   // map extents
+var X0 = -520, X1 = 620, Z0 = -1500, Z1 = 800;   // map extents
 // dirs: EW +1 = eastbound(+x); NS +1 = southbound(+z)
 // Streets can carry a partial extent (x0/x1 on EW, z0/z1 on NS) so they end
 // where they really end — MLK and Upper stop at Euclid, Mill at Maxwell,
 // Rose starts at Main — instead of slicing through the UK superblock.
+// EW must stay sorted north→south (the block loop pairs consecutive rows).
+// North of New Circle Rd (the Urban Service Boundary) there is no grid at
+// all — Broadway continues as Paris Pike, Limestone as Russell Cave Rd,
+// and the horse farms are hand-built.
 var EW = [
+  {name:'NEW CIRCLE RD', z:-950, dirs:[1,-1]},
+  {name:'LOUDON AVE',    z:-800, dirs:[1,-1], x0:-200, x1:200},
+  {name:'SEVENTH ST',    z:-700, dirs:[1],    x0:-200, x1:200},
+  {name:'SIXTH ST',      z:-600, dirs:[-1],   x0:-200, x1:200},
+  {name:'FIFTH ST',      z:-500, dirs:[1],    x0:-200, x1:200},
+  {name:'FOURTH ST',     z:-400, dirs:[-1],   x0:-200, x1:200},
   {name:'THIRD ST',   z:-300, dirs:[1,-1]},
   {name:'SECOND ST',  z:-200, dirs:[-1]},
   {name:'SHORT ST',   z:-100, dirs:[1]},
@@ -45,11 +55,11 @@ var EW = [
   {name:'EUCLID AVE', z:400,  dirs:[1,-1], x0:100}
 ];
 var NS = [
-  {name:'BROADWAY',  x:-200, dirs:[1,-1]},
-  {name:'MILL ST',   x:-100, dirs:[-1],  z1:300},
-  {name:'UPPER ST',  x:0,    dirs:[-1],  z1:400},
-  {name:'LIMESTONE', x:100,  dirs:[1]},
-  {name:'MLK BLVD',  x:200,  dirs:[1,-1], z1:400},
+  {name:'BROADWAY',  x:-200, dirs:[1,-1]},                    // Paris Pike up north
+  {name:'MILL ST',   x:-100, dirs:[-1],  z0:-400, z1:300},
+  {name:'UPPER ST',  x:0,    dirs:[-1],  z0:-800, z1:400},
+  {name:'LIMESTONE', x:100,  dirs:[1]},                        // Russell Cave up north
+  {name:'MLK BLVD',  x:200,  dirs:[1,-1], z0:-800, z1:400},
   {name:'ROSE ST',   x:300,  dirs:[1,-1], z0:0},
   {name:'WOODLAND',  x:400,  dirs:[1,-1], z0:0, z1:400},
   {name:'ASHLAND',   x:500,  dirs:[1,-1], z0:200}
@@ -383,16 +393,20 @@ var lawnMat = new THREE.MeshStandardMaterial({color: 0x51683c, roughness: 1});
 var HOUSE_COLS = [0xe8e2d4, 0x9c5240, 0xb9c4c9, 0xcdb98e, 0x8fa3b5, 0x76806f];
 var ROOF_COLS = [0x3a3d42, 0x4a3b32, 0x2f3a33];
 var housePts = [];   // {x,z,ry,w,d,h,rh,ci,ri} — instanced after world build
-function house(x, z, ry){
-  var w = 9 + Math.random() * 3.5, d = 7.5 + Math.random() * 3, h = 4.2 + Math.random() * 1.8;
-  housePts.push({x: x, z: z, ry: ry, w: w, d: d, h: h, rh: 2.2 + Math.random() * 1.4,
+function house(x, z, ry, narrow){
+  // narrow = NoLi-style shotgun: skinny frontage, deep, low
+  var w = narrow ? 6 + Math.random() * 1.5 : 9 + Math.random() * 3.5;
+  var d = narrow ? 10 + Math.random() * 2.5 : 7.5 + Math.random() * 3;
+  var h = narrow ? 3.8 + Math.random() : 4.2 + Math.random() * 1.8;
+  housePts.push({x: x, z: z, ry: ry, w: w, d: d, h: h,
+                 rh: (narrow ? 1.8 : 2.2) + Math.random() * (narrow ? 0.8 : 1.4),
                  ci: (Math.random() * HOUSE_COLS.length) | 0,
                  ri: (Math.random() * ROOF_COLS.length) | 0});
   var flip = Math.abs(Math.sin(ry)) > 0.5;   // ±90° — swap footprint for the collider
   var cw = flip ? d : w, cd = flip ? w : d;
   colliders.push({x0: x - cw / 2, x1: x + cw / 2, z0: z - cd / 2, z1: z + cd / 2, h: h + 0.7});
 }
-function resBlock(x0, z0, x1, z1){
+function resBlock(x0, z0, x1, z1, narrow){
   var w = x1 - x0, d = z1 - z0;
   if (w > 135 || d > 135){   // subdivide superblocks; 14 m grass gaps read as alleys
     var nx = Math.max(w > 135 ? 2 : 1, Math.round(w / 110));
@@ -400,27 +414,29 @@ function resBlock(x0, z0, x1, z1){
     var cw = w / nx, cd = d / nz;
     for (var a = 0; a < nx; a++) for (var b = 0; b < nz; b++)
       resBlock(x0 + a * cw + (a ? 7 : 0), z0 + b * cd + (b ? 7 : 0),
-               x0 + (a + 1) * cw - (a < nx - 1 ? 7 : 0), z0 + (b + 1) * cd - (b < nz - 1 ? 7 : 0));
+               x0 + (a + 1) * cw - (a < nx - 1 ? 7 : 0), z0 + (b + 1) * cd - (b < nz - 1 ? 7 : 0),
+               narrow);
     return;
   }
   slab(x0, z0, x1, z1, lawnMat);
+  var step = narrow ? 10 : 15, jit = narrow ? 3 : 6, off = narrow ? 8.5 : 7.5;
   var k;
   if (w >= d){   // two rows of houses facing the z edges
-    for (var hx = x0 + 9; hx < x1 - 8; hx += 15 + Math.random() * 6){
-      if (Math.random() < 0.86) house(hx, z0 + 7.5, Math.PI);
+    for (var hx = x0 + 9; hx < x1 - 8; hx += step + Math.random() * jit){
+      if (Math.random() < 0.86) house(hx, z0 + off, Math.PI, narrow);
       else treePts.push([hx, z0 + 7 + Math.random() * 5]);
     }
-    if (d > 42) for (hx = x0 + 9; hx < x1 - 8; hx += 15 + Math.random() * 6){
-      if (Math.random() < 0.86) house(hx, z1 - 7.5, 0);
+    if (d > 42) for (hx = x0 + 9; hx < x1 - 8; hx += step + Math.random() * jit){
+      if (Math.random() < 0.86) house(hx, z1 - off, 0, narrow);
       else treePts.push([hx, z1 - 12 + Math.random() * 5]);
     }
   } else {       // two columns facing the x edges
-    for (var hz = z0 + 9; hz < z1 - 8; hz += 15 + Math.random() * 6){
-      if (Math.random() < 0.86) house(x0 + 7.5, hz, Math.PI / 2);
+    for (var hz = z0 + 9; hz < z1 - 8; hz += step + Math.random() * jit){
+      if (Math.random() < 0.86) house(x0 + off, hz, Math.PI / 2, narrow);
       else treePts.push([x0 + 7 + Math.random() * 5, hz]);
     }
-    if (w > 42) for (hz = z0 + 9; hz < z1 - 8; hz += 15 + Math.random() * 6){
-      if (Math.random() < 0.86) house(x1 - 7.5, hz, -Math.PI / 2);
+    if (w > 42) for (hz = z0 + 9; hz < z1 - 8; hz += step + Math.random() * jit){
+      if (Math.random() < 0.86) house(x1 - off, hz, -Math.PI / 2, narrow);
       else treePts.push([x1 - 12 + Math.random() * 5, hz]);
     }
   }
@@ -429,6 +445,7 @@ function resBlock(x0, z0, x1, z1){
 }
 // which generator a grid cell gets, by its center
 function blockKind(cx, cz){
+  if (cz < -350) return Math.random() < 0.3 ? 'low' : 'shotgun';  // NoLi corridor
   if (cz > 200){
     if (cx > 100 && cx < 300) return 'low';   // S Lime student strip
     return 'res';
@@ -437,21 +454,36 @@ function blockKind(cx, cz){
   return 'proc';
 }
 
-// blocks between streets; skip landmark blocks ('4-3' Thoroughbred Park,
-// '5-5'/'5-6' Woodland Park — hand-built below)
-var SKIP = {'0-2':1, '0-3':1, '0-4':1, '1-0':1, '1-2':1, '1-3':1, '1-4':1, '2-2':1, '3-2':1, '3-3':1,
-            '4-3':1, '5-5':1, '5-6':1};
+// blocks between streets; skip hand-built landmark blocks. Keyed by
+// "<west NS street>|<north EW street>" so table edits don't shift them.
+var SKIP = {
+  'BROADWAY|SHORT ST': 1,     // Victorian Square
+  'BROADWAY|MAIN ST': 1,      // Triangle Park + Big Blue
+  'BROADWAY|VINE ST': 1,
+  'MILL ST|THIRD ST': 1,      // First Presbyterian
+  'MILL ST|SHORT ST': 1,      // 21c
+  'MILL ST|MAIN ST': 1,       // City Center
+  'MILL ST|VINE ST': 1,
+  'UPPER ST|SHORT ST': 1,     // old courthouse
+  'LIMESTONE|SHORT ST': 1,    // Circuit Court
+  'LIMESTONE|MAIN ST': 1,     // Phoenix Park + City Hall
+  'MLK BLVD|MAIN ST': 1,      // Thoroughbred Park
+  'ROSE ST|HIGH ST': 1,       // Woodland Park
+  'ROSE ST|MAXWELL ST': 1,
+  'LIMESTONE|SIXTH ST': 1     // Al's Bar + Duncan Park
+};
 for (var i = 0; i < NS.length - 1; i++){
   for (var j = 0; j < EW.length - 1; j++){
     var bx0 = NS[i].x + SW / 2 + 3, bx1 = NS[i + 1].x - SW / 2 - 3;
     var bz0 = EW[j].z + SW / 2 + 3, bz1 = EW[j + 1].z - SW / 2 - 3;
-    if (SKIP[i + '-' + j]) continue;
+    if (SKIP[NS[i].name + '|' + EW[j].name]) continue;
     // all four bounding street segments must exist here (partial extents);
     // uncovered regions (campus, Chevy Chase, NE side) are hand-built below
     if (!meets(EW[j], NS[i]) || !meets(EW[j], NS[i + 1]) ||
         !meets(EW[j + 1], NS[i]) || !meets(EW[j + 1], NS[i + 1])) continue;
     var kind = blockKind((bx0 + bx1) / 2, (bz0 + bz1) / 2);
     if (kind === 'res') resBlock(bx0, bz0, bx1, bz1);
+    else if (kind === 'shotgun') resBlock(bx0, bz0, bx1, bz1, true);
     else procBlock(bx0, bz0, bx1, bz1, kind === 'low');
   }
 }
@@ -816,6 +848,225 @@ resBlock(208, -292, 612, -208);
 resBlock(208, -192, 612, -108);
 resBlock(208, -92, 612, -8);
 
+// ---------- NoLi — the North Limestone corridor ----------
+// Al's Bar (Sixth & Lime) + Duncan Park share the skipped cell
+(function(){
+  slab(116, -592, 184, -566);
+  addTower(128, -580, 18, 14, 7, 0, "AL'S BAR");
+  addStorefront(128, -580, 18, 14);
+  addSign(128, 5.2, -587.6, 0);
+  house(160, -582, 0, true); house(176, -582, 0, true);
+  slab(116, -562, 184, -508, parkMat);
+  labels.push({name: 'DUNCAN PARK', x: 150, y: 12, z: -535});
+  for (var t = 0; t < 8; t++)
+    treePts.push([120 + Math.random() * 60, -558 + Math.random() * 46]);
+})();
+// Jefferson St side — shotguns fill Broadway→Upper (no Mill up here)
+resBlock(-192, -792, -8, -408, true);
+// east of MLK, Third→Loudon — superblock bands
+resBlock(208, -792, 612, -408);
+// Loudon→New Circle: warehouses + Castlewood Park
+(function(){
+  slab(-192, -936, -8, -812);
+  addTower(-140, -880, 60, 42, 10, 4);
+  addTower(-50, -866, 34, 28, 8, 1);
+  addParkingLot(-100, -830, -16, -816);
+  slab(8, -936, 92, -812);
+  addTower(50, -876, 46, 36, 9, 4);
+  addParkingLot(14, -834, 86, -816);
+  slab(108, -936, 192, -812, parkMat);   // Castlewood, east of N Lime
+  labels.push({name: 'CASTLEWOOD PARK', x: 150, y: 14, z: -874});
+  var deck = new THREE.Mesh(new THREE.PlaneGeometry(30, 17), slabMat);
+  deck.rotation.x = -Math.PI / 2; deck.position.set(150, 0.73, -874);
+  deck.receiveShadow = true; scene.add(deck);
+  var pool = new THREE.Mesh(new THREE.PlaneGeometry(22, 11),
+    new THREE.MeshStandardMaterial({color: 0x2e7d9e, roughness: 0.2, metalness: 0.3}));
+  pool.rotation.x = -Math.PI / 2; pool.position.set(150, 0.74, -874); scene.add(pool);
+  for (var t = 0; t < 14; t++)
+    treePts.push([112 + Math.random() * 76, -932 + Math.random() * 116]);
+  slab(208, -936, 470, -812);
+  addTower(260, -880, 70, 44, 11, 4);
+  addTower(380, -872, 50, 36, 9, 1);
+  addParkingLot(320, -836, 460, -816);
+  for (t = 0; t < 12; t++)
+    treePts.push([480 + Math.random() * 130, -930 + Math.random() * 112]);
+})();
+
+// ---------- the horse farms (north of New Circle Rd — past the USB) ----------
+var horsePts = [];   // {x,z,ry,s}
+var railSegs = [], fencePostPts = [];
+function fenceLine(x0, z0, x1, z1){   // axis-aligned black four-board fence
+  var axis = z0 === z1 ? 'x' : 'z';
+  var len = axis === 'x' ? x1 - x0 : z1 - z0;
+  var cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+  [0.38, 0.72, 1.06, 1.4].forEach(function(y){
+    railSegs.push({x: cx, z: cz, len: len, axis: axis, y: y});
+  });
+  var n = Math.floor(len / 3);
+  for (var k = 0; k <= n; k++)
+    fencePostPts.push(axis === 'x' ? [x0 + k * 3, z0] : [x0, z0 + k * 3]);
+}
+function paddock(x0, z0, x1, z1){
+  fenceLine(x0, z0, x1, z0); fenceLine(x0, z1, x1, z1);
+  fenceLine(x0, z0, x0, z1); fenceLine(x1, z0, x1, z1);
+  var n = 3 + (Math.random() * 4) | 0;
+  for (var k = 0; k < n; k++)
+    horsePts.push({x: x0 + 10 + Math.random() * (x1 - x0 - 20),
+                   z: z0 + 10 + Math.random() * (z1 - z0 - 20),
+                   ry: Math.random() * Math.PI * 2, s: 0.8 + Math.random() * 0.35});
+}
+function barn(x, z, wallCol, roofCol, w, d, h){
+  var wall = new THREE.MeshStandardMaterial({color: wallCol, roughness: 0.9});
+  var box = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wall);
+  box.position.set(x, h / 2 + 0.05, z);
+  box.castShadow = true; box.receiveShadow = true; scene.add(box);
+  var r = d * 0.62;
+  var gable = new THREE.Mesh(new THREE.CylinderGeometry(r, r, w, 3, 1),
+    new THREE.MeshStandardMaterial({color: roofCol, roughness: 0.85}));
+  gable.rotation.z = Math.PI / 2;      // length along x; local x is now vertical
+  gable.scale.set(0.55, 1, 1);
+  gable.position.set(x, h + 0.05, z); gable.castShadow = true; scene.add(gable);
+  var cup = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.1, 1.2), whiteTrimMat);
+  cup.position.set(x, h + r * 0.55 + 0.5, z); scene.add(cup);
+  colliders.push({x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2,
+                  h: h + r * 0.55});
+}
+function pond(x, z, rx, rz){
+  var m = new THREE.Mesh(new THREE.CircleGeometry(1, 22),
+    new THREE.MeshStandardMaterial({color: 0x33566b, roughness: 0.25, metalness: 0.2}));
+  m.rotation.x = -Math.PI / 2; m.scale.set(rx, rz, 1);
+  m.position.set(x, 0.06, z); m.receiveShadow = true; scene.add(m);
+}
+(function(){
+  // bluegrass pasture belt
+  var pastureTex = makeTex(256, 256, function(g){
+    g.fillStyle = '#4c6836'; g.fillRect(0, 0, 256, 256);
+    for (var i = 0; i < 900; i++){
+      g.fillStyle = 'rgba(235,245,190,' + (Math.random() * 0.05) + ')';
+      g.fillRect(Math.random() * 256, Math.random() * 256, 2, 1.5);
+    }
+    for (i = 0; i < 320; i++){
+      g.fillStyle = 'rgba(15,35,8,0.09)';
+      g.fillRect(Math.random() * 256, Math.random() * 256, 3, 2);
+    }
+  });
+  pastureTex.encoding = THREE.sRGBEncoding;
+  pastureTex.repeat.set(11, 5);
+  var belt = new THREE.Mesh(new THREE.PlaneGeometry(X1 - X0, 532),
+    new THREE.MeshStandardMaterial({map: pastureTex, roughness: 1}));
+  belt.rotation.x = -Math.PI / 2; belt.position.set((X0 + X1) / 2, 0.03, -1224);
+  belt.receiveShadow = true; scene.add(belt);
+  // continuous board fence along the USB (gaps at the two pikes)
+  fenceLine(-510, -968, -218, -968);
+  fenceLine(-182, -968, 82, -968);
+  fenceLine(118, -968, 610, -968);
+  labels.push({name: 'URBAN SERVICE BOUNDARY', x: -50, y: 16, z: -952});
+  labels.push({name: 'PARIS PIKE', x: -200, y: 10, z: -1200});
+  labels.push({name: 'RUSSELL CAVE RD', x: 100, y: 10, z: -1200});
+
+  // Elmendorf (west of Paris Pike) — with the Green Hills mansion columns
+  paddock(-505, -1480, -350, -1300);
+  paddock(-330, -1480, -216, -1300);
+  paddock(-505, -1270, -216, -1090);
+  barn(-460, -1040, 0x241f1a, 0x3a3d42, 16, 10, 5);   // tobacco-black
+  barn(-280, -1040, 0xe8e4d8, 0x3f7d72, 15, 9, 4.5);  // white + green roof
+  pond(-380, -1350, 26, 18);
+  labels.push({name: 'ELMENDORF FARM', x: -360, y: 20, z: -1200});
+  (function(){   // the four white columns standing alone in the pasture
+    for (var c = 0; c < 4; c++){
+      var col = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.6, 7.5, 10), whiteTrimMat);
+      col.position.set(-409 + c * 6, 3.8, -1180); col.castShadow = true; scene.add(col);
+    }
+    var lintel = new THREE.Mesh(new THREE.BoxGeometry(21, 1.1, 1.8), whiteTrimMat);
+    lintel.position.set(-400, 8, -1180); lintel.castShadow = true; scene.add(lintel);
+    colliders.push({x0: -410.5, x1: -389.5, z0: -1181.5, z1: -1178.5, h: 8.6});
+  })();
+
+  // Gainesway (between the pikes)
+  paddock(-175, -1480, 75, -1310);
+  paddock(-175, -1280, 75, -1080);
+  barn(-120, -1030, 0xe8e4d8, 0x3f7d72, 15, 9, 4.5);
+  barn(0, -1030, 0xe8e4d8, 0x3f7d72, 15, 9, 4.5);
+  pond(20, -1400, 20, 14);
+  labels.push({name: 'GAINESWAY FARM', x: -50, y: 20, z: -1180});
+
+  // Mt. Brilliant (east of Russell Cave Rd)
+  paddock(125, -1480, 295, -1230);
+  barn(170, -1150, 0x241f1a, 0x3a3d42, 16, 10, 5);
+  pond(240, -1120, 18, 13);
+  labels.push({name: 'MT. BRILLIANT FARM', x: 210, y: 20, z: -1350});
+
+  // Spindletop (far east)
+  paddock(330, -1480, 605, -1320);
+  paddock(330, -1290, 605, -1060);
+  barn(400, -1010, 0x7a2f26, 0x3a3d42, 16, 10, 5);    // red
+  barn(480, -1010, 0xe8e4d8, 0x3f7d72, 15, 9, 4.5);
+  pond(520, -1180, 24, 16);
+  labels.push({name: 'SPINDLETOP FARM', x: 470, y: 20, z: -1380});
+
+  // windbreak rows + pasture clumps
+  for (var wx = -500; wx < 610; wx += 26)
+    if (Math.random() < 0.8) treePts.push([wx + Math.random() * 8, -984 - Math.random() * 8]);
+  for (var t = 0; t < 46; t++)
+    treePts.push([X0 + 20 + Math.random() * (X1 - X0 - 40), -1480 + Math.random() * 490]);
+
+  // fences (instanced: rails one draw, posts one draw)
+  var fenceMat = new THREE.MeshStandardMaterial({color: 0x1d1b18, roughness: 0.9});
+  var railIM = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.09, 0.07), fenceMat, railSegs.length);
+  var M = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(),
+      s = new THREE.Vector3();
+  for (var k = 0; k < railSegs.length; k++){
+    var rs = railSegs[k];
+    q.setFromEuler(e.set(0, rs.axis === 'z' ? Math.PI / 2 : 0, 0));
+    M.compose(new THREE.Vector3(rs.x, rs.y, rs.z), q, s.set(rs.len, 1, 1));
+    railIM.setMatrixAt(k, M);
+  }
+  railIM.castShadow = true; scene.add(railIM);
+  var postIM = new THREE.InstancedMesh(new THREE.BoxGeometry(0.15, 1.5, 0.15), fenceMat, fencePostPts.length);
+  q.set(0, 0, 0, 1);
+  for (k = 0; k < fencePostPts.length; k++){
+    M.compose(new THREE.Vector3(fencePostPts[k][0], 0.75, fencePostPts[k][1]), q, s.set(1, 1, 1));
+    postIM.setMatrixAt(k, M);
+  }
+  postIM.castShadow = true; scene.add(postIM);
+
+  // grazing horses (instanced per body part, per-instance coat colors)
+  var HORSE_COLS = [0x51341f, 0x6e4526, 0x2e2118, 0xb9b3aa, 0x7b5a3a];
+  function partM(px, py, pz, rz){
+    var m = new THREE.Matrix4();
+    if (rz) m.makeRotationZ(rz);
+    m.setPosition(px, py, pz);
+    return m;
+  }
+  var PARTS = [
+    {g: new THREE.BoxGeometry(3.2, 1.15, 1.05), m: partM(0, 1.85, 0)},
+    {g: new THREE.BoxGeometry(1.4, 0.65, 0.55), m: partM(1.75, 1.5, 0, -0.8)},   // neck, grazing
+    {g: new THREE.BoxGeometry(0.95, 0.42, 0.48), m: partM(2.35, 0.95, 0, -0.35)}, // head down
+    {g: new THREE.BoxGeometry(0.16, 0.85, 0.16), m: partM(-1.7, 1.45, 0, 0.3)},   // tail
+    {g: new THREE.BoxGeometry(0.26, 1.35, 0.24), m: partM(1.15, 0.68, 0.3)},
+    {g: new THREE.BoxGeometry(0.26, 1.35, 0.24), m: partM(1.15, 0.68, -0.3)},
+    {g: new THREE.BoxGeometry(0.26, 1.35, 0.24), m: partM(-1.15, 0.68, 0.3)},
+    {g: new THREE.BoxGeometry(0.26, 1.35, 0.24), m: partM(-1.15, 0.68, -0.3)}
+  ];
+  var coatMat = new THREE.MeshStandardMaterial({color: 0xffffff, roughness: 0.85});
+  var col = new THREE.Color();
+  var coats = horsePts.map(function(){ return HORSE_COLS[(Math.random() * HORSE_COLS.length) | 0]; });
+  PARTS.forEach(function(part){
+    var im = new THREE.InstancedMesh(part.g, coatMat, horsePts.length);
+    var W = new THREE.Matrix4();
+    for (var h = 0; h < horsePts.length; h++){
+      var p = horsePts[h];
+      q.setFromEuler(e.set(0, p.ry, 0));
+      W.compose(new THREE.Vector3(p.x, 0.05, p.z), q, s.set(p.s, p.s, p.s));
+      W.multiply(part.m);
+      im.setMatrixAt(h, W);
+      im.setColorAt(h, col.setHex(coats[h]));
+    }
+    im.instanceColor.needsUpdate = true;
+    im.castShadow = true; scene.add(im);
+  });
+})();
+
 // ---------- houses (instanced: one draw per siding color + roof color) ----------
 (function(){
   if (!housePts.length) return;
@@ -1168,7 +1419,8 @@ EW.forEach(function(s){
   pedStreets.push({axis: 'x', c: s.z, lo: Math.max(ewLo(s) + 40, -230), hi: ewHi(s) - 40});
 });
 NS.forEach(function(s){
-  pedStreets.push({axis: 'z', c: s.x, lo: nsLo(s) + 40, hi: nsHi(s) - 40});
+  // sidewalks stop at the USB — nobody window-shops on Paris Pike
+  pedStreets.push({axis: 'z', c: s.x, lo: Math.max(nsLo(s) + 40, -920), hi: nsHi(s) - 40});
 });
 for (var pk = 0; pk < 64; pk++){
   var st = pedStreets[(Math.random() * pedStreets.length) | 0];
@@ -3423,6 +3675,7 @@ var PRESETS = [
   {t: [168, 0, 35],   r: 155, el: 0.46},
   {t: [200, 0, 580],  r: 320, el: 0.5},
   {t: [500, 0, 430],  r: 170, el: 0.46},
+  {t: [-50, 0, -1150], r: 380, el: 0.45},
   {t: [40, 0, 160],   r: 520, el: 0.62}
 ];
 var pIdx = 0, pTimer = 0, tween = null;

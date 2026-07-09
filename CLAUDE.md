@@ -88,9 +88,11 @@ Key models to keep straight:
   carry a partial extent (`x0`/`x1` on EW rows, `z0`/`z1` on NS rows) so they
   end where they really end (MLK/Upper stop at Euclid, Rose starts at Main);
   `meets(e, n)` + the `XINGS` list gate every per-intersection consumer
-  (crosswalks, signals, sign blades, lamps, lane cross-stops). Procedural
-  blocks fill grid cells whose four bounding street segments all exist, except
-  hand-built landmark blocks listed in `SKIP` (keyed `"<nsGap>-<ewGap>"`);
+  (crosswalks, signals, sign blades, lamps, lane cross-stops). The `EW` table
+  must stay sorted north→south — the block loop pairs consecutive rows.
+  Procedural blocks fill grid cells whose four bounding street segments all
+  exist, except hand-built landmark blocks listed in `SKIP` (keyed
+  `"<west NS street name>|<north EW street name>"` so table edits don't shift them);
   `blockKind()` picks downtown towers vs. low-rise vs. `resBlock()` bungalows
   (instanced houses via `housePts` — its InstancedMesh builder must stay AFTER
   every `resBlock()` call). Uncovered regions (UK campus, Kroger Field, Chevy
