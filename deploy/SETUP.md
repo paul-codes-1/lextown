@@ -13,6 +13,16 @@ static file host + JSON relay, no database), Caddy for TLS, systemd to keep it u
 
 ```bash
 sudo apt update && sudo apt install -y nodejs npm caddy
+
+# 1 GB swap + no fwupd (both applied to prod 2026-07-09). The nano has
+# 414 MB RAM and no swap by default; Ubuntu's fwupd daemon woke up, ate
+# ~140 MB, the kernel OOM'd, and the whole box (Caddy + sshd included)
+# locked up until an API reboot. Swap absorbs spikes; a headless VM
+# needs no firmware-update daemon.
+sudo fallocate -l 1G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+sudo systemctl mask --now fwupd.service fwupd-refresh.timer
 sudo git clone https://github.com/paul-codes-1/lextown /opt/lextown
 cd /opt/lextown && sudo npm ci --omit=dev
 sudo cp deploy/lextown.service /etc/systemd/system/
