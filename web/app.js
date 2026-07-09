@@ -2896,7 +2896,9 @@ function updateRemotes(dt){
     }
   }
 }
-// WebSocket: #ws=1 -> same origin; #ws=<url> -> explicit. Default: try same origin when http(s).
+// WebSocket: #ws=1 -> same origin; #ws=<url> -> explicit. Default: try same
+// origin when http(s). Reconnects forever with backoff — server restarts
+// (deploys) used to strand open tabs in LOCAL-SIM until a manual refresh.
 (function(){
   var wsM = /ws=([^&#]+)/.exec(hashStr);
   var url = null;
@@ -2906,12 +2908,29 @@ function updateRemotes(dt){
   else if (location.protocol === 'http:' || location.protocol === 'https:')
     url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
   if (!url) return;
-  try { ws = new WebSocket(url); } catch (e){ ws = null; return; }
-  ws.onmessage = function(ev){ try { handleNet(JSON.parse(ev.data)); } catch (e){} };
-  ws.onclose = ws.onerror = function(){
-    if (online){ online = false; setNetChip(); }
-    ws = null;
-  };
+  var retryMs = 2000;
+  function connectWS(){
+    try { ws = new WebSocket(url); } catch (e){ ws = null; scheduleReconnect(); return; }
+    ws.onopen = function(){ retryMs = 2000; };
+    ws.onmessage = function(ev){ try { handleNet(JSON.parse(ev.data)); } catch (e){} };
+    ws.onclose = ws.onerror = function(){
+      if (online){
+        online = false; setNetChip();
+        addChatLine('* NET', 'connection lost - reconnecting...', false);
+      }
+      if (ws){ ws.onclose = ws.onerror = null; ws = null; scheduleReconnect(); }
+    };
+  }
+  var reconnectTimer = null;
+  function scheduleReconnect(){
+    if (reconnectTimer) return;
+    reconnectTimer = setTimeout(function(){
+      reconnectTimer = null;
+      connectWS();
+    }, retryMs + Math.random() * 1000);
+    retryMs = Math.min(30000, retryMs * 1.7);
+  }
+  connectWS();
 })();
 // ---------- diagnostics beacons ----------
 // Uncaught errors (max 3/session) and a once-a-minute fps sample go to the
