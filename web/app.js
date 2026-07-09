@@ -1929,6 +1929,8 @@ function showScores(myMs, board){
   var sEl = document.getElementById('scores');
   if (!sEl) return;
   sEl.hidden = false;
+  // free the cursor so the modal is clickable from mouse-look
+  if (document.exitPointerLock) document.exitPointerLock();
   var you;
   if (myMs){
     you = (board === 2 ? 'PLOWED IN ' : 'CHOPPER DOWN IN ') + fmtMs(myMs) +
@@ -3229,7 +3231,12 @@ window.addEventListener('keydown', function(e){
     if (e.key === 'Enter' || e.key === 'Escape') tutClose();
     return;
   }
-  if (e.key === 'Escape' && els.scores && !els.scores.hidden){ els.scores.hidden = true; return; }
+  if (els.scores && !els.scores.hidden &&
+      (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ' || e.key.toLowerCase() === 'e')){
+    els.scores.hidden = true;
+    e.preventDefault();
+    return;
+  }
   if (e.key === 'Escape' && !els.tut.hidden){ tutClose(); return; }
   if (e.key === '?'){ if (els.tut.hidden) tutOpen(); else tutClose(); return; }
   if (e.key === 'Enter'){
