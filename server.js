@@ -138,13 +138,16 @@ process.on('unhandledRejection', (err) => {
 // mission leaderboards, persisted to scores.json (gitignored), top 50 each:
 //   m1 = THE RIBBON CUTTING (fastest chopper takedown)
 //   m2 = SNOW EMERGENCY (fastest plow, penalties included)
+//   m3 = THE DATA CENTER (fastest investigation)
+//   m4 = HORSEPOWER (fastest horse roundup)
 // Migration: an old plain-array scores.json becomes the m1 board.
 const SCORES_PATH = path.join(__dirname, 'scores.json');
-let scores = { m1: [], m2: [] };
+const BOARDS = ['m1', 'm2', 'm3', 'm4'];
+let scores = { m1: [], m2: [], m3: [], m4: [] };
 try {
   const parsed = JSON.parse(fs.readFileSync(SCORES_PATH, 'utf8'));
   if (Array.isArray(parsed)) scores.m1 = parsed;
-  else scores = { m1: parsed.m1 || [], m2: parsed.m2 || [] };
+  else BOARDS.forEach((b) => { scores[b] = parsed[b] || []; });
 } catch { /* fresh file */ }
 function saveScores() {
   try { fs.writeFileSync(SCORES_PATH, JSON.stringify(scores, null, 2)); }
@@ -152,7 +155,7 @@ function saveScores() {
 }
 function topScores() {
   const top = (b) => scores[b].slice(0, 10).map((s) => ({ n: s.n, ms: s.ms }));
-  return { m1: top('m1'), m2: top('m2') };
+  return { m1: top('m1'), m2: top('m2'), m3: top('m3'), m4: top('m4') };
 }
 
 // persistent ban list: [{ip, name}]
@@ -497,9 +500,10 @@ wss.on('connection', (ws, req) => {
 
     if (msg.t === 'score') {
       // mission completion: plausible time window per board, 1 per 15s per client
-      const board = msg.m === 2 ? 'm2' : 'm1';
-      const okMs = board === 'm2' ? num(msg.ms, 20000, 900000) : num(msg.ms, 3000, 600000);
-      if (!okMs) return;
+      const board = { 2: 'm2', 3: 'm3', 4: 'm4' }[msg.m] || 'm1';
+      const WIN = { m1: [3000, 600000], m2: [20000, 900000],
+                    m3: [20000, 900000], m4: [30000, 1500000] }[board];
+      if (!num(msg.ms, WIN[0], WIN[1])) return;
       if (client.lastScoreAt && now - client.lastScoreAt < 15000) return;
       client.lastScoreAt = now;
       const n = client.name || id;
@@ -509,10 +513,12 @@ wss.on('connection', (ws, req) => {
       saveScores();
       stats.missions++;
       logEvent('mission_score', { id, n, m: board, ms: Math.round(msg.ms) });
+      const sec = (msg.ms / 1000).toFixed(1);
       broadcast({ t: 'chat', id: 'SERVER', n: '* MISSION',
-        msg: board === 'm2'
-          ? `${n} plowed downtown in ${(msg.ms / 1000).toFixed(1)}s`
-          : `${n} downed the chopper in ${(msg.ms / 1000).toFixed(1)}s` }, null);
+        msg: { m1: `${n} downed the chopper in ${sec}s`,
+               m2: `${n} plowed downtown in ${sec}s`,
+               m3: `${n} broke the data center story in ${sec}s`,
+               m4: `${n} got the horses home in ${sec}s` }[board] }, null);
       ws.send(JSON.stringify(Object.assign({ t: 'scores' }, topScores())));
       return;
     }

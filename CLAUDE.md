@@ -110,7 +110,7 @@ Key models to keep straight:
   buffer). Bots are just locally-generated state packets, so multiplayer
   features must work through that one pipeline to work offline.
 - **Missions run entirely client-side**; only final times touch the server
-  (`{t:'score', ms, m}` → validated per board → `scores.json` `{m1,m2}`
+  (`{t:'score', ms, m}` → validated per board → `scores.json` `{m1..m4}`
   top-50 → `{t:'scores'}` top-10s + chat announcement). Mission 1
   ("THE RIBBON CUTTING") fights a local NPC chopper (`mh`), separate from
   the shared `heli`. Beating it sets `lt_heli_unlock` in localStorage,
@@ -119,6 +119,17 @@ Key models to keep straight:
   toggles the blade, snow cells in `snowCells`/`redditCells`, penalties in
   `mission2.penalty`, storm sky via the `m2Sky` blend in frame()). The
   server never knows about unlocks (clients are untrusted anyway).
+  Mission 3 ("THE DATA CENTER", teal ring in Phoenix Park) is a tail →
+  eavesdrop → photograph state machine; `takePhoto()` is horizontal-aim
+  only (the third-person camera pitches down, so a 3D dot product would
+  never clear the threshold). Mission 4 ("HORSEPOWER", green ring in
+  Thoroughbred Park) wrangles three `m4Horses` with a per-horse state
+  machine (wild→bolt / follow→riding→trot→penned); on-foot player speed
+  for the spook check comes from `trackPlayerSpeed` position deltas — the
+  player object has no vx/vz. All four start-gates go through `allIdle()`;
+  any new mission must join it or two missions can run at once. The gold
+  ★ overlay labels + `nextMissionHint()` are the discoverability layer —
+  keep them in sync when adding missions.
   Holding an RPG (mission or crate) forces first person via `rpgOut()` so
   the chopper is aimable — third-person elevation can't look up. Sound is
   synthesized WebAudio (no assets): `pokeAudio()` on first gesture, rotor

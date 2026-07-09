@@ -2524,17 +2524,21 @@ function showScores(myMs, board){
   if (document.exitPointerLock) document.exitPointerLock();
   var you;
   if (myMs){
-    you = (board === 2 ? 'PLOWED IN ' : 'CHOPPER DOWN IN ') + fmtMs(myMs) +
-      ' · +' + missionPoints(myMs) + ' PTS';
-    var best = board === 2 ? m2Best : missionBest;
+    var verb = board === 2 ? 'PLOWED IN ' : board === 3 ? 'STORY BROKEN IN ' :
+               board === 4 ? 'HORSES HOME IN ' : 'CHOPPER DOWN IN ';
+    you = verb + fmtMs(myMs) + ' · +' + missionPoints(myMs) + ' PTS';
+    var best = board === 2 ? m2Best : board === 3 ? m3Best : board === 4 ? m4Best : missionBest;
     if (best) you += ' · DEVICE BEST ' + fmtMs(best);
   } else {
-    you = (missionBest ? 'RIBBON CUTTING BEST: ' + fmtMs(missionBest) : 'RIBBON CUTTING: NOT YET') +
-      ' · ' + (m2Best ? 'SNOW EMERGENCY BEST: ' + fmtMs(m2Best) : 'SNOW EMERGENCY: NOT YET');
+    you = (missionBest ? 'RIBBON: ' + fmtMs(missionBest) : 'RIBBON: —') +
+      ' · ' + (m2Best ? 'SNOW: ' + fmtMs(m2Best) : 'SNOW: —') +
+      ' · ' + (m3Best ? 'DATA CENTER: ' + fmtMs(m3Best) : 'DATA CENTER: —') +
+      ' · ' + (m4Best ? 'HORSEPOWER: ' + fmtMs(m4Best) : 'HORSEPOWER: —');
   }
   document.getElementById('scoreYou').textContent = you;
-  [1, 2].forEach(function(b){
-    var list = document.getElementById(b === 2 ? 'scoreList2' : 'scoreList');
+  ['scoreList', 'scoreList2', 'scoreList3', 'scoreList4'].forEach(function(id){
+    var list = document.getElementById(id);
+    if (!list) return;
     list.textContent = '';
     var li = document.createElement('li');
     li.textContent = online ? 'fetching global times...' : 'OFFLINE — global board unavailable';
@@ -2562,13 +2566,15 @@ function renderScores(m){
   }
   fill('scoreList', m.m1 || m.top || []);
   fill('scoreList2', m.m2 || []);
+  fill('scoreList3', m.m3 || []);
+  fill('scoreList4', m.m4 || []);
 }
 function updateMission(dt){
   var now = performance.now();
   if (capEl && !capEl.hidden && now > capUntil) capEl.hidden = true;
   if (setPieces.trig){
     setPieces.trig.rotation.z += dt * 0.8;
-    setPieces.trig.visible = mission.stage === 'idle' && mission2.stage === 'idle';
+    setPieces.trig.visible = allIdle();
   }
   updateChute(dt);
   if (mh && mh.mesh.visible){
@@ -2965,7 +2971,7 @@ function updateMission2(dt){
   door.ang += (((door.open ? 1.55 : 0)) - door.ang) * Math.min(1, dt * 2.5);
   door.L.rotation.y = -door.ang;
   door.R.rotation.y = door.ang;
-  door.ring.visible = heliUnlocked && mission2.stage === 'idle' && mission.stage === 'idle';
+  door.ring.visible = heliUnlocked && allIdle();
   if (door.ring.visible) door.ring.rotation.z += dt * 0.8;
   updateSnowPts(dt);
   // overcast blend handled in frame() via m2Sky
@@ -3042,6 +3048,584 @@ function updateMission2(dt){
   }
 }
 
+// ---------- mission 3: THE DATA CENTER ----------
+// The mayor (off the record, on a Phoenix Park bench) has you tail Councilman
+// Graft up Limestone to Al's Bar, eavesdrop on his developer meeting (a data
+// center hidden inside luxury student housing at UK — just bulldoze a few
+// historic buildings that are DEFINITELY NOT already falling down), then
+// photograph the two of them scouting the quad. The photos leak on reddit,
+// the data center dies, and Graft officially reswigens.
+var M3_TRIG = {x: 122, z: 76};                 // Phoenix Park bench
+var M3_LZ = {x: 140.5, z: -580.5};             // Al's back patio meeting spot
+var M3_QUAD = {x: 200, z: 530};                // UK quad scouting area
+var m3Best = 0;
+try { m3Best = parseInt(localStorage.getItem('lt_m3_best') || '0', 10) || 0; } catch (e){}
+var mission3 = {stage: 'idle', tStage: 0, t0: 0, ms: 0, capIdx: 0,
+                sus: 0, listen: 0, photos: 0, lastShot: 0};
+var m3Npcs = [], m3Mayor = null, m3Graft = null, m3Dev = null, m3Car = null;
+var m3Ring = null, m3Obj = null;
+(function(){
+  m3Ring = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.06, 6, 24),
+    new THREE.MeshBasicMaterial({color: 0x25f4ee, transparent: true, opacity: 0.85}));
+  m3Ring.rotation.x = Math.PI / 2;
+  m3Ring.position.set(M3_TRIG.x, 0.9, M3_TRIG.z);
+  scene.add(m3Ring);
+  m3Obj = new THREE.Mesh(new THREE.TorusGeometry(2.2, 0.09, 6, 24),
+    new THREE.MeshBasicMaterial({color: 0x25f4ee, transparent: true, opacity: 0.7}));
+  m3Obj.rotation.x = Math.PI / 2;
+  m3Obj.visible = false;
+  scene.add(m3Obj);
+})();
+function nearM3Trig(){
+  var dx = player.x - M3_TRIG.x, dz = player.z - M3_TRIG.z;
+  return dx * dx + dz * dz < 16;
+}
+// Graft's sedan: wrong way up Limestone, obviously
+var M3_PATH = [[150, 5], [104, 5], [104, -592], [122, -596]];
+function buildM3Car(){
+  var g = new THREE.Group();
+  var body = new THREE.Mesh(bodyG, new THREE.MeshStandardMaterial({color: 0x1c1f26, roughness: 0.35, metalness: 0.5}));
+  body.position.y = 0.75; body.castShadow = true; g.add(body);
+  var cab = new THREE.Mesh(cabG, cabMat); cab.position.set(-0.25, 1.55, 0); g.add(cab);
+  g.position.set(M3_PATH[0][0], 0.15, M3_PATH[0][1]);
+  scene.add(g);
+  return {g: g, seg: 0, s: 0, done: false};
+}
+function m3CarPos(){ return m3Car ? m3Car.g.position : null; }
+function startMission3(){
+  mission3.stage = 'brief'; mission3.tStage = 0; mission3.capIdx = 0;
+  mission3.t0 = 0; mission3.sus = 0; mission3.listen = 0;
+  mission3.photos = 0; mission3.lastShot = 0;
+  m3Mayor = spawnNpc(M3_TRIG.x, M3_TRIG.z - 3, 0x8f2f3c, 0, 0.95);
+  m3Npcs.push(m3Mayor);
+  caption('THE MAYOR', 'OH GOOD, IT\'S YOU. SIT. PRETEND WE\'RE DISCUSSING PIGEONS.', 3600);
+  addChatLine('* MISSION', 'THE DATA CENTER - tail the councilman', true);
+}
+function m3Cleanup(){
+  mission3.stage = 'idle';
+  m3Npcs.forEach(function(g){ scene.remove(g); });
+  m3Npcs.length = 0;
+  m3Mayor = m3Graft = m3Dev = null;
+  if (m3Car){ scene.remove(m3Car.g); m3Car = null; }
+  if (m3Obj) m3Obj.visible = false;
+}
+function m3Fail(why){
+  mission3.stage = 'fail'; mission3.tStage = 0;
+  caption('THE MAYOR', why === 'timeout'
+    ? 'TOO SLOW. THE ZONING PASSED WHILE YOU WERE SIGHTSEEING.'
+    : 'HE MADE YOU. NOW HE\'S PRETENDING TO JOG. INVESTIGATION BLOWN.', 4600);
+}
+// walk an npc toward a point; returns true when arrived
+function npcWalk(g, tx, tz, spd, dt){
+  var dx = tx - g.position.x, dz = tz - g.position.z;
+  var d = Math.hypot(dx, dz);
+  if (d < 0.4) return true;
+  var step = Math.min(d, spd * dt);
+  g.position.x += dx / d * step;
+  g.position.z += dz / d * step;
+  g.position.y = groundY(g.position.x, g.position.z) + 0.02;
+  g.rotation.y = Math.atan2(dx, dz);
+  return false;
+}
+var _psLast = {x: 0, z: 0, v: 0};
+function trackPlayerSpeed(dt){
+  var dx = player.x - _psLast.x, dz = player.z - _psLast.z;
+  var v = dt > 0 ? Math.hypot(dx, dz) / dt : 0;
+  _psLast.v = v > 30 ? 0 : v;   // teleports don't count as running
+  _psLast.x = player.x; _psLast.z = player.z;
+}
+function playerSpeed(){
+  if (player.veh) return Math.abs(player.veh.spd);
+  return _psLast.v;
+}
+var _camDir = new THREE.Vector3();
+function takePhoto(){
+  if (mission3.stage !== 'photo' || !m3Graft) return;
+  var now = performance.now();
+  var tx = m3Graft.position.x, tz = m3Graft.position.z;
+  var d = Math.hypot(tx - player.x, tz - player.z);
+  if (now - mission3.lastShot < 3500){
+    caption('CAMERA', 'RECHARGING. IT\'S A DISPOSABLE.', 1800);
+    return;
+  }
+  if (d > 45){ caption('CAMERA', 'TOO FAR. ZOOM WITH YOUR LEGS.', 2200); return; }
+  camera.getWorldDirection(_camDir);
+  var hl = Math.hypot(_camDir.x, _camDir.z) || 1;   // aim check is horizontal-only
+  var vx = tx - camera.position.x, vz = tz - camera.position.z;
+  var vl = Math.hypot(vx, vz) || 1;
+  if ((_camDir.x / hl) * (vx / vl) + (_camDir.z / hl) * (vz / vl) < 0.82){
+    caption('CAMERA', 'THAT IS A PHOTO OF NOTHING. AIM AT THEM.', 2200);
+    return;
+  }
+  mission3.lastShot = now;
+  mission3.photos++;
+  for (var f = 0; f < 4; f++)
+    puff(tx + (Math.random() - 0.5) * 3, 2 + Math.random() * 1.5, tz + (Math.random() - 0.5) * 3,
+      0xffffff, 0.4, 6, 220, 0, 0.9);
+  sndTone(1500, 0.05, 0, 'square', 0.14);
+  caption('CAMERA', 'PHOTO ' + Math.min(3, mission3.photos) + '/3' +
+    (mission3.photos === 1 ? ' — GREAT POINTING' : mission3.photos === 2 ? ' — VERY CONSPIRATORIAL' : ' — FRONT PAGE'), 2400);
+  if (mission3.photos >= 3){
+    mission3.stage = 'return'; mission3.tStage = 0; mission3.capIdx = 0;
+    m3Obj.position.set(M3_TRIG.x, 0.9, M3_TRIG.z);
+    caption('THE MAYOR', '(TEXT) GOT THEM? BRING ME THE CAMERA. I\'LL DO THE REST.', 4200);
+  }
+}
+var M3_LISTEN_CAPS = [
+  ['GRAFT', 'RELAX. NOBODY COMES TO A BAR TO LISTEN.'],
+  ['DEVELOPER', 'PICTURE THIS: LUXURY STUDENT HOUSING. BUT THE AMENITY FLOORS ARE A DATA CENTER.'],
+  ['GRAFT', 'THE STUDENTS LOVE WARM FLOORS. SERVERS RUN HOT. IT\'S A WELLNESS FEATURE.'],
+  ['DEVELOPER', 'WE JUST NEED TO BULLDOZE A FEW OF THE HISTORIC BUILDINGS AT UK.'],
+  ['GRAFT', 'WHICH ARE ALREADY FALLING DOWN, RIGHT?'],
+  ['DEVELOPER', 'THEY ARE DEFINITELY NOT ALREADY FALLING DOWN. GORGEOUS BONES. EXTREMELY STANDING.'],
+  ['GRAFT', 'PERFECT. WE\'LL CALL THE ZONING AMBIGUOUS. ZONING IS ALWAYS AMBIGUOUS.'],
+  ['DEVELOPER', 'MEET ME AT THE QUAD. BRING YOUR POINTING FINGER. WE\'RE SCOUTING.']
+];
+var M3_SCOUT_PTS = [[165, 522], [208, 545], [242, 530], [192, 508]];
+function updateMission3(dt){
+  if (m3Ring){
+    m3Ring.visible = allIdle();
+    if (m3Ring.visible) m3Ring.rotation.z += dt * 0.8;
+  }
+  if (m3Obj && m3Obj.visible) m3Obj.rotation.z += dt * 1.1;
+  if (mission3.stage === 'idle') return;
+  var now = performance.now();
+  mission3.tStage += dt;
+  var t = mission3.tStage;
+  if (mission3.t0 && (now - mission3.t0) / 1000 > 600 &&
+      mission3.stage !== 'won' && mission3.stage !== 'post' && mission3.stage !== 'fail'){
+    m3Fail('timeout'); return;
+  }
+  if (mission3.stage === 'brief'){
+    if (t > 3 && mission3.capIdx === 0){ mission3.capIdx = 1; caption('THE MAYOR', 'OFF THE RECORD: COUNCILMAN GRAFT HAS BEEN TAKING A LOT OF MEETINGS.', 4400); }
+    if (t > 7.6 && mission3.capIdx === 1){ mission3.capIdx = 2; caption('THE MAYOR', 'THAT\'S HIM BY CITY HALL. FOLLOW HIM. DON\'T BE WEIRD ABOUT IT.', 4200); }
+    if (t > 12 && mission3.capIdx === 2){ mission3.capIdx = 3; caption('THE MAYOR', 'IF HE LOOKS AT YOU, BE A PEDESTRIAN. NOBODY SUSPECTS PEDESTRIANS.', 4200); }
+    if (t > 16.4){
+      mission3.stage = 'tail'; mission3.tStage = 0; mission3.capIdx = 0;
+      mission3.t0 = now;
+      m3Graft = spawnNpc(158, 12, 0x39404a, -Math.PI / 2, 0.95);
+      m3Npcs.push(m3Graft);
+      m3Dev = spawnNpc(M3_LZ.x + 1.5, M3_LZ.z - 2, 0xc9a44a, Math.PI, 0.95);
+      m3Npcs.push(m3Dev);
+      m3Car = buildM3Car();
+      caption('DISPATCH', 'CLOCK STARTED. STAY WITH HIM. GRAB ANY CAR IF YOU HAVE TO.', 4000);
+    }
+    return;
+  }
+  if (mission3.stage === 'tail'){
+    // Graft walks to his sedan, then drives the path; pauses if you fall behind
+    if (!m3Car.boarded){
+      if (npcWalk(m3Graft, M3_PATH[0][0], M3_PATH[0][1] + 2, 3.4, dt)){
+        m3Car.boarded = true;
+        m3Graft.visible = false;
+        caption('GRAFT', 'WRONG WAY UP LIMESTONE. PERKS OF PUBLIC SERVICE.', 3600);
+      }
+      return;
+    }
+    if (!m3Car.done){
+      var cp = m3Car.g.position;
+      var pd = Math.hypot(cp.x - player.x, cp.z - player.z);
+      if (pd > 130){
+        if (mission3.capIdx < 1){ mission3.capIdx = 1; caption('DISPATCH', 'HE CAUGHT A RED LIGHT. CATCH UP.', 3200); }
+      } else {
+        if (mission3.capIdx === 1) mission3.capIdx = 0;
+        var a = M3_PATH[m3Car.seg], b = M3_PATH[m3Car.seg + 1];
+        var sdx = b[0] - a[0], sdz = b[1] - a[1];
+        var slen = Math.hypot(sdx, sdz);
+        m3Car.s += 10.5 * dt;
+        if (m3Car.s >= slen){
+          m3Car.s = 0; m3Car.seg++;
+          if (m3Car.seg >= M3_PATH.length - 1){ m3Car.done = true; }
+        } else {
+          cp.set(a[0] + sdx / slen * m3Car.s, 0.15, a[1] + sdz / slen * m3Car.s);
+          m3Car.g.rotation.y = Math.atan2(sdx, sdz) - Math.PI / 2;
+        }
+      }
+      return;
+    }
+    // parked: Graft walks to the patio
+    if (!m3Graft.visible){
+      m3Graft.visible = true;
+      m3Graft.position.set(m3Car.g.position.x, 0.72, m3Car.g.position.z);
+      caption('GRAFT', 'PARKING IS FREE IF YOU\'RE ON THE COUNCIL. PROBABLY.', 3400);
+    }
+    if (npcWalk(m3Graft, M3_LZ.x, M3_LZ.z + 1.5, 3.2, dt)){
+      mission3.stage = 'listen'; mission3.tStage = 0; mission3.capIdx = 0;
+      mission3.listen = 0; mission3.sus = 0;
+      caption('DISPATCH', 'HE\'S MEETING SOMEONE BEHIND AL\'S. GET CLOSE ENOUGH TO HEAR. NOT CLOSER.', 4400);
+    }
+    return;
+  }
+  if (mission3.stage === 'listen'){
+    var ld = Math.hypot(M3_LZ.x - player.x, M3_LZ.z - player.z);
+    if (ld < 6.5){
+      mission3.sus += dt / 3;
+      if (mission3.sus > 0.5 && mission3.capIdx < 90){
+        mission3.capIdx = 90;
+        caption('GRAFT', '...DO YOU HEAR BREATHING?', 2600);
+      }
+      if (mission3.sus >= 1){ m3Fail('seen'); return; }
+    } else {
+      mission3.sus = Math.max(0, mission3.sus - dt / 2);
+      if (mission3.capIdx === 90) mission3.capIdx = Math.floor(mission3.listen / 2);
+    }
+    if (ld >= 6.5 && ld < 17){
+      mission3.listen += dt;
+      var li = Math.floor(mission3.listen / 2);
+      if (li < M3_LISTEN_CAPS.length && mission3.capIdx <= li && mission3.capIdx < 90){
+        mission3.capIdx = li + 1;
+        caption(M3_LISTEN_CAPS[li][0], M3_LISTEN_CAPS[li][1], 2600);
+      }
+      if (mission3.listen > M3_LISTEN_CAPS.length * 2 + 0.5){
+        mission3.stage = 'scout'; mission3.tStage = 0; mission3.capIdx = 0;
+        m3Obj.visible = true;
+        m3Obj.position.set(M3_QUAD.x, 0.9, M3_QUAD.z);
+        caption('THE MAYOR', '(TEXT) A DATA CENTER??? GET TO THE UK QUAD BEFORE THEM. TAKE PHOTOS. F IS THE CAMERA.', 5000);
+      }
+    }
+    return;
+  }
+  if (mission3.stage === 'scout'){
+    // they take the sedan; you take the hint
+    if (m3Graft){ m3Graft.visible = false; m3Dev.visible = false; if (m3Car) m3Car.g.visible = false; }
+    var qd = Math.hypot(M3_QUAD.x - player.x, M3_QUAD.z - player.z);
+    if (qd < 40){
+      mission3.stage = 'photo'; mission3.tStage = 0; mission3.capIdx = 0; mission3.sus = 0;
+      m3Obj.visible = false;
+      m3Graft.visible = true; m3Dev.visible = true;
+      m3Graft.position.set(M3_SCOUT_PTS[0][0], 0.72, M3_SCOUT_PTS[0][1]);
+      m3Dev.position.set(M3_SCOUT_PTS[0][0] + 3, 0.72, M3_SCOUT_PTS[0][1] + 2);
+      m3Graft.wp = 1;
+      caption('DEVELOPER', 'SEE, THE HISTORIC PART COMES RIGHT OFF. THE REST IS BASICALLY A SERVER RACK ALREADY.', 4600);
+    }
+    return;
+  }
+  if (mission3.stage === 'photo'){
+    // the pair drift between scouting spots, pointing at buildings
+    var wp = M3_SCOUT_PTS[m3Graft.wp];
+    if (npcWalk(m3Graft, wp[0], wp[1], 1.5, dt)) m3Graft.wp = (m3Graft.wp + 1) % M3_SCOUT_PTS.length;
+    npcWalk(m3Dev, m3Graft.position.x + 2.6, m3Graft.position.z + 1.8, 1.7, dt);
+    var pd2 = Math.hypot(m3Graft.position.x - player.x, m3Graft.position.z - player.z);
+    if (pd2 < 7){
+      mission3.sus += dt / 3;
+      if (mission3.sus > 0.45 && mission3.capIdx !== 91){
+        mission3.capIdx = 91;
+        caption('GRAFT', 'IS THAT GUY TAKING PHOTOS OF US?', 2600);
+      }
+      if (mission3.sus >= 1){ m3Fail('seen'); return; }
+    } else mission3.sus = Math.max(0, mission3.sus - dt / 2);
+    if (t > 6 && mission3.capIdx === 0){
+      mission3.capIdx = 1;
+      caption('GRAFT', 'AND THE QUAD BECOMES A COOLING POND. STUDENTS LOVE PONDS.', 4200);
+    }
+    return;
+  }
+  if (mission3.stage === 'return'){
+    m3Obj.visible = true;
+    var rd = Math.hypot(M3_TRIG.x - player.x, M3_TRIG.z - player.z);
+    if (rd < 6){
+      mission3.ms = now - mission3.t0;
+      mission3.stage = 'won'; mission3.tStage = 0; mission3.capIdx = 0;
+      m3Obj.visible = false;
+      sndWin();
+      caption('THE MAYOR', 'THESE ARE PERFECT. WELL... BLURRY. PERFECTLY BLURRY.', 4000);
+      try {
+        if (!m3Best || mission3.ms < m3Best){
+          m3Best = mission3.ms;
+          localStorage.setItem('lt_m3_best', String(Math.round(mission3.ms)));
+        }
+      } catch (e){}
+      if (online && ws && ws.readyState === 1)
+        ws.send(JSON.stringify({t: 'score', ms: Math.round(mission3.ms), m: 3}));
+    }
+    return;
+  }
+  if (mission3.stage === 'won'){
+    if (t > 4.4 && mission3.capIdx === 0){ mission3.capIdx = 1; caption('RADIO', 'BREAKING: SECRET DATA CENTER PHOTOS HIT R/LEXINGTON. 40,000 UPVOTES. THE COMMENTS ARE NOT KIND.', 5000); }
+    if (t > 9.8 && mission3.capIdx === 1){ mission3.capIdx = 2; caption('RADIO', 'THE DEVELOPER NOW SAYS THE DATA CENTER WAS "MORE OF A VIBE".', 4400); }
+    if (t > 14.6 && mission3.capIdx === 2){ mission3.capIdx = 3; caption('RADIO', 'COUNCILMAN GRAFT HAS RESIGNED TO SPEND MORE TIME WITH HIS DATA.', 5000); }
+    if (t > 20 && mission3.capIdx === 3){
+      mission3.capIdx = 4;
+      sndApplause();
+      caption('THE MAYOR', 'THE HISTORIC BUILDINGS REMAIN DEFINITELY NOT ALREADY FALLING DOWN. GOOD WORK.', 4600);
+      showScores(mission3.ms, 3);
+      mission3.stage = 'post'; mission3.tStage = 0;
+    }
+    return;
+  }
+  if (mission3.stage === 'fail'){ if (t > 5) m3Cleanup(); return; }
+  if (mission3.stage === 'post'){ if (t > 22) m3Cleanup(); }
+}
+
+// ---------- mission 4: HORSEPOWER ----------
+// Three thoroughbreds got loose the night before the big auction. One is in
+// Thoroughbred Park pretending to be a statue. Walk up slow, take the lead
+// rope (E), and get them back to the Elmendorf paddock — a calmed horse
+// follows you on foot, and if you get in a car, the horse gets in the car.
+var M4_TRIG = {x: 247, z: 74};
+var M4_PEN = {x0: -500, z0: -1265, x1: -222, z1: -1095};   // Elmendorf paddock
+var M4_PEN_T = {x: -320, z: -1180};                        // trot-in target
+var m4Best = 0;
+try { m4Best = parseInt(localStorage.getItem('lt_m4_best') || '0', 10) || 0; } catch (e){}
+var mission4 = {stage: 'idle', tStage: 0, t0: 0, ms: 0, capIdx: 0, penned: 0, capAt: 0};
+var m4Npcs = [], m4Horses = [], m4Ring = null, m4PenRing = null;
+var M4_SPOTS = [
+  {x: 238, z: 44,   col: 0x51341f, name: 'THE STATUE ONE'},
+  {x: -240, z: 500, col: 0xb9b3aa, name: 'THE TAILGATER'},
+  {x: 488, z: 411.5, col: 0x6e4526, name: 'THE FLOWERS GUY'}
+];
+var M4_NOPE = ['NOPE.', 'HE DECLINES.', 'THE HORSE HAS OPINIONS.', 'HE\'S FASTER THAN YOU AND HE KNOWS IT.'];
+(function(){
+  m4Ring = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.06, 6, 24),
+    new THREE.MeshBasicMaterial({color: 0x7cff4f, transparent: true, opacity: 0.85}));
+  m4Ring.rotation.x = Math.PI / 2;
+  m4Ring.position.set(M4_TRIG.x, 0.9, M4_TRIG.z);
+  scene.add(m4Ring);
+  m4PenRing = new THREE.Mesh(new THREE.TorusGeometry(3, 0.12, 6, 28),
+    new THREE.MeshBasicMaterial({color: 0x7cff4f, transparent: true, opacity: 0.7}));
+  m4PenRing.rotation.x = Math.PI / 2;
+  m4PenRing.position.set(-228, 0.9, -1180);
+  m4PenRing.visible = false;
+  scene.add(m4PenRing);
+})();
+function nearM4Trig(){
+  var dx = player.x - M4_TRIG.x, dz = player.z - M4_TRIG.z;
+  return dx * dx + dz * dz < 16;
+}
+function makeLiveHorse(col){
+  var g = new THREE.Group();
+  var coat = new THREE.MeshStandardMaterial({color: col, roughness: 0.85});
+  var body = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.15, 1.05), coat);
+  body.position.y = 1.85; body.castShadow = true; g.add(body);
+  var neck = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.65, 0.55), coat);
+  neck.position.set(1.75, 2.5, 0); neck.rotation.z = 0.7; g.add(neck);
+  var head = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.42, 0.48), coat);
+  head.position.set(2.3, 3.0, 0); g.add(head);
+  var tail = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.85, 0.16), coat);
+  tail.position.set(-1.7, 1.45, 0); tail.rotation.z = 0.3; g.add(tail);
+  for (var l = 0; l < 4; l++){
+    var leg = new THREE.Mesh(new THREE.BoxGeometry(0.26, 1.35, 0.24), coat);
+    leg.position.set(l < 2 ? 1.15 : -1.15, 0.68, l % 2 ? 0.32 : -0.32);
+    g.add(leg);
+  }
+  scene.add(g);
+  return g;
+}
+function startMission4(){
+  mission4.stage = 'brief'; mission4.tStage = 0; mission4.capIdx = 0;
+  mission4.t0 = 0; mission4.penned = 0; mission4.capAt = 0;
+  var trainer = spawnNpc(245, 68, 0x4a7a52, Math.PI, 0.95);
+  m4Npcs.push(trainer);
+  caption('THE TRAINER', 'YOU. HORSE EMERGENCY. THREE OF OURS GOT LOOSE. THE AUCTION IS TONIGHT.', 4400);
+  addChatLine('* MISSION', 'HORSEPOWER - bring the loose horses home', true);
+}
+function m4Cleanup(){
+  mission4.stage = 'idle';
+  m4Npcs.forEach(function(g){ scene.remove(g); });
+  m4Npcs.length = 0;
+  m4Horses.forEach(function(h){ scene.remove(h.g); });
+  m4Horses.length = 0;
+  if (m4PenRing) m4PenRing.visible = false;
+}
+function m4Fail(){
+  mission4.stage = 'fail'; mission4.tStage = 0;
+  caption('THE TRAINER', 'THE AUCTION STARTED WITHOUT THEM. THE HORSES HAVE UNIONIZED.', 4600);
+}
+function m4ActiveHorse(){
+  for (var k = 0; k < m4Horses.length; k++)
+    if (m4Horses[k].state === 'follow' || m4Horses[k].state === 'riding') return m4Horses[k];
+  return null;
+}
+function calmableHorse(){
+  if (mission4.stage !== 'wrangle') return null;
+  for (var k = 0; k < m4Horses.length; k++){
+    var h = m4Horses[k];
+    if (h.state !== 'wild') continue;
+    var d = Math.hypot(h.g.position.x - player.x, h.g.position.z - player.z);
+    if (d < 4.5) return h;
+  }
+  return null;
+}
+function calmHorse(h){
+  if (m4ActiveHorse()){
+    caption('THE TRAINER', 'ONE HORSE AT A TIME. THAT IS THE LAW.', 3200);
+    return;
+  }
+  h.state = 'follow';
+  sndTone(620, 0.15, 0, 'triangle', 0.14);
+  caption('THE TRAINER', h.name + ' RESPECTS YOU NOW. HE\'LL FOLLOW. GET HIM TO ELMENDORF.', 4200);
+}
+function inPen(x, z){
+  return x > M4_PEN.x0 && x < M4_PEN.x1 && z > M4_PEN.z0 && z < M4_PEN.z1;
+}
+function updateHorse(h, dt, now){
+  var g = h.g;
+  if (h.state === 'penned') return;
+  if (h.state === 'riding'){
+    var v = player.veh;
+    if (!v){ h.state = 'follow'; return; }
+    g.position.set(v.g.position.x, v.g.position.y + 1.15, v.g.position.z);
+    g.rotation.y = v.th + Math.PI / 2;
+    g.scale.setScalar(0.8);
+    // close enough to the farm: he gets out and jumps the fence
+    if (Math.hypot(v.g.position.x - (-228), v.g.position.z - (-1180)) < 45 || inPen(v.g.position.x, v.g.position.z)){
+      h.state = 'trot'; g.scale.setScalar(1);
+      caption('THE TRAINER', h.name + ' IS OUT OF THE CAR. HE JUMPS THE FENCE. SHOW-OFF.', 4000);
+    }
+    return;
+  }
+  if (h.state === 'trot'){
+    g.position.y = groundY(g.position.x, g.position.z) + 0.05 + Math.abs(Math.sin(now * 0.012)) * 0.3;
+    if (npcWalk(g, M4_PEN_T.x + h.i * 14, M4_PEN_T.z + h.i * 8, 9, dt)){
+      h.state = 'penned';
+      mission4.penned++;
+      sndTone(880, 0.25, 0, 'square', 0.14);
+      caption('THE TRAINER', mission4.penned + '/3 HOME. ' +
+        (mission4.penned < 3 ? 'HE IMMEDIATELY PRETENDS NOTHING HAPPENED.' : 'THAT\'S ALL OF THEM.'), 3800);
+    }
+    return;
+  }
+  if (h.state === 'follow'){
+    if (player.heli){
+      if (!h.heliCap){ h.heliCap = true; caption('THE TRAINER', h.name + ' DOES NOT DO HELICOPTERS. HE\'LL WAIT.', 3600); }
+      return;
+    }
+    h.heliCap = false;
+    if (player.veh){
+      h.state = 'riding';
+      caption('THE TRAINER', h.name + ' GETS IN THE CAR. THIS IS FINE. THIS IS NORMAL.', 4000);
+      return;
+    }
+    var d = Math.hypot(player.x - g.position.x, player.z - g.position.z);
+    if (d > 3){
+      var p = {x: g.position.x, z: g.position.z};
+      var step = Math.min(d - 2.8, 7 * dt);
+      p.x += (player.x - g.position.x) / d * step;
+      p.z += (player.z - g.position.z) / d * step;
+      collide(p, 0.8, 0);
+      g.position.x = p.x; g.position.z = p.z;
+      g.rotation.y = Math.atan2(player.x - g.position.x, player.z - g.position.z);
+    }
+    g.position.y = groundY(g.position.x, g.position.z) + 0.05 +
+      (d > 3.5 ? Math.abs(Math.sin(now * 0.011)) * 0.25 : 0);
+    if (inPen(g.position.x, g.position.z)){ h.state = 'trot'; }
+    return;
+  }
+  if (h.state === 'bolt'){
+    h.boltT += dt;
+    var f = Math.min(1, h.boltT / 2.2);
+    var e = f * (2 - f);   // ease-out
+    var p2 = {x: h.bx0 + (h.bx1 - h.bx0) * e, z: h.bz0 + (h.bz1 - h.bz0) * e};
+    collide(p2, 0.8, 0);
+    g.position.x = p2.x; g.position.z = p2.z;
+    g.position.y = groundY(p2.x, p2.z) + 0.05 + Math.abs(Math.sin(now * 0.016)) * 0.5;
+    g.rotation.y = Math.atan2(h.bx1 - h.bx0, h.bz1 - h.bz0);
+    if (h.boltT > 2.3){ h.state = 'wild'; }
+    return;
+  }
+  // wild: graze in place, bolt if rushed
+  g.position.y = groundY(g.position.x, g.position.z) + 0.05 + Math.sin(now * 0.002 + h.i) * 0.04;
+  var pd = Math.hypot(player.x - g.position.x, player.z - g.position.z);
+  var rushing = playerSpeed() > 4.5 || (player.veh && Math.abs(player.veh.spd) > 3);
+  if (pd < 16 && rushing){
+    var ang = Math.atan2(g.position.x - player.x, g.position.z - player.z) + (Math.random() - 0.5) * 1.2;
+    var dist = 42 + Math.random() * 22;
+    h.state = 'bolt'; h.boltT = 0;
+    h.bx0 = g.position.x; h.bz0 = g.position.z;
+    h.bx1 = Math.max(X0 + 20, Math.min(X1 - 20, g.position.x + Math.sin(ang) * dist));
+    h.bz1 = Math.max(Z0 + 20, Math.min(Z1 - 20, g.position.z + Math.cos(ang) * dist));
+    caption('THE HORSE', M4_NOPE[(Math.random() * M4_NOPE.length) | 0], 2400);
+  }
+}
+var M4_AMBIENT = [
+  ['THE TRAINER', 'WALK. UP. SLOW. IF YOU RUN AT A HORSE, THE HORSE WINS. THAT\'S JUST MATH.'],
+  ['RADIO', 'CALLER REPORTS A HORSE IN A SEDAN ON LIMESTONE. CALLER HAS BEEN DRINKING, PROBABLY.'],
+  ['THE TRAINER', 'THE AUCTIONEER IS STALLING. HE\'S DESCRIBING THE WEATHER.'],
+  ['RADIO', 'AUCTION UPDATE: STILL NO HORSES. CROWD DOING THE WAVE TO PASS TIME.']
+];
+function updateMission4(dt){
+  if (m4Ring){
+    m4Ring.visible = allIdle();
+    if (m4Ring.visible) m4Ring.rotation.z += dt * 0.8;
+  }
+  if (m4PenRing && m4PenRing.visible) m4PenRing.rotation.z += dt * 0.7;
+  if (mission4.stage === 'idle') return;
+  trackPlayerSpeed(dt);
+  var now = performance.now();
+  mission4.tStage += dt;
+  var t = mission4.tStage;
+  m4Horses.forEach(function(h){ updateHorse(h, dt, now); });
+  if (mission4.stage === 'brief'){
+    if (t > 4 && mission4.capIdx === 0){ mission4.capIdx = 1; caption('THE TRAINER', 'ONE OF THEM IS IN THIS PARK. PRETENDING TO BE A STATUE. HE\'S BEEN AT IT FOR HOURS.', 4800); }
+    if (t > 9 && mission4.capIdx === 1){ mission4.capIdx = 2; caption('THE TRAINER', 'ONE\'S TAILGATING AT THE KROGER FIELD LOTS. SEASON HASN\'T STARTED. ONE\'S EATING THE FLOWERS AT CHEVY CHASE.', 5200); }
+    if (t > 14.4 && mission4.capIdx === 2){ mission4.capIdx = 3; caption('THE TRAINER', 'SNEAK UP. PRESS E FOR THE LEAD ROPE. A CALM HORSE FOLLOWS YOU — CAR, WHATEVER, HE\'S FLEXIBLE. ELMENDORF PADDOCK. GO.', 5600); }
+    if (t > 20){
+      mission4.stage = 'wrangle'; mission4.tStage = 0; mission4.capAt = 24;
+      mission4.t0 = now;
+      M4_SPOTS.forEach(function(s, i){
+        var g = makeLiveHorse(s.col);
+        g.position.set(s.x, groundY(s.x, s.z) + 0.05, s.z);
+        g.rotation.y = Math.random() * Math.PI * 2;
+        m4Horses.push({g: g, state: 'wild', i: i, name: s.name, boltT: 0});
+      });
+      m4PenRing.visible = true;
+      caption('DISPATCH', 'CLOCK STARTED. THREE HORSES. THE GREEN RING AT ELMENDORF IS HOME.', 4400);
+    }
+    return;
+  }
+  if (mission4.stage === 'wrangle'){
+    if ((now - mission4.t0) / 1000 > 900){ m4Fail(); return; }
+    if (t > mission4.capAt){
+      mission4.capAt = t + 20 + Math.random() * 10;
+      var c = M4_AMBIENT[(Math.random() * M4_AMBIENT.length) | 0];
+      caption(c[0], c[1]);
+    }
+    if (mission4.penned >= 3){
+      mission4.ms = now - mission4.t0;
+      mission4.stage = 'won'; mission4.tStage = 0; mission4.capIdx = 0;
+      sndWin(); sndApplause();
+      caption('THE TRAINER', 'ALL THREE. BEFORE POST TIME. DO NOT TELL ANYONE ABOUT THE STATUE THING.', 4600);
+      try {
+        if (!m4Best || mission4.ms < m4Best){
+          m4Best = mission4.ms;
+          localStorage.setItem('lt_m4_best', String(Math.round(mission4.ms)));
+        }
+      } catch (e){}
+      if (online && ws && ws.readyState === 1)
+        ws.send(JSON.stringify({t: 'score', ms: Math.round(mission4.ms), m: 4}));
+    }
+    return;
+  }
+  if (mission4.stage === 'won'){
+    if (t > 5 && mission4.capIdx === 0){
+      mission4.capIdx = 1;
+      caption('RADIO', 'AUCTION UPDATE: ALL HORSES PRESENT. ONE SMELLS LIKE FLOWERS. ONE INSISTS HE IS A STATUE.', 5000);
+      showScores(mission4.ms, 4);
+      mission4.stage = 'post'; mission4.tStage = 0;
+    }
+    return;
+  }
+  if (mission4.stage === 'fail'){ if (t > 5) m4Cleanup(); return; }
+  if (mission4.stage === 'post'){ if (t > 22) m4Cleanup(); }
+}
+function allIdle(){
+  return mission.stage === 'idle' && mission2.stage === 'idle' &&
+         mission3.stage === 'idle' && mission4.stage === 'idle';
+}
+// mission markers on the tactical overlay (gold, like the rings)
+labels.push({name: '★ MISSION: THE RIBBON CUTTING', x: MISSION_TRIG.x, y: 9, z: MISSION_TRIG.z, col: '#ffd28a'});
+labels.push({name: '★ MISSION: SNOW EMERGENCY', x: DOOR_P.x, y: 13, z: DOOR_P.z, col: '#ffd28a'});
+labels.push({name: '★ MISSION: THE DATA CENTER', x: M3_TRIG.x, y: 9, z: M3_TRIG.z, col: '#ffd28a'});
+labels.push({name: '★ MISSION: HORSEPOWER', x: M4_TRIG.x, y: 9, z: M4_TRIG.z, col: '#ffd28a'});
+// the gentle shove: when nothing else is going on, point at the next mission
+function nextMissionHint(){
+  if (!heliUnlocked) return 'FIRST MISSION: THE RIBBON CUTTING — GOLD RING BY CITY HALL';
+  if (!m2Best) return 'NEXT MISSION: SNOW EMERGENCY — E AT THE CITY HALL DOOR';
+  if (!m3Best) return 'NEXT MISSION: THE DATA CENTER — TEAL RING, PHOENIX PARK';
+  if (!m4Best) return 'NEXT MISSION: HORSEPOWER — GREEN RING, THOROUGHBRED PARK';
+  return '';
+}
+
 // dev hook, only with #debug=1: poke the mission from the console
 if (/debug=1/.test(hashStr)){
   window.__lt = {
@@ -3049,6 +3633,14 @@ if (/debug=1/.test(hashStr)){
     stage: function(){ return mission.stage; },
     unlock: function(){ return heliUnlocked; },
     m2stage: function(){ return mission2.stage; },
+    m3stage: function(){ return mission3.stage; },
+    m4stage: function(){ return mission4.stage; },
+    m3: function(){ return mission3; },
+    m4: function(){ return mission4; },
+    m4h: function(){ return m4Horses; },
+    veh: function(){ return !!player.veh; },
+    m4horses: function(){ return m4Horses.map(function(h){ return {s: h.state, x: Math.round(h.g.position.x), z: Math.round(h.g.position.z)}; }); },
+    photo: function(){ takePhoto(); },
     tp: function(x, z){ player.x = x; player.z = z; player.y = groundY(x, z); },
     audio: function(){ pokeAudio(); return AC ? AC.state : 'none'; },
     pos: function(){ return {x: player.x, y: player.y, z: player.z}; },
@@ -3109,6 +3701,7 @@ function nearestVehicle(){
 }
 function fireAction(){
   if (player.heli) return;   // water cannon is hold-to-spray, handled in flight
+  if (mission3.stage === 'photo' && !player.veh){ takePhoto(); return; }
   if (missionFight() && !player.veh){ fireRocket(); return; }
   if (myRpg > 0 && heliActive() && !player.veh){ fireRocket(); return; }
   fireDart();
@@ -3121,14 +3714,25 @@ function tryEnterExit(){
     exitHeli(heli.y > hgy + 3);
     return;
   }
-  if (mission.stage === 'idle' && mission2.stage === 'idle' && !player.veh && !isFrozen() && nearMissionTrig()){
+  if (allIdle() && !player.veh && !isFrozen() && nearMissionTrig()){
     startMission();
     return;
   }
-  if (heliUnlocked && mission2.stage === 'idle' && mission.stage === 'idle' &&
-      !player.veh && !isFrozen() && nearDoor()){
+  if (heliUnlocked && allIdle() && !player.veh && !isFrozen() && nearDoor()){
     startMission2();
     return;
+  }
+  if (allIdle() && !player.veh && !isFrozen() && nearM3Trig()){
+    startMission3();
+    return;
+  }
+  if (allIdle() && !player.veh && !isFrozen() && nearM4Trig()){
+    startMission4();
+    return;
+  }
+  if (!player.veh && !isFrozen()){
+    var wh = calmableHorse();
+    if (wh){ calmHorse(wh); return; }
   }
   if (canEnterHeli()){ requestHeli(); return; }
   if (player.veh){
@@ -3981,10 +4585,18 @@ function tutOpen(){
   els.tut.hidden = false; nameIn.value = myName;
   if (document.exitPointerLock) document.exitPointerLock();
 }
+var _welcomed = false;
 function tutClose(){
   applyName();
   els.tut.hidden = true;
   try { localStorage.setItem('lt_tut_seen', '1'); } catch (e){}
+  // first-session shove toward the missions
+  if (!_welcomed && !heliUnlocked && allIdle()){
+    _welcomed = true;
+    setTimeout(function(){
+      if (allIdle()) caption('DISPATCH', 'WELCOME TO LEXTOWN. SEE THE GOLD RING BY CITY HALL? GO PRESS E ON IT. TRUST ME.', 6500);
+    }, 4000);
+  }
 }
 els.bHelp.onclick = tutOpen;
 document.getElementById('tutClose').onclick = tutClose;
@@ -4249,11 +4861,11 @@ function drawOverlay(){
       if (d3 > 1300) continue;
       var lp = project(lb.x, lb.y, lb.z);
       if (!lp) continue;
-      ov.strokeStyle = 'rgba(110,247,223,0.55)'; ov.lineWidth = 1;
+      ov.strokeStyle = lb.col ? 'rgba(255,210,138,0.6)' : 'rgba(110,247,223,0.55)'; ov.lineWidth = 1;
       ov.beginPath(); ov.moveTo(lp[0], lp[1]); ov.lineTo(lp[0], lp[1] - 16); ov.stroke();
-      ov.fillStyle = '#6ef7df';
+      ov.fillStyle = lb.col || '#6ef7df';
       ov.fillRect(lp[0] - 1.5, lp[1] - 1.5, 3, 3);
-      chip(lp[0] + 4, lp[1] - 18, lb.name, '#d9fff6');
+      chip(lp[0] + 4, lp[1] - 18, lb.name, lb.col || '#d9fff6');
     }
   }
 }
@@ -4285,6 +4897,8 @@ function frame(now){
   updateHeli(dt);
   updateMission(dt);
   updateMission2(dt);
+  updateMission3(dt);
+  updateMission4(dt);
   updateRockets(dt);
   updateDrops(dt);
   updatePuffs(dt);
@@ -4340,15 +4954,25 @@ function frame(now){
     else if (player.veh && player.veh.plow) hint = 'BLADE: ' + (bladeDown ? 'DOWN' : 'UP') + ' · SPACE — RAISE/LOWER · CLEAR THE SNOWY STREETS · E — EXIT';
     else if (player.veh) hint = 'E — EXIT · W/S DRIVE · A/D STEER · ' + Math.round(Math.abs(player.veh.spd) * 3.6) + ' KM/H';
     else if (mission2.stage === 'plow' && plowVeh) hint = 'GET TO THE PLOW — MAIN ST BY CITY HALL (E TO BOARD)';
-    else if (mission.stage === 'idle' && mission2.stage === 'idle' && nearMissionTrig()) hint = 'E — START MISSION: THE RIBBON CUTTING';
-    else if (heliUnlocked && mission.stage === 'idle' && mission2.stage === 'idle' && nearDoor()) hint = 'E — CITY HALL: SEE THE MAYOR';
+    else if (mission3.stage === 'tail') hint = 'TAIL THE COUNCILMAN — STAY BACK, STAY CLOSE ENOUGH';
+    else if (mission3.stage === 'listen') hint = 'EAVESDROP BEHIND AL\'S — CLOSE ENOUGH TO HEAR, NOT CLOSER';
+    else if (mission3.stage === 'scout') hint = 'GET TO THE UK QUAD — TEAL RING';
+    else if (mission3.stage === 'photo') hint = 'F/CLICK — PHOTO (' + mission3.photos + '/3) · DON\'T GET CLOSE';
+    else if (mission3.stage === 'return') hint = 'BRING THE PHOTOS TO THE MAYOR — PHOENIX PARK';
+    else if (mission4.stage === 'wrangle' && calmableHorse()) hint = 'E — TAKE THE LEAD ROPE';
+    else if (mission4.stage === 'wrangle') hint = 'HORSES HOME: ' + mission4.penned + '/3 · SNEAK UP SLOW · GREEN RING AT ELMENDORF';
+    else if (allIdle() && nearMissionTrig()) hint = 'E — START MISSION: THE RIBBON CUTTING';
+    else if (heliUnlocked && allIdle() && nearDoor()) hint = 'E — CITY HALL: SEE THE MAYOR';
     else if (!heliUnlocked && nearDoor()) hint = 'CITY HALL IS LOCKED — BEAT "THE RIBBON CUTTING" FIRST';
+    else if (allIdle() && nearM3Trig()) hint = 'E — START MISSION: THE DATA CENTER';
+    else if (allIdle() && nearM4Trig()) hint = 'E — START MISSION: HORSEPOWER';
     else if (canEnterHeli()) hint = 'E — FLY THE NEWS CHOPPER';
     else if (!heliUnlocked && canEnterHeliBase()) hint = 'LOCKED — BEAT "THE RIBBON CUTTING" AT CITY HALL TO FLY';
     else if (player.grounded && nearestVehicle()) hint = 'E — ENTER CAR';
     else if (!player.grounded && player.thrusting) hint = 'JETPACK · FUEL ' + Math.round(player.fuel) + '%';
     else if (myRpg > 0 && heliActive()) hint = 'RPG ×' + myRpg + ' · F/CLICK — FIRE AT THE CHOPPER · RMB — AIM';
     else if (player.pvp) hint = 'CLICK/F — FIRE · RMB — AIM · G — HOLSTER';
+    else if (allIdle()) hint = nextMissionHint();
   }
   els.hint.textContent = hint;
   els.hint.style.display = hint ? 'block' : 'none';

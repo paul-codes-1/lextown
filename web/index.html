@@ -104,8 +104,8 @@
            padding:8px 16px;color:#f2fffb}
   #caption[hidden]{display:none}
   #caption b{color:var(--teal);font-weight:600}
-  #scoreList,#scoreList2{margin:8px 0 0;padding-left:26px;font-size:12.5px;line-height:1.9}
-  #scoreList li::marker,#scoreList2 li::marker{color:#ffd28a}
+  #scoreList,#scoreList2,#scoreList3,#scoreList4{margin:8px 0 0;padding-left:26px;font-size:12.5px;line-height:1.9}
+  #scoreList li::marker,#scoreList2 li::marker,#scoreList3 li::marker,#scoreList4 li::marker{color:#ffd28a}
   #scoreYou{color:#ffd28a;font-size:12px;letter-spacing:.12em;margin:10px 0 2px}
   #botright{position:absolute;right:14px;bottom:14px;display:flex;flex-direction:column;
             align-items:flex-end;gap:6px;pointer-events:auto;max-width:80vw}
@@ -123,7 +123,8 @@
   .tbtn.on{background:rgba(110,247,223,.16);color:#eafffa;border-color:var(--teal)}
   #help{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);
         color:#7fbfb2;font-size:9.5px;letter-spacing:.14em;text-align:center;
-        background:var(--ink);border:1px solid rgba(110,247,223,.14);padding:5px 10px;white-space:nowrap}
+        background:var(--ink);border:1px solid rgba(110,247,223,.14);padding:5px 10px;white-space:nowrap;
+        pointer-events:auto}
   /* ---- tutorial / about modal ---- */
   #tut,#scores{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;
        background:rgba(3,7,13,.72);pointer-events:auto;
@@ -251,6 +252,10 @@
     <ol id="scoreList"></ol>
     <h2>SNOW EMERGENCY — FASTEST PLOWS</h2>
     <ol id="scoreList2"></ol>
+    <h2>THE DATA CENTER — FASTEST INVESTIGATIONS</h2>
+    <ol id="scoreList3"></ol>
+    <h2>HORSEPOWER — FASTEST ROUNDUPS</h2>
+    <ol id="scoreList4"></ol>
     <p class="tut-links">replay any time at the gold rings by City Hall · <kbd>Esc</kbd>/<kbd>Enter</kbd> closes</p>
   </div>
 </div>
@@ -258,7 +263,8 @@
   <div class="tut-panel">
     <button class="tbtn" id="tutClose">✕</button>
     <h1>LEXTOWN-01 · HOW TO PLAY</h1>
-    <p class="tagline">A multiplayer mini-downtown-Lexington. Everyone on this page shares one world.</p>
+    <p class="tagline">A multiplayer mini-Lexington — downtown to the horse farms. Everyone on this page shares one world.
+    Four timed missions with global leaderboards; the gold <b>★</b> markers on your HUD point the way. Start at the gold ring by City Hall.</p>
     <h2>CALL SIGN</h2>
     <div class="name-row">
       <input id="nameIn" maxlength="14" autocomplete="off" spellcheck="false"
@@ -288,6 +294,16 @@
       <b><kbd>E</kbd></b><span>at the <b>City Hall door</b> (unlocked by beating THE RIBBON CUTTING) — the mayor needs downtown plowed before the storm wins</span>
       <b><kbd>Space</kbd></b><span>raises / lowers the plow blade. <b>Blade down on snow</b> clears it; blade down on bare pavement grinds up the road and costs you time penalties</span>
       <b>Goal</b><span>clear the five glowing streets. Timed, with its own global board. And whatever you do, <b>don't plow the mayor's street</b> — half of reddit is camped out there.</span>
+    </div>
+    <h2>MISSION 3: THE DATA CENTER</h2>
+    <div class="tut-grid">
+      <b><kbd>E</kbd></b><span>at the <b>teal ring in Phoenix Park</b> — the mayor suspects a councilman is up to something. Tail him up Limestone (grab a car), eavesdrop behind Al's Bar, then beat him to the UK quad.</span>
+      <b><kbd>F</kbd> / click</b><span><b>takes a photo</b> once you're at the quad — get three shots of the scouting trip without getting close enough to be noticed. Then bring the camera back. The internet does the rest.</span>
+    </div>
+    <h2>MISSION 4: HORSEPOWER</h2>
+    <div class="tut-grid">
+      <b><kbd>E</kbd></b><span>at the <b>green ring in Thoroughbred Park</b> — three thoroughbreds got loose the night before the auction. One is in that park <b>pretending to be a statue</b>.</span>
+      <b>Wrangle</b><span>walk up <b>slow</b> (run at a horse and the horse wins), press <kbd>E</kbd> for the lead rope. A calm horse follows you — and if you get in a car, <b>the horse gets in the car</b>. Deliver all three to the green ring at Elmendorf Farm, past New Circle.</span>
     </div>
     <h2>THE NEWS CHOPPER</h2>
     <div class="tut-grid">
