@@ -996,13 +996,13 @@ function pond(x, z, rx, rz){
   pond(240, -1120, 18, 13);
   labels.push({name: 'MT. BRILLIANT FARM', x: 210, y: 20, z: -1350});
 
-  // Spindletop (far east)
+  // Spendthrift (far east — Iron Works Pike side)
   paddock(330, -1480, 605, -1320);
   paddock(330, -1290, 605, -1060);
   barn(400, -1010, 0x7a2f26, 0x3a3d42, 16, 10, 5);    // red
   barn(480, -1010, 0xe8e4d8, 0x3f7d72, 15, 9, 4.5);
   pond(520, -1180, 24, 16);
-  labels.push({name: 'SPINDLETOP FARM', x: 470, y: 20, z: -1380});
+  labels.push({name: 'SPENDTHRIFT FARM', x: 470, y: 20, z: -1380});
 
   // windbreak rows + pasture clumps
   for (var wx = -500; wx < 610; wx += 26)
