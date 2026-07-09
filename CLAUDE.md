@@ -84,10 +84,19 @@ fills them runs — a `vehicles`-before-init crash has happened once already.
 Key models to keep straight:
 
 - **World grid**: stylized orthogonal, 1 unit = 1 m, x=east z=south, 100 m
-  blocks. `EW`/`NS` street tables encode real one-way directions. Procedural
-  blocks fill the grid except hand-built landmark blocks listed in `SKIP`
-  (keyed `"<nsGap>-<ewGap>"`). All facade/road/sign textures are generated on
-  canvas at boot — there are no image assets except `og.jpg`.
+  blocks. `EW`/`NS` street tables encode real one-way directions. Streets can
+  carry a partial extent (`x0`/`x1` on EW rows, `z0`/`z1` on NS rows) so they
+  end where they really end (MLK/Upper stop at Euclid, Rose starts at Main);
+  `meets(e, n)` + the `XINGS` list gate every per-intersection consumer
+  (crosswalks, signals, sign blades, lamps, lane cross-stops). Procedural
+  blocks fill grid cells whose four bounding street segments all exist, except
+  hand-built landmark blocks listed in `SKIP` (keyed `"<nsGap>-<ewGap>"`);
+  `blockKind()` picks downtown towers vs. low-rise vs. `resBlock()` bungalows
+  (instanced houses via `housePts` — its InstancedMesh builder must stay AFTER
+  every `resBlock()` call). Uncovered regions (UK campus, Kroger Field, Chevy
+  Chase, Ashland estate, the NE side) are hand-built superblocks. All
+  facade/road/sign textures are generated on canvas at boot — there are no
+  image assets except `og.jpg`.
 - **Height-aware ground**: `groundY(x,z,yRef)` and `collide(p,r,y)` consult
   collider heights so the jetpack clears buildings and rooftops are landable.
   Anything hand-built that should block or carry the player needs a

@@ -29,23 +29,42 @@ scene.fog = new THREE.FogExp2(0x1a1030, 0.0011);
 
 // ---------- street grid ----------
 var SW = 16;                      // street width
-var X0 = -520, X1 = 300, Z0 = -400, Z1 = 300;   // map extents
+var X0 = -520, X1 = 620, Z0 = -400, Z1 = 800;   // map extents
 // dirs: EW +1 = eastbound(+x); NS +1 = southbound(+z)
+// Streets can carry a partial extent (x0/x1 on EW, z0/z1 on NS) so they end
+// where they really end — MLK and Upper stop at Euclid, Mill at Maxwell,
+// Rose starts at Main — instead of slicing through the UK superblock.
 var EW = [
-  {name:'THIRD ST',  z:-300, dirs:[1,-1]},
-  {name:'SECOND ST', z:-200, dirs:[-1]},
-  {name:'SHORT ST',  z:-100, dirs:[1]},
-  {name:'MAIN ST',   z:0,    dirs:[1]},
-  {name:'VINE ST',   z:100,  dirs:[-1]},
-  {name:'HIGH ST',   z:200,  dirs:[1,-1]}
+  {name:'THIRD ST',   z:-300, dirs:[1,-1]},
+  {name:'SECOND ST',  z:-200, dirs:[-1]},
+  {name:'SHORT ST',   z:-100, dirs:[1]},
+  {name:'MAIN ST',    z:0,    dirs:[1]},
+  {name:'VINE ST',    z:100,  dirs:[-1]},
+  {name:'HIGH ST',    z:200,  dirs:[1,-1]},
+  {name:'MAXWELL ST', z:300,  dirs:[1],    x0:-200, x1:300},
+  {name:'EUCLID AVE', z:400,  dirs:[1,-1], x0:100}
 ];
 var NS = [
   {name:'BROADWAY',  x:-200, dirs:[1,-1]},
-  {name:'MILL ST',   x:-100, dirs:[-1]},
-  {name:'UPPER ST',  x:0,    dirs:[-1]},
+  {name:'MILL ST',   x:-100, dirs:[-1],  z1:300},
+  {name:'UPPER ST',  x:0,    dirs:[-1],  z1:400},
   {name:'LIMESTONE', x:100,  dirs:[1]},
-  {name:'MLK BLVD',  x:200,  dirs:[1,-1]}
+  {name:'MLK BLVD',  x:200,  dirs:[1,-1], z1:400},
+  {name:'ROSE ST',   x:300,  dirs:[1,-1], z0:0},
+  {name:'WOODLAND',  x:400,  dirs:[1,-1], z0:0, z1:400},
+  {name:'ASHLAND',   x:500,  dirs:[1,-1], z0:200}
 ];
+function ewLo(s){ return s.x0 === undefined ? X0 : s.x0; }
+function ewHi(s){ return s.x1 === undefined ? X1 : s.x1; }
+function nsLo(s){ return s.z0 === undefined ? Z0 : s.z0; }
+function nsHi(s){ return s.z1 === undefined ? Z1 : s.z1; }
+// do these two streets actually cross?
+function meets(e, n){
+  return n.x >= ewLo(e) - 1 && n.x <= ewHi(e) + 1 &&
+         e.z >= nsLo(n) - 1 && e.z <= nsHi(n) + 1;
+}
+var XINGS = [];
+EW.forEach(function(e){ NS.forEach(function(n){ if (meets(e, n)) XINGS.push({e: e, n: n}); }); });
 
 // ---------- canvas texture helpers ----------
 function makeTex(w, h, draw){
@@ -237,30 +256,32 @@ ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true;
 scene.add(ground);
 
 EW.forEach(function(s){
-  var t = roadTexH.clone(); t.needsUpdate = true; t.repeat.set((X1 - X0) / 60, 1);
-  var m = new THREE.Mesh(new THREE.PlaneGeometry(X1 - X0, SW),
+  var lo = ewLo(s), hi = ewHi(s);
+  var t = roadTexH.clone(); t.needsUpdate = true; t.repeat.set((hi - lo) / 60, 1);
+  var m = new THREE.Mesh(new THREE.PlaneGeometry(hi - lo, SW),
     new THREE.MeshStandardMaterial({map: t, roughness: 0.95}));
-  m.rotation.x = -Math.PI / 2; m.position.set((X0 + X1) / 2, 0.05, s.z);
+  m.rotation.x = -Math.PI / 2; m.position.set((lo + hi) / 2, 0.05, s.z);
   m.receiveShadow = true; scene.add(m);
 });
 NS.forEach(function(s){
-  var t = roadTexV.clone(); t.needsUpdate = true; t.repeat.set(1, (Z1 - Z0) / 60);
-  var m = new THREE.Mesh(new THREE.PlaneGeometry(SW, Z1 - Z0),
+  var lo = nsLo(s), hi = nsHi(s);
+  var t = roadTexV.clone(); t.needsUpdate = true; t.repeat.set(1, (hi - lo) / 60);
+  var m = new THREE.Mesh(new THREE.PlaneGeometry(SW, hi - lo),
     new THREE.MeshStandardMaterial({map: t, roughness: 0.95}));
-  m.rotation.x = -Math.PI / 2; m.position.set(s.x, 0.1, (Z0 + Z1) / 2);
+  m.rotation.x = -Math.PI / 2; m.position.set(s.x, 0.1, (lo + hi) / 2);
   m.receiveShadow = true; scene.add(m);
 });
 // intersection patches with crosswalks
 (function(){
   var g = new THREE.PlaneGeometry(SW + 7, SW + 7);
   var mat = new THREE.MeshStandardMaterial({map: xwalkTex, roughness: 0.95});
-  var im = new THREE.InstancedMesh(g, mat, EW.length * NS.length);
+  var im = new THREE.InstancedMesh(g, mat, XINGS.length);
   var M = new THREE.Matrix4(), q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
   var i = 0, one = new THREE.Vector3(1, 1, 1);
-  EW.forEach(function(e){ NS.forEach(function(n){
-    M.compose(new THREE.Vector3(n.x, 0.15, e.z), q, one);
+  XINGS.forEach(function(xg){
+    M.compose(new THREE.Vector3(xg.n.x, 0.15, xg.e.z), q, one);
     im.setMatrixAt(i++, M);
-  }); });
+  });
   im.receiveShadow = true; scene.add(im);
 })();
 
@@ -322,7 +343,7 @@ function addParkingLot(px0, pz0, px1, pz1){
                     Math.random() < 0.5 ? 0 : Math.PI / 2]);
   treePts.push([px0 + 2, pz0 + 2]);
 }
-function procBlock(x0, z0, x1, z1){
+function procBlock(x0, z0, x1, z1, low){
   slab(x0, z0, x1, z1);
   var cols = Math.random() < 0.5 ? 2 : 1, rows = Math.random() < 0.6 ? 2 : 1;
   if (cols === 1 && rows === 1 && Math.random() < 0.7) cols = 2;
@@ -342,11 +363,12 @@ function procBlock(x0, z0, x1, z1){
     }
     var w = (px1 - px0) * (0.75 + Math.random() * 0.25);
     var d = (pz1 - pz0) * (0.75 + Math.random() * 0.25);
-    var h = r < 0.62 ? 8 + Math.random() * 12 : r < 0.9 ? 18 + Math.random() * 18 : 40 + Math.random() * 26;
+    var h = low ? 6 + Math.random() * 10 :
+            r < 0.62 ? 8 + Math.random() * 12 : r < 0.9 ? 18 + Math.random() * 18 : 40 + Math.random() * 26;
     var vi = h > 38 ? (Math.random() < 0.5 ? 5 : 4) : (Math.random() * 4) | 0;
     var bx = (px0 + px1) / 2, bz = (pz0 + pz1) / 2;
     addTower(bx, bz, w, d, h, vi);
-    var retail = Math.abs(bz) < 160 && MASONRY[vi] && h < 28;
+    var retail = (low || Math.abs(bz) < 160) && MASONRY[vi] && h < 28;
     if (retail) addStorefront(bx, bz, w, d);
     if (Math.random() < 0.5 && retail){
       var south = bz > 0;
@@ -356,14 +378,81 @@ function procBlock(x0, z0, x1, z1){
   }
 }
 
-// blocks between streets; skip landmark blocks
-var SKIP = {'0-2':1, '0-3':1, '0-4':1, '1-0':1, '1-2':1, '1-3':1, '1-4':1, '2-2':1, '3-2':1, '3-3':1};
+// ---------- residential blocks (bungalows — south + east neighborhoods) ----------
+var lawnMat = new THREE.MeshStandardMaterial({color: 0x51683c, roughness: 1});
+var HOUSE_COLS = [0xe8e2d4, 0x9c5240, 0xb9c4c9, 0xcdb98e, 0x8fa3b5, 0x76806f];
+var ROOF_COLS = [0x3a3d42, 0x4a3b32, 0x2f3a33];
+var housePts = [];   // {x,z,ry,w,d,h,rh,ci,ri} — instanced after world build
+function house(x, z, ry){
+  var w = 9 + Math.random() * 3.5, d = 7.5 + Math.random() * 3, h = 4.2 + Math.random() * 1.8;
+  housePts.push({x: x, z: z, ry: ry, w: w, d: d, h: h, rh: 2.2 + Math.random() * 1.4,
+                 ci: (Math.random() * HOUSE_COLS.length) | 0,
+                 ri: (Math.random() * ROOF_COLS.length) | 0});
+  var flip = Math.abs(Math.sin(ry)) > 0.5;   // ±90° — swap footprint for the collider
+  var cw = flip ? d : w, cd = flip ? w : d;
+  colliders.push({x0: x - cw / 2, x1: x + cw / 2, z0: z - cd / 2, z1: z + cd / 2, h: h + 0.7});
+}
+function resBlock(x0, z0, x1, z1){
+  var w = x1 - x0, d = z1 - z0;
+  if (w > 135 || d > 135){   // subdivide superblocks; 14 m grass gaps read as alleys
+    var nx = Math.max(w > 135 ? 2 : 1, Math.round(w / 110));
+    var nz = Math.max(d > 135 ? 2 : 1, Math.round(d / 110));
+    var cw = w / nx, cd = d / nz;
+    for (var a = 0; a < nx; a++) for (var b = 0; b < nz; b++)
+      resBlock(x0 + a * cw + (a ? 7 : 0), z0 + b * cd + (b ? 7 : 0),
+               x0 + (a + 1) * cw - (a < nx - 1 ? 7 : 0), z0 + (b + 1) * cd - (b < nz - 1 ? 7 : 0));
+    return;
+  }
+  slab(x0, z0, x1, z1, lawnMat);
+  var k;
+  if (w >= d){   // two rows of houses facing the z edges
+    for (var hx = x0 + 9; hx < x1 - 8; hx += 15 + Math.random() * 6){
+      if (Math.random() < 0.86) house(hx, z0 + 7.5, Math.PI);
+      else treePts.push([hx, z0 + 7 + Math.random() * 5]);
+    }
+    if (d > 42) for (hx = x0 + 9; hx < x1 - 8; hx += 15 + Math.random() * 6){
+      if (Math.random() < 0.86) house(hx, z1 - 7.5, 0);
+      else treePts.push([hx, z1 - 12 + Math.random() * 5]);
+    }
+  } else {       // two columns facing the x edges
+    for (var hz = z0 + 9; hz < z1 - 8; hz += 15 + Math.random() * 6){
+      if (Math.random() < 0.86) house(x0 + 7.5, hz, Math.PI / 2);
+      else treePts.push([x0 + 7 + Math.random() * 5, hz]);
+    }
+    if (w > 42) for (hz = z0 + 9; hz < z1 - 8; hz += 15 + Math.random() * 6){
+      if (Math.random() < 0.86) house(x1 - 7.5, hz, -Math.PI / 2);
+      else treePts.push([x1 - 12 + Math.random() * 5, hz]);
+    }
+  }
+  for (k = 0; k < 3; k++)   // backyard canopy
+    treePts.push([x0 + 14 + Math.random() * (w - 28), z0 + 14 + Math.random() * (d - 28)]);
+}
+// which generator a grid cell gets, by its center
+function blockKind(cx, cz){
+  if (cz > 200){
+    if (cx > 100 && cx < 300) return 'low';   // S Lime student strip
+    return 'res';
+  }
+  if (cx > 200) return cz > -150 && Math.random() < 0.45 ? 'low' : 'res';  // east side
+  return 'proc';
+}
+
+// blocks between streets; skip landmark blocks ('4-3' Thoroughbred Park,
+// '5-5'/'5-6' Woodland Park — hand-built below)
+var SKIP = {'0-2':1, '0-3':1, '0-4':1, '1-0':1, '1-2':1, '1-3':1, '1-4':1, '2-2':1, '3-2':1, '3-3':1,
+            '4-3':1, '5-5':1, '5-6':1};
 for (var i = 0; i < NS.length - 1; i++){
   for (var j = 0; j < EW.length - 1; j++){
     var bx0 = NS[i].x + SW / 2 + 3, bx1 = NS[i + 1].x - SW / 2 - 3;
     var bz0 = EW[j].z + SW / 2 + 3, bz1 = EW[j + 1].z - SW / 2 - 3;
     if (SKIP[i + '-' + j]) continue;
-    procBlock(bx0, bz0, bx1, bz1);
+    // all four bounding street segments must exist here (partial extents);
+    // uncovered regions (campus, Chevy Chase, NE side) are hand-built below
+    if (!meets(EW[j], NS[i]) || !meets(EW[j], NS[i + 1]) ||
+        !meets(EW[j + 1], NS[i]) || !meets(EW[j + 1], NS[i + 1])) continue;
+    var kind = blockKind((bx0 + bx1) / 2, (bz0 + bz1) / 2);
+    if (kind === 'res') resBlock(bx0, bz0, bx1, bz1);
+    else procBlock(bx0, bz0, bx1, bz1, kind === 'low');
   }
 }
 
@@ -538,13 +627,259 @@ colliders.push({x0: 32, x1: 68, z0: -58, z1: -32, h: 15.7});        // old court
 colliders.push({x0: -176.5, x1: -165.5, z0: 34.5, z1: 45.5, h: 2.3}); // fountain
 colliders.push({ell: 1, cx: -370, cz: 100, rx: 94, rz: 77, h: 23}); // Rupp oval
 
-// street tree rows along Main + Vine (reference: continuous canopy downtown)
-[0, 100].forEach(function(sz){
-  for (var tx = -190; tx < 290; tx += 38){
+// ---------- UK campus (south of Euclid, Limestone→Rose) ----------
+var whiteTrimMat = new THREE.MeshStandardMaterial({color: 0xe9e5da, roughness: 0.7});
+(function(){
+  slab(108, 408, 292, 792, parkMat);          // the quad / Bowl greens
+  // paved walks: thin planes floated above the lawn (coplanar slabs z-fight)
+  [[196, 408, 204, 792], [108, 596, 292, 604]].forEach(function(wk){
+    var m = new THREE.Mesh(new THREE.PlaneGeometry(wk[2] - wk[0], wk[3] - wk[1]), slabMat);
+    m.rotation.x = -Math.PI / 2;
+    m.position.set((wk[0] + wk[2]) / 2, 0.74, (wk[1] + wk[3]) / 2);
+    m.receiveShadow = true; scene.add(m);
+  });
+  // Memorial Coliseum — white box + barrel-vault roof, fronting Euclid
+  addTower(146, 442, 46, 28, 13, 2, 'MEMORIAL COLISEUM');
+  var barrel = new THREE.Mesh(new THREE.CylinderGeometry(14, 14, 45, 18), whiteTrimMat);
+  barrel.rotation.z = Math.PI / 2;            // axis along x; local x is now vertical
+  barrel.scale.set(0.42, 1, 1);
+  barrel.position.set(146, 13.6, 442); barrel.castShadow = true; scene.add(barrel);
+  // Gatton Student Center — glass, bookstore band
+  addTower(246, 440, 52, 26, 11, 9, 'GATTON STUDENT CENTER');
+  addStorefront(246, 440, 52, 26);
+  // Main Building — brick + white cupola
+  addTower(150, 520, 22, 16, 15, 0, 'UK MAIN BUILDING');
+  var mbDrum = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 3.4, 10), whiteTrimMat);
+  mbDrum.position.set(150, 17.5, 520); mbDrum.castShadow = true; scene.add(mbDrum);
+  var mbCone = new THREE.Mesh(new THREE.ConeGeometry(3, 2.8, 10), roofDark);
+  mbCone.position.set(150, 20.6, 520); scene.add(mbCone);
+  // Memorial Hall — brick chapel, white steeple (the UK icon)
+  addTower(206, 558, 14, 11, 8, 0, 'MEMORIAL HALL');
+  var mhTower = new THREE.Mesh(new THREE.BoxGeometry(4.5, 12, 4.5), whiteTrimMat);
+  mhTower.position.set(206, 8 + 6, 552); mhTower.castShadow = true; scene.add(mhTower);
+  var mhSpire = new THREE.Mesh(new THREE.ConeGeometry(3.1, 9, 8), whiteTrimMat);
+  mhSpire.position.set(206, 24.5, 552); mhSpire.castShadow = true; scene.add(mhSpire);
+  // Patterson Office Tower + White Hall
+  addTower(258, 528, 17, 15, 62, 2, 'PATTERSON OFFICE TOWER');
+  addTower(258, 572, 26, 13, 22, 4);
+  // W.T. Young Library — big brick + rotunda
+  addTower(206, 688, 50, 40, 14, 0, 'WILLIAM T. YOUNG LIBRARY');
+  var rot = new THREE.Mesh(new THREE.CylinderGeometry(9, 9, 7, 16),
+    new THREE.MeshStandardMaterial({color: 0x9c5240, roughness: 0.9}));
+  rot.position.set(206, 17.5, 688); rot.castShadow = true; scene.add(rot);
+  var rotRoof = new THREE.Mesh(new THREE.ConeGeometry(9.6, 4.5, 16), roofDark);
+  rotRoof.position.set(206, 23.2, 688); scene.add(rotRoof);
+  // dorm / classroom filler
+  addTower(126, 630, 16, 30, 24, 1);
+  addTower(126, 730, 16, 26, 24, 1);
+  addTower(270, 744, 20, 20, 34, 4);
+  labels.push({name: 'UNIVERSITY OF KENTUCKY', x: 200, y: 46, z: 600});
+  for (var t = 0; t < 34; t++)
+    treePts.push([112 + Math.random() * 176, 412 + Math.random() * 376]);
+})();
+
+// Kroger Field (southwest of campus, off S Broadway) + tailgate lots
+(function(){
+  slab(-310, 548, -70, 772);
+  var podium = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 6, 48),
+    new THREE.MeshStandardMaterial({color: 0x8a8478, roughness: 0.9}));
+  podium.scale.set(104, 1, 92); podium.position.set(-190, 3.7, 660); scene.add(podium);
+  var bowl = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 13, 48),
+    new THREE.MeshStandardMaterial({color: 0xe8e8e2, roughness: 0.6}));
+  bowl.scale.set(94, 1, 82); bowl.position.set(-190, 12.7, 660);
+  bowl.castShadow = true; bowl.receiveShadow = true; scene.add(bowl);
+  var band = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 2.6, 48),
+    regNight(new THREE.MeshStandardMaterial({color: 0x0033a0,
+      emissive: 0x2a6cff, emissiveIntensity: 0}), 1.8));
+  band.scale.set(95, 1, 83); band.position.set(-190, 20.3, 660); scene.add(band);
+  labels.push({name: 'KROGER FIELD', x: -190, y: 32, z: 660});
+  colliders.push({ell: 1, cx: -190, cz: 660, rx: 106, rz: 94, h: 21.6});
+  addParkingLot(-300, 470, -180, 535);
+  addParkingLot(-168, 470, -80, 535);
+  // Scott St-ish lots + low brick between Broadway and Limestone
+  addParkingLot(-40, 430, 60, 530);
+  addTower(-120, 470, 40, 30, 10, 1);
+  resBlock(-60, 560, 88, 790);   // student rentals east of the stadium
+  for (var t = 0; t < 14; t++)
+    treePts.push([-300 + Math.random() * 360, 420 + Math.random() * 350]);
+})();
+
+// S Broadway corridor west side — warehouses + scatter
+(function(){
+  addTower(-260, 340, 40, 24, 9, 4);
+  addTower(-304, 430, 34, 26, 8, 1);
+  resBlock(-460, 308, -330, 500);
+  for (var t = 0; t < 18; t++)
+    treePts.push([-500 + Math.random() * 270, 310 + Math.random() * 460]);
+})();
+
+// Thoroughbred Park (Main at MLK — bronze horses at full gallop)
+(function(){
+  slab(208, 8, 292, 92, parkMat);
+  labels.push({name: 'THOROUGHBRED PARK', x: 250, y: 14, z: 50});
+  var bronze = new THREE.MeshStandardMaterial({color: 0x5a4632, roughness: 0.5, metalness: 0.5});
+  for (var h = 0; h < 5; h++){
+    var g = new THREE.Group();
+    var body = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.2, 1.1), bronze);
+    body.position.y = 1.9; body.castShadow = true; g.add(body);
+    var neck = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.7, 0.6), bronze);
+    neck.position.set(1.7, 2.6, 0); neck.rotation.z = 0.7; g.add(neck);
+    var head = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.45, 0.5), bronze);
+    head.position.set(2.35, 3.05, 0); head.rotation.z = 0.25; g.add(head);
+    for (var l = 0; l < 4; l++){
+      var leg = new THREE.Mesh(new THREE.BoxGeometry(0.28, 1.5, 0.26), bronze);
+      leg.position.set(-1.2 + (l % 2) * 2.4, 0.85, l > 1 ? 0.32 : -0.32);
+      leg.rotation.z = (l % 2 ? -0.5 : 0.55) * Math.random();
+      g.add(leg);
+    }
+    g.position.set(216 + h * 9 + Math.random() * 3, 0.7, 32 + h * 7 + Math.random() * 4);
+    g.rotation.y = Math.PI + 0.25;   // charging toward downtown, like the real one
+    scene.add(g);
+  }
+  for (var t = 0; t < 8; t++)
+    treePts.push([212 + Math.random() * 76, 12 + Math.random() * 76]);
+})();
+
+// Woodland Park (High & Woodland)
+(function(){
+  slab(308, 208, 392, 392, parkMat);
+  labels.push({name: 'WOODLAND PARK', x: 350, y: 14, z: 300});
+  var pad = new THREE.Mesh(new THREE.PlaneGeometry(40, 34), paverMat);  // pavilion pad
+  pad.rotation.x = -Math.PI / 2; pad.position.set(350, 0.74, 305);
+  pad.receiveShadow = true; scene.add(pad);
+  var canopy = new THREE.Mesh(new THREE.BoxGeometry(20, 0.6, 12),
+    new THREE.MeshStandardMaterial({color: 0x3d6e57, roughness: 0.7}));
+  canopy.position.set(350, 6.3, 305); canopy.castShadow = true; scene.add(canopy);
+  var civ = new THREE.MeshStandardMaterial({color: 0x9a938a, roughness: 0.85});
+  for (var p = 0; p < 4; p++){
+    var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 6.3, 6), civ);
+    pole.position.set(350 + (p % 2 ? 8 : -8), 3.1, 305 + (p > 1 ? 4.5 : -4.5));
+    scene.add(pole);
+  }
+  for (var t = 0; t < 20; t++)
+    treePts.push([312 + Math.random() * 76, 212 + Math.random() * 176]);
+})();
+
+// ---------- Chevy Chase ----------
+(function(){
+  // the strip: low brick storefronts on Euclid, Woodland→east edge
+  slab(408, 408, 612, 446);
+  var shops = [
+    {x: 424, w: 26, vi: 0}, {x: 452, w: 22, vi: 2}, {x: 478, w: 24, vi: 1},
+    {x: 506, w: 26, vi: 0, label: 'WHEELER PHARMACY'},
+    {x: 536, w: 30, vi: 2}, {x: 572, w: 34, vi: 1}
+  ];
+  shops.forEach(function(s){
+    var h = 7 + Math.random() * 3;
+    addTower(s.x, 428, s.w, 26, h, s.vi, s.label);
+    addStorefront(s.x, 428, s.w, 26);
+    if (Math.random() < 0.7) addSign(s.x, 5.2, 414.2, 0);
+  });
+  labels.push({name: 'CHEVY CHASE', x: 500, y: 22, z: 428});
+  // north-side shops (Euclid at Ashland corner)
+  slab(408, 352, 492, 394);
+  [{x: 424, w: 26, vi: 1}, {x: 454, w: 26, vi: 0}, {x: 481, w: 18, vi: 2}].forEach(function(s){
+    addTower(s.x, 373, s.w, 26, 6.5 + Math.random() * 2.5, s.vi);
+    addStorefront(s.x, 373, s.w, 26);
+    if (Math.random() < 0.7) addSign(s.x, 5.2, 387.8, 0);
+  });
+  addParkingLot(412, 452, 528, 490);    // lot behind the strip
+  // apartments row on Euclid near Rose (south side)
+  slab(308, 408, 392, 444);
+  addTower(330, 426, 36, 24, 12, 1); addStorefront(330, 426, 36, 24);
+  addTower(370, 426, 28, 24, 10, 0); addStorefront(370, 426, 28, 24);
+})();
+
+// Ashland — the Henry Clay estate (wooded lawn, brick mansion)
+(function(){
+  slab(508, 500, 612, 792, parkMat);
+  addTower(560, 610, 26, 15, 10, 0, 'ASHLAND · HENRY CLAY ESTATE');
+  var cup = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.8, 2.6, 8), whiteTrimMat);
+  cup.position.set(560, 11.9, 610); scene.add(cup);
+  var drive = new THREE.Mesh(new THREE.CircleGeometry(10, 20), paverMat);
+  drive.rotation.x = -Math.PI / 2; drive.position.set(560, 0.74, 585);
+  drive.receiveShadow = true; scene.add(drive);
+  for (var t = 0; t < 26; t++)
+    treePts.push([512 + Math.random() * 96, 505 + Math.random() * 282]);
+})();
+
+// bungalow neighborhoods (hand-placed where the grid has no streets)
+resBlock(-192, 308, -8, 392);        // south of Maxwell, Broadway→Upper
+resBlock(308, 452, 492, 792);        // Chevy Chase bungalows south of Euclid
+resBlock(536, 452, 612, 492);        // behind the strip, east
+resBlock(508, 208, 612, 392);        // east of Ashland Ave, north of Euclid
+resBlock(408, 8, 612, 92);           // Woodland/Kentucky Ave blocks
+resBlock(408, 108, 612, 192);
+// NE side (MLK→edge, Third→Main) — band per street row
+resBlock(208, -392, 612, -308);
+resBlock(208, -292, 612, -208);
+resBlock(208, -192, 612, -108);
+resBlock(208, -92, 612, -8);
+
+// ---------- houses (instanced: one draw per siding color + roof color) ----------
+(function(){
+  if (!housePts.length) return;
+  var bodyG = new THREE.BoxGeometry(1, 1, 1); bodyG.translate(0, 0.5, 0);
+  var roofG = new THREE.ConeGeometry(1, 1, 4); roofG.translate(0, 0.5, 0);
+  roofG.rotateY(Math.PI / 4);   // flats face the streets
+  var sidingTex = makeTex(64, 64, function(g){
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, 64, 64);
+    g.fillStyle = 'rgba(0,0,0,0.07)';
+    for (var y = 0; y < 64; y += 8) g.fillRect(0, y, 64, 1.2);
+    g.fillStyle = '#232830';
+    g.fillRect(8, 22, 12, 14); g.fillRect(44, 22, 12, 14);   // windows
+    g.fillRect(28, 26, 9, 38);                               // door
+    g.fillStyle = 'rgba(255,255,255,0.35)';
+    g.fillRect(8, 22, 12, 2); g.fillRect(44, 22, 12, 2);
+  });
+  sidingTex.encoding = THREE.sRGBEncoding;
+  var winEm = makeTex(64, 64, function(g){
+    g.fillStyle = '#000'; g.fillRect(0, 0, 64, 64);
+    g.fillStyle = '#ffd9a4';
+    if (Math.random() < 0.75) g.fillRect(8, 22, 12, 14);
+    if (Math.random() < 0.55) g.fillRect(44, 22, 12, 14);
+  });
+  var M = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(),
+      s = new THREE.Vector3();
+  HOUSE_COLS.forEach(function(col, ci){
+    var pts = housePts.filter(function(p){ return p.ci === ci; });
+    if (!pts.length) return;
+    var mat = new THREE.MeshStandardMaterial({color: col, map: sidingTex,
+      emissiveMap: winEm, emissive: 0xffffff, emissiveIntensity: 0, roughness: 0.9});
+    regNight(mat, 0.55 + Math.random() * 0.3);
+    var im = new THREE.InstancedMesh(bodyG, mat, pts.length);
+    for (var k = 0; k < pts.length; k++){
+      var p = pts[k];
+      q.setFromEuler(e.set(0, p.ry, 0));
+      M.compose(new THREE.Vector3(p.x, 0.7, p.z), q, s.set(p.w, p.h, p.d));
+      im.setMatrixAt(k, M);
+    }
+    im.castShadow = true; im.receiveShadow = true; scene.add(im);
+  });
+  ROOF_COLS.forEach(function(col, ri){
+    var pts = housePts.filter(function(p){ return p.ri === ri; });
+    if (!pts.length) return;
+    var im = new THREE.InstancedMesh(roofG,
+      new THREE.MeshStandardMaterial({color: col, roughness: 1}), pts.length);
+    for (var k = 0; k < pts.length; k++){
+      var p = pts[k];
+      q.setFromEuler(e.set(0, p.ry, 0));
+      M.compose(new THREE.Vector3(p.x, 0.7 + p.h, p.z), q,
+                s.set(p.w * 0.78, p.rh, p.d * 0.78));
+      im.setMatrixAt(k, M);
+    }
+    im.castShadow = true; scene.add(im);
+  });
+})();
+
+// street tree rows along Main + Vine + Euclid (continuous canopy)
+[{z: 0, lo: -190, hi: 590}, {z: 100, lo: -190, hi: 590},
+ {z: 400, lo: 112, hi: 590}].forEach(function(row){
+  for (var tx = row.lo; tx < row.hi; tx += 38){
     var nearX = NS.some(function(n){ return Math.abs(tx - n.x) < 15; });
     if (nearX) continue;
-    if (Math.random() < 0.75) treePts.push([tx + Math.random() * 6, sz - 13.5]);
-    if (Math.random() < 0.75) treePts.push([tx + Math.random() * 6, sz + 13.5]);
+    if (Math.random() < 0.75) treePts.push([tx + Math.random() * 6, row.z - 13.5]);
+    if (Math.random() < 0.75) treePts.push([tx + Math.random() * 6, row.z + 13.5]);
   }
 });
 
@@ -552,8 +887,8 @@ colliders.push({ell: 1, cx: -370, cz: 100, rx: 94, rz: 77, h: 23}); // Rupp oval
 (function(){
   for (var k = 0; k < 55; k++){
     var a = Math.random() * Math.PI * 2;
-    var rr = 620 + Math.random() * 360;
-    var x = -110 + Math.cos(a) * rr, z = -50 + Math.sin(a) * rr * 0.8;
+    var rr = 720 + Math.random() * 380;
+    var x = -60 + Math.cos(a) * rr, z = 120 + Math.sin(a) * rr * 0.85;
     if (x > X0 - 40 && x < X1 + 40 && z > Z0 - 40 && z < Z1 + 40) continue;
     var h = 8 + Math.random() * 42;
     var m = new THREE.Mesh(new THREE.BoxGeometry(18 + Math.random() * 34, h, 16 + Math.random() * 30),
@@ -599,11 +934,12 @@ colliders.push({ell: 1, cx: -370, cz: 100, rx: 94, rz: 77, h: 23}); // Rupp oval
 
 // ---------- street lights (instanced) ----------
 var lampPts = [];
-EW.forEach(function(e){ NS.forEach(function(n){
-  lampPts.push([n.x + 13, e.z + 13]); lampPts.push([n.x - 13, e.z - 13]);
-}); });
-[0, 100].forEach(function(z){ // midblock on Main & Vine
-  for (var x = X0 + 60; x < X1 - 30; x += 66) lampPts.push([x, z + 11.5]);
+XINGS.forEach(function(xg){
+  lampPts.push([xg.n.x + 13, xg.e.z + 13]); lampPts.push([xg.n.x - 13, xg.e.z - 13]);
+});
+[{z: 0, lo: X0 + 60, hi: X1 - 30}, {z: 100, lo: X0 + 60, hi: X1 - 30},
+ {z: 400, lo: 160, hi: X1 - 30}].forEach(function(mb){ // midblock Main/Vine/Euclid
+  for (var x = mb.lo; x < mb.hi; x += 66) lampPts.push([x, mb.z + 11.5]);
 });
 var lampGlowMat, lampHeadMat;
 (function(){
@@ -632,17 +968,16 @@ var sigNSMat = new THREE.MeshStandardMaterial({color: 0x111111, emissive: 0xff3b
 (function(){
   var poleG = new THREE.CylinderGeometry(0.14, 0.14, 6, 6);
   var poleM = new THREE.MeshStandardMaterial({color: 0x33363c});
-  var n = EW.length * NS.length;
-  var poles = new THREE.InstancedMesh(poleG, poleM, n);
+  var poles = new THREE.InstancedMesh(poleG, poleM, XINGS.length);
   var M = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
   var k = 0;
   var ballG = new THREE.SphereGeometry(0.45, 8, 8);
-  EW.forEach(function(e){ NS.forEach(function(nn){
-    var px = nn.x - 12.4, pz = e.z + 12.4;
+  XINGS.forEach(function(xg){
+    var px = xg.n.x - 12.4, pz = xg.e.z + 12.4;
     M.compose(new THREE.Vector3(px, 3, pz), q, one); poles.setMatrixAt(k++, M);
     var a = new THREE.Mesh(ballG, sigEWMat); a.position.set(px, 5.6, pz); scene.add(a);
     var b = new THREE.Mesh(ballG, sigNSMat); b.position.set(px, 4.5, pz); scene.add(b);
-  }); });
+  });
   scene.add(poles);
 })();
 
@@ -691,20 +1026,20 @@ function streetSignTex(name){
 (function(){
   var bladeG = new THREE.BoxGeometry(2.7, 0.6, 0.06);
   var poleG = new THREE.CylinderGeometry(0.09, 0.09, 4.6, 6);
-  var poles = new THREE.InstancedMesh(poleG, signGreenMat, EW.length * NS.length);
+  var poles = new THREE.InstancedMesh(poleG, signGreenMat, XINGS.length);
   var M = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
   var k = 0;
-  EW.forEach(function(e){ NS.forEach(function(nn){
-    var px = nn.x + 12.6, pz = e.z - 12.6;
+  XINGS.forEach(function(xg){
+    var px = xg.n.x + 12.6, pz = xg.e.z - 12.6;
     M.compose(new THREE.Vector3(px, 2.3, pz), q, one);
     poles.setMatrixAt(k++, M);
-    var texA = new THREE.MeshStandardMaterial({map: streetSignTex(e.name), roughness: 0.55});
+    var texA = new THREE.MeshStandardMaterial({map: streetSignTex(xg.e.name), roughness: 0.55});
     var a = new THREE.Mesh(bladeG, [signGreenMat, signGreenMat, signGreenMat, signGreenMat, texA, texA]);
     a.position.set(px, 4.3, pz); scene.add(a);         // EW blade reads N/S
-    var texB = new THREE.MeshStandardMaterial({map: streetSignTex(nn.name), roughness: 0.55});
+    var texB = new THREE.MeshStandardMaterial({map: streetSignTex(xg.n.name), roughness: 0.55});
     var b = new THREE.Mesh(bladeG, [signGreenMat, signGreenMat, signGreenMat, signGreenMat, texB, texB]);
     b.position.set(px, 3.8, pz); b.rotation.y = Math.PI / 2; scene.add(b);
-  }); });
+  });
   scene.add(poles);
 })();
 
@@ -730,28 +1065,31 @@ parkedPts.forEach(function(p){
   vehicles.push({g: g, ai: null, th: p[2], spd: 0});
 });
 
-var lanes = [];   // {axis, along-street coord fixed, dir, cars: []}
+var lanes = [];   // {axis, along-street coord fixed, dir, lo, hi, crosses, cars: []}
 EW.forEach(function(s){
+  var lo = ewLo(s), hi = ewHi(s);
+  var crosses = NS.filter(function(n){ return meets(s, n); }).map(function(n){ return n.x; });
   s.dirs.forEach(function(d, di){
-    var off = s.dirs.length === 1 ? (di === 0 ? -3.6 : 3.6) : d * 3.6;
-    if (s.dirs.length === 1) { lanes.push({axis: 'x', c: s.z - 3.6, dir: d, cars: []});
-                               lanes.push({axis: 'x', c: s.z + 3.6, dir: d, cars: []}); }
-    else lanes.push({axis: 'x', c: s.z + d * 3.6, dir: d, cars: []});
+    if (s.dirs.length === 1) { lanes.push({axis: 'x', c: s.z - 3.6, dir: d, lo: lo, hi: hi, crosses: crosses, cars: []});
+                               lanes.push({axis: 'x', c: s.z + 3.6, dir: d, lo: lo, hi: hi, crosses: crosses, cars: []}); }
+    else lanes.push({axis: 'x', c: s.z + d * 3.6, dir: d, lo: lo, hi: hi, crosses: crosses, cars: []});
   });
 });
 NS.forEach(function(s){
+  var lo = nsLo(s), hi = nsHi(s);
+  var crosses = EW.filter(function(e){ return meets(e, s); }).map(function(e){ return e.z; });
   if (s.dirs.length === 1){
-    lanes.push({axis: 'z', c: s.x - 3.6, dir: s.dirs[0], cars: []});
-    lanes.push({axis: 'z', c: s.x + 3.6, dir: s.dirs[0], cars: []});
+    lanes.push({axis: 'z', c: s.x - 3.6, dir: s.dirs[0], lo: lo, hi: hi, crosses: crosses, cars: []});
+    lanes.push({axis: 'z', c: s.x + 3.6, dir: s.dirs[0], lo: lo, hi: hi, crosses: crosses, cars: []});
   } else s.dirs.forEach(function(d){
-    lanes.push({axis: 'z', c: s.x - d * 3.6, dir: d, cars: []});
+    lanes.push({axis: 'z', c: s.x - d * 3.6, dir: d, lo: lo, hi: hi, crosses: crosses, cars: []});
   });
 });
 
 var cars = [];
 lanes.forEach(function(L){
-  var lo = L.axis === 'x' ? X0 : Z0, hi = L.axis === 'x' ? X1 : Z1;
-  var count = 3;
+  var lo = L.lo, hi = L.hi;
+  var count = Math.max(2, Math.min(4, Math.round((hi - lo) / 300)));
   for (var k = 0; k < count; k++){
     var g = new THREE.Group();
     var body = new THREE.Mesh(bodyG, CAR_COLS[(Math.random() * CAR_COLS.length) | 0]);
@@ -774,9 +1112,6 @@ function placeCar(c){
 }
 cars.forEach(placeCar);
 
-var crossEW = NS.map(function(s){ return s.x; });   // cross coords for EW lanes
-var crossNS = EW.map(function(s){ return s.z; });
-
 var CYCLE = 26;
 function ewGreen(t){ return (t % CYCLE) < 11; }
 function nsGreen(t){ var p = t % CYCLE; return p >= 13 && p < 24; }
@@ -784,8 +1119,8 @@ function nsGreen(t){ var p = t % CYCLE; return p >= 13 && p < 24; }
 function updateCars(dt, tNow){
   var green = {x: ewGreen(tNow), z: nsGreen(tNow)};
   lanes.forEach(function(L){
-    var lo = L.axis === 'x' ? X0 : Z0, hi = L.axis === 'x' ? X1 : Z1;
-    var crosses = L.axis === 'x' ? crossEW : crossNS;
+    var lo = L.lo, hi = L.hi;
+    var crosses = L.crosses;
     L.cars.forEach(function(c){
       var desired = c.vt;
       // signal ahead
@@ -829,9 +1164,13 @@ var pedBodyG = new THREE.CapsuleGeometry(0.32, 0.8, 3, 8);
 var pedHeadG = new THREE.SphereGeometry(0.22, 8, 8);
 var peds = [];
 var pedStreets = [];
-EW.forEach(function(s){ if (s.z >= -300 && s.z <= 200) pedStreets.push({axis: 'x', c: s.z}); });
-NS.forEach(function(s){ pedStreets.push({axis: 'z', c: s.x}); });
-for (var pk = 0; pk < 46; pk++){
+EW.forEach(function(s){
+  pedStreets.push({axis: 'x', c: s.z, lo: Math.max(ewLo(s) + 40, -230), hi: ewHi(s) - 40});
+});
+NS.forEach(function(s){
+  pedStreets.push({axis: 'z', c: s.x, lo: nsLo(s) + 40, hi: nsHi(s) - 40});
+});
+for (var pk = 0; pk < 64; pk++){
   var st = pedStreets[(Math.random() * pedStreets.length) | 0];
   var side = Math.random() < 0.5 ? -11 : 11;
   var g = new THREE.Group();
@@ -839,7 +1178,7 @@ for (var pk = 0; pk < 46; pk++){
   body.position.y = 0.75; body.castShadow = true; g.add(body);
   var head = new THREE.Mesh(pedHeadG, skinMat); head.position.y = 1.55; g.add(head);
   scene.add(g);
-  var lo = st.axis === 'x' ? -230 : -320, hi = st.axis === 'x' ? 230 : 230;
+  var lo = st.lo, hi = st.hi;
   peds.push({g: g, axis: st.axis, c: st.c + side, s: lo + Math.random() * (hi - lo),
              lo: lo, hi: hi, dir: Math.random() < 0.5 ? 1 : -1,
              sp: 1.1 + Math.random() * 0.9, ph: Math.random() * 6,
@@ -3075,14 +3414,16 @@ function envAt(h){
 var rig = {t: new THREE.Vector3(-40, 0, 10), r: 330, az: 0.65, el: 0.6};
 var autoCam = true;
 // drone tour: Rupp -> Big Blue/Central Bank Tower -> Main St corridor ->
-// courthouse square -> City Hall -> wide pull-back
+// courthouse square -> City Hall -> UK campus -> Chevy Chase -> wide pull-back
 var PRESETS = [
   {t: [-330, 0, 105], r: 280, el: 0.46},
   {t: [-130, 0, 50],  r: 165, el: 0.44},
   {t: [-20, 0, -5],   r: 190, el: 0.46},
   {t: [50, 0, -45],   r: 140, el: 0.48},
   {t: [168, 0, 35],   r: 155, el: 0.46},
-  {t: [-40, 0, 10],   r: 370, el: 0.62}
+  {t: [200, 0, 580],  r: 320, el: 0.5},
+  {t: [500, 0, 430],  r: 170, el: 0.46},
+  {t: [40, 0, 160],   r: 520, el: 0.62}
 ];
 var pIdx = 0, pTimer = 0, tween = null;
 function startTween(){
