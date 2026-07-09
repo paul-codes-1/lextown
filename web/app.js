@@ -1004,6 +1004,7 @@ function isFrozen(){ return performance.now() < player.frozenUntil; }
 
 // ---------- nerf darts ----------
 var darts = [];
+var hitMarkAt = 0, hitMarkName = '', frozenByName = '', wasFrozen = false;
 var dartGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.4, 8);
 var dartMat = new THREE.MeshStandardMaterial({color: 0x2f6fd4, roughness: 0.6});
 var dartTipMat = new THREE.MeshStandardMaterial({color: 0xff7a1a, roughness: 0.4});
@@ -1046,6 +1047,7 @@ function fireDart(){
     oz = player.z + _aim.z * 1.1;
   }
   spawnDart(ox, oy, oz, _aim.x, _aim.y, _aim.z, true);
+  sndPew();
   if (online && ws && ws.readyState === 1)
     ws.send(JSON.stringify({t: 'shot',
       ox: +ox.toFixed(1), oy: +oy.toFixed(1), oz: +oz.toFixed(1),
@@ -1071,7 +1073,9 @@ function updateDarts(dt){
     d.g.position.y += d.vy * dt;
     d.g.position.z += d.vz * dt;
     var p = d.g.position;
-    var dead = now - d.born > 2000 || p.y < 0.05 || pointInBuilding(p.x, p.y, p.z);
+    var surface = p.y < 0.05 || pointInBuilding(p.x, p.y, p.z);
+    if (surface) puff(p.x, Math.max(0.2, p.y), p.z, 0x9adfff, 0.14, 1.1, 240, 0.6, 0.7);
+    var dead = now - d.born > 2000 || surface;
     if (!dead && d.mine){
       for (var id in remotes){
         var r = remotes[id];
@@ -1088,6 +1092,8 @@ function updateDarts(dt){
             r.frozenUntil = now + 4000;
             var bot = bots.filter(function(b){ return b.id === id; })[0];
             if (bot) bot.frozenUntil = now + 4000;
+            hitMarkAt = now; hitMarkName = r.name;
+            sndHitmark();
           }
           break;
         }
@@ -1674,6 +1680,13 @@ function sndTone(freq, dur, at, type, vol, glideTo){
   o.start(t); o.stop(t + dur + 0.05);
 }
 function sndRocket(){ sndNoise(0.55, 2600, 260, 0.4); }
+function sndPew(vol){
+  sndTone(520, 0.14, 0, 'square', vol || 0.13, 190);
+  sndNoise(0.08, 3200, 1500, (vol || 0.13) * 0.6);
+}
+function sndHitmark(){ sndTone(880, 0.07, 0, 'square', 0.16); sndTone(1320, 0.09, 0.05, 'square', 0.12); }
+function sndFrozenMe(){ sndNoise(0.5, 4200, 320, 0.3); sndTone(320, 0.5, 0, 'sine', 0.2, 85); }
+function sndThaw(){ sndTone(500, 0.14, 0, 'sine', 0.12, 950); }
 function sndBoom(big){
   sndNoise(big ? 1.1 : 0.5, big ? 260 : 420, 55, big ? 0.85 : 0.45);
   sndTone(64, big ? 0.9 : 0.4, 0, 'sine', big ? 0.5 : 0.25, 30);
@@ -2553,7 +2566,10 @@ function updateDrive(dt){
   player.fuel = Math.min(100, player.fuel + 30 * dt);
 }
 function updatePlayer(dt){
-  player.av.ice.visible = isFrozen();
+  var frozenNow = isFrozen();
+  if (wasFrozen && !frozenNow){ sndThaw(); frozenByName = ''; }
+  wasFrozen = frozenNow;
+  player.av.ice.visible = frozenNow;
   if (player.heli && mode === 'player'){ updateHeliFlight(dt); return; }
   if (player.veh && mode === 'player'){ updateDrive(dt); return; }
   var f = 0, r = 0;
@@ -2770,9 +2786,23 @@ function handleNet(m){
     var until = performance.now() + (typeof m.dur === 'number' ? m.dur : 4000);
     if (m.id === myId) player.frozenUntil = m.dur === 0 ? 0 : until;
     else if (remotes[m.id]) remotes[m.id].frozenUntil = m.dur === 0 ? 0 : until;
+    if (m.dur !== 0){   // tag feedback for shooter + victim
+      if (m.by === myId && m.id !== myId){
+        hitMarkAt = performance.now();
+        hitMarkName = remotes[m.id] ? remotes[m.id].name : '';
+        sndHitmark();
+      }
+      if (m.id === myId){
+        frozenByName = m.by && remotes[m.by] ? remotes[m.by].name : 'SOMEONE';
+        sndFrozenMe();
+      }
+    }
   } else if (m.t === 'shot'){
-    if (m.id !== myId)
+    if (m.id !== myId){
       spawnDart(m.ox, m.oy, m.oz, m.dx, m.dy, m.dz, false);
+      var sd = Math.hypot(m.ox - camera.position.x, m.oz - camera.position.z);
+      if (sd < 90) sndPew(0.1 * Math.max(0.2, 1 - sd / 90));
+    }
   } else if (m.t === 'heli'){
     handleHeliMsg(m);
   } else if (m.t === 'pushed'){
@@ -3388,6 +3418,30 @@ function drawOverlay(){
       ov.beginPath(); ov.arc(vw / 2, vh / 2, 11, 0, Math.PI * 2); ov.stroke();
     }
   }
+  var nowHm = performance.now();
+  if (nowHm - hitMarkAt < 320){   // hitmarker: four ticks kick out from the crosshair
+    var hmA = 1 - (nowHm - hitMarkAt) / 320;
+    var r0 = 6 + (1 - hmA) * 5, r1 = r0 + 7;
+    ov.strokeStyle = 'rgba(140,240,255,' + (0.95 * hmA) + ')';
+    ov.lineWidth = 2;
+    ov.beginPath();
+    [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(function(q){
+      ov.moveTo(vw / 2 + q[0] * r0, vh / 2 + q[1] * r0);
+      ov.lineTo(vw / 2 + q[0] * r1, vh / 2 + q[1] * r1);
+    });
+    ov.stroke();
+  }
+  if (nowHm - hitMarkAt < 950 && hitMarkName)
+    chip(vw / 2 - 30, vh / 2 - 22, 'TAGGED ' + hitMarkName, '#8ef7ff');
+  if (mode === 'player' && isFrozen()){   // icy vignette while frozen
+    var fLeft = (player.frozenUntil - nowHm) / 4000;
+    ov.strokeStyle = 'rgba(140,210,255,' + (0.2 + 0.3 * Math.min(1, fLeft)) + ')';
+    ov.lineWidth = 30;
+    ov.strokeRect(0, 0, vw, vh);
+    ov.lineWidth = 10;
+    ov.strokeStyle = 'rgba(210,240,255,0.35)';
+    ov.strokeRect(12, 12, vw - 24, vh - 24);
+  }
   if (!heli.down){   // news chopper tag + hp
     var hDist = camPos.distanceTo(_v.set(heli.x, heli.y, heli.z));
     if (hDist < 900){
@@ -3629,7 +3683,7 @@ function frame(now){
   els.fuel.textContent = Math.round(player.fuel);
   var hint = '';
   if (mode === 'player'){
-    if (isFrozen()) hint = 'FROZEN — ' + Math.ceil((player.frozenUntil - performance.now()) / 1000) + 's';
+    if (isFrozen()) hint = 'FROZEN' + (frozenByName ? ' BY ' + frozenByName : '') + ' — ' + Math.ceil((player.frozenUntil - performance.now()) / 1000) + 's';
     else if (missionFight()) hint = 'SHOOT DOWN THE CHOPPER · F/CLICK — FIRE · RMB — AIM · CHOPPER HP ' + mh.hp + '/3';
     else if (player.heli) hint = 'W/S A/D FLY · SPACE UP · SHIFT DOWN · HOLD F/CLICK — WATER CANNON · E — EXIT · HP ' + heli.hp + '/3';
     else if (player.veh && player.veh.plow) hint = 'BLADE: ' + (bladeDown ? 'DOWN' : 'UP') + ' · SPACE — RAISE/LOWER · CLEAR THE SNOWY STREETS · E — EXIT';
