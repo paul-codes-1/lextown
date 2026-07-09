@@ -2864,7 +2864,7 @@ function addChatLine(who, msg, self){
   div.appendChild(w);
   div.appendChild(document.createTextNode(msg));
   chatLog.appendChild(div);
-  while (chatLog.children.length > 8) chatLog.removeChild(chatLog.firstChild);
+  while (chatLog.children.length > 4) chatLog.removeChild(chatLog.firstChild);
 }
 function sendChat(){
   var msg = chatIn.value.trim().slice(0, 120);
