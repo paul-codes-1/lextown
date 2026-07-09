@@ -3666,16 +3666,18 @@ function envAt(h){
 var rig = {t: new THREE.Vector3(-40, 0, 10), r: 330, az: 0.65, el: 0.6};
 var autoCam = true;
 // drone tour: Rupp -> Big Blue/Central Bank Tower -> Main St corridor ->
-// courthouse square -> City Hall -> UK campus -> Chevy Chase -> wide pull-back
+// courthouse square -> City Hall -> NoLi -> horse farms -> UK campus ->
+// Chevy Chase -> wide pull-back
 var PRESETS = [
   {t: [-330, 0, 105], r: 280, el: 0.46},
   {t: [-130, 0, 50],  r: 165, el: 0.44},
   {t: [-20, 0, -5],   r: 190, el: 0.46},
   {t: [50, 0, -45],   r: 140, el: 0.48},
   {t: [168, 0, 35],   r: 155, el: 0.46},
+  {t: [60, 0, -620],  r: 240, el: 0.46},
+  {t: [-50, 0, -1150], r: 380, el: 0.45},
   {t: [200, 0, 580],  r: 320, el: 0.5},
   {t: [500, 0, 430],  r: 170, el: 0.46},
-  {t: [-50, 0, -1150], r: 380, el: 0.45},
   {t: [40, 0, 160],   r: 520, el: 0.62}
 ];
 var pIdx = 0, pTimer = 0, tween = null;
