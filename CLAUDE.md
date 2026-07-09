@@ -97,12 +97,16 @@ Key models to keep straight:
   `handleNet` → `remotes` map → `updateRemotes` interpolation (~160 ms
   buffer). Bots are just locally-generated state packets, so multiplayer
   features must work through that one pipeline to work offline.
-- **Mission "THE RIBBON CUTTING"** runs entirely client-side: its chopper
-  (`mh`) is a local NPC separate from the shared `heli`; only the final time
-  touches the server (`{t:'score'}` → validated → `scores.json` top-50 →
-  `{t:'scores'}` top-10 + chat announcement). Beating it sets
-  `lt_heli_unlock` in localStorage, which gates `canEnterHeli()` — the
-  server never knows about the unlock (clients are untrusted anyway).
+- **Missions run entirely client-side**; only final times touch the server
+  (`{t:'score', ms, m}` → validated per board → `scores.json` `{m1,m2}`
+  top-50 → `{t:'scores'}` top-10s + chat announcement). Mission 1
+  ("THE RIBBON CUTTING") fights a local NPC chopper (`mh`), separate from
+  the shared `heli`. Beating it sets `lt_heli_unlock` in localStorage,
+  which gates `canEnterHeli()` AND the City Hall door for mission 2
+  ("SNOW EMERGENCY": plow truck in `vehicles` with `plow:true`, Space
+  toggles the blade, snow cells in `snowCells`/`redditCells`, penalties in
+  `mission2.penalty`, storm sky via the `m2Sky` blend in frame()). The
+  server never knows about unlocks (clients are untrusted anyway).
   Holding an RPG (mission or crate) forces first person via `rpgOut()` so
   the chopper is aimable — third-person elevation can't look up. Sound is
   synthesized WebAudio (no assets): `pokeAudio()` on first gesture, rotor

@@ -104,8 +104,8 @@
            padding:8px 16px;color:#f2fffb}
   #caption[hidden]{display:none}
   #caption b{color:var(--teal);font-weight:600}
-  #scoreList{margin:8px 0 0;padding-left:26px;font-size:12.5px;line-height:1.9}
-  #scoreList li::marker{color:#ffd28a}
+  #scoreList,#scoreList2{margin:8px 0 0;padding-left:26px;font-size:12.5px;line-height:1.9}
+  #scoreList li::marker,#scoreList2 li::marker{color:#ffd28a}
   #scoreYou{color:#ffd28a;font-size:12px;letter-spacing:.12em;margin:10px 0 2px}
   #botright{position:absolute;right:14px;bottom:14px;display:flex;flex-direction:column;
             align-items:flex-end;gap:6px;pointer-events:auto;max-width:80vw}
@@ -241,11 +241,14 @@
 <div id="scores" hidden>
   <div class="tut-panel" style="max-width:440px">
     <button class="tbtn" id="scoreClose" style="position:absolute;top:10px;right:10px">✕</button>
-    <h1>THE RIBBON CUTTING</h1>
-    <p class="tagline">Fastest chopper takedowns — everyone, everywhere, all devices.</p>
+    <h1>MISSION HIGH SCORES</h1>
+    <p class="tagline">Everyone, everywhere, all devices.</p>
     <div id="scoreYou"></div>
+    <h2>THE RIBBON CUTTING — FASTEST TAKEDOWNS</h2>
     <ol id="scoreList"></ol>
-    <p class="tut-links">replay any time at the gold ring by City Hall</p>
+    <h2>SNOW EMERGENCY — FASTEST PLOWS</h2>
+    <ol id="scoreList2"></ol>
+    <p class="tut-links">replay any time at the gold rings by City Hall</p>
   </div>
 </div>
 <div id="tut" hidden>
@@ -275,7 +278,13 @@
     <div class="tut-grid">
       <b><kbd>E</kbd></b><span>at the <b>gold ring by City Hall</b> (E Main St) — the mayor is dedicating "a horse statue" and the news chopper won't stop buzzing her. Take the ceremonial RPG and <b>shoot it down</b> (holding it aims in first person — look up!).</span>
       <b>Score</b><span>fastest takedown wins — there's a global high-score board (SIM menu → SCORES). Replayable any time, and don't worry: the pilot has a parachute.</span>
-      <b>Unlock</b><span><b>beating it once unlocks the chopper</b> on this device</span>
+      <b>Unlock</b><span><b>beating it once unlocks the chopper</b> on this device — and opens the City Hall door for the next mission</span>
+    </div>
+    <h2>MISSION 2: SNOW EMERGENCY</h2>
+    <div class="tut-grid">
+      <b><kbd>E</kbd></b><span>at the <b>City Hall door</b> (unlocked by beating THE RIBBON CUTTING) — the mayor needs downtown plowed before the storm wins</span>
+      <b><kbd>Space</kbd></b><span>raises / lowers the plow blade. <b>Blade down on snow</b> clears it; blade down on bare pavement grinds up the road and costs you time penalties</span>
+      <b>Goal</b><span>clear the five glowing streets. Timed, with its own global board. And whatever you do, <b>don't plow the mayor's street</b> — half of reddit is camped out there.</span>
     </div>
     <h2>THE NEWS CHOPPER</h2>
     <div class="tut-grid">

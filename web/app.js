@@ -1912,45 +1912,57 @@ function submitScore(ms){
 }
 function fmtMs(ms){ return (ms / 1000).toFixed(1) + 's'; }
 function missionPoints(ms){ return Math.max(100, 1000 - Math.round(ms / 100)); }
-function showScores(myMs){
+function showScores(myMs, board){
   var sEl = document.getElementById('scores');
   if (!sEl) return;
   sEl.hidden = false;
-  document.getElementById('scoreYou').textContent = myMs
-    ? 'YOUR TIME: ' + fmtMs(myMs) + ' · +' + missionPoints(myMs) + ' PTS' +
-      (missionBest ? ' · DEVICE BEST ' + fmtMs(missionBest) : '')
-    : (missionBest ? 'YOUR DEVICE BEST: ' + fmtMs(missionBest)
-                   : 'NO RUNS YET — START AT THE GOLD RING BY CITY HALL');
-  var list = document.getElementById('scoreList');
-  list.textContent = '';
-  var li = document.createElement('li');
-  li.textContent = online ? 'fetching global times...' : 'OFFLINE — global board unavailable';
-  list.appendChild(li);
-  if (online && ws && ws.readyState === 1) ws.send(JSON.stringify({t: 'scores'}));
-}
-function renderScores(top){
-  var sEl = document.getElementById('scores');
-  if (!sEl || sEl.hidden) return;
-  var list = document.getElementById('scoreList');
-  list.textContent = '';
-  if (!top.length){
-    var li0 = document.createElement('li');
-    li0.textContent = 'no times yet — be the first';
-    list.appendChild(li0);
-    return;
+  var you;
+  if (myMs){
+    you = (board === 2 ? 'PLOWED IN ' : 'CHOPPER DOWN IN ') + fmtMs(myMs) +
+      ' · +' + missionPoints(myMs) + ' PTS';
+    var best = board === 2 ? m2Best : missionBest;
+    if (best) you += ' · DEVICE BEST ' + fmtMs(best);
+  } else {
+    you = (missionBest ? 'RIBBON CUTTING BEST: ' + fmtMs(missionBest) : 'RIBBON CUTTING: NOT YET') +
+      ' · ' + (m2Best ? 'SNOW EMERGENCY BEST: ' + fmtMs(m2Best) : 'SNOW EMERGENCY: NOT YET');
   }
-  top.forEach(function(s){
+  document.getElementById('scoreYou').textContent = you;
+  [1, 2].forEach(function(b){
+    var list = document.getElementById(b === 2 ? 'scoreList2' : 'scoreList');
+    list.textContent = '';
     var li = document.createElement('li');
-    li.textContent = (s.n || '?') + ' — ' + fmtMs(s.ms);
+    li.textContent = online ? 'fetching global times...' : 'OFFLINE — global board unavailable';
     list.appendChild(li);
   });
+  if (online && ws && ws.readyState === 1) ws.send(JSON.stringify({t: 'scores'}));
+}
+function renderScores(m){
+  var sEl = document.getElementById('scores');
+  if (!sEl || sEl.hidden) return;
+  function fill(id, top){
+    var list = document.getElementById(id);
+    list.textContent = '';
+    if (!top || !top.length){
+      var li0 = document.createElement('li');
+      li0.textContent = 'no times yet — be the first';
+      list.appendChild(li0);
+      return;
+    }
+    top.forEach(function(s){
+      var li = document.createElement('li');
+      li.textContent = (s.n || '?') + ' — ' + fmtMs(s.ms);
+      list.appendChild(li);
+    });
+  }
+  fill('scoreList', m.m1 || m.top || []);
+  fill('scoreList2', m.m2 || []);
 }
 function updateMission(dt){
   var now = performance.now();
   if (capEl && !capEl.hidden && now > capUntil) capEl.hidden = true;
   if (setPieces.trig){
     setPieces.trig.rotation.z += dt * 0.8;
-    setPieces.trig.visible = mission.stage === 'idle';
+    setPieces.trig.visible = mission.stage === 'idle' && mission2.stage === 'idle';
   }
   updateChute(dt);
   if (mh && mh.mesh.visible){
@@ -2062,12 +2074,391 @@ function updateMission(dt){
   }
 }
 
+// ---------- mission 2: SNOW EMERGENCY ----------
+// Beating THE RIBBON CUTTING unlocks the City Hall door. The mayor sends you
+// out in a snow plow: blade down clears the glowing streets, blade down on
+// bare pavement grinds them up (time penalty), and whatever you do, don't
+// plow her street — half of reddit is camped out there watching for plows.
+var DOOR_P = {x: 161.6, z: 30.5};   // City Hall west entrance
+var SNOW_ZONES = [
+  {name: 'MAIN ST',   axis: 'x', c: 0,    lo: -80, hi: 20},
+  {name: 'VINE ST',   axis: 'x', c: 100,  lo: -80, hi: 20},
+  {name: 'SHORT ST',  axis: 'x', c: -100, lo: -40, hi: 60},
+  {name: 'UPPER ST',  axis: 'z', c: 0,    lo: -60, hi: 40},
+  {name: 'LIMESTONE', axis: 'z', c: 100,  lo: -40, hi: 60}
+];
+var REDDIT_ZONE = {name: 'MAYORS ST', axis: 'x', c: -200, lo: -60, hi: 40};  // Second St
+var _snowSkyC = new THREE.Color(0xb9c2cc);
+var m2Best = 0;
+try { m2Best = parseInt(localStorage.getItem('lt_m2_best') || '0', 10) || 0; } catch (e){}
+// door + marker (built once; ring only shows when unlocked + idle)
+var door = {open: false, ang: 0, L: null, R: null, ring: null};
+(function(){
+  var navy = new THREE.MeshStandardMaterial({color: 0x1d2f5e, roughness: 0.6});
+  var glassD = new THREE.MeshStandardMaterial({color: 0x24303c, roughness: 0.3, metalness: 0.4});
+  var frame = new THREE.Mesh(new THREE.BoxGeometry(0.5, 4.6, 5.4), navy);
+  frame.position.set(162.8, 0.7 + 2.3, DOOR_P.z); scene.add(frame);
+  var lintel = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.5, 5.8), corniceMat);
+  lintel.position.set(162.7, 0.7 + 4.6, DOOR_P.z); scene.add(lintel);
+  function panel(sz){
+    var pivot = new THREE.Group();
+    pivot.position.set(162.5, 0.7, DOOR_P.z + sz * 2.2);
+    var p = new THREE.Mesh(new THREE.BoxGeometry(0.16, 3.9, 2.1), glassD);
+    p.position.set(0, 1.95, -sz * 1.05);
+    pivot.add(p); scene.add(pivot);
+    return pivot;
+  }
+  door.L = panel(-1); door.R = panel(1);
+  var ring = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.06, 6, 24),
+    new THREE.MeshBasicMaterial({color: 0xd8b04a, transparent: true, opacity: 0.85}));
+  ring.rotation.x = Math.PI / 2;
+  ring.position.set(DOOR_P.x - 2.2, 0.9, DOOR_P.z);
+  scene.add(ring);
+  door.ring = ring;
+})();
+function nearDoor(){
+  var dx = player.x - DOOR_P.x, dz = player.z - DOOR_P.z;
+  return dx * dx + dz * dz < 22;
+}
+var mission2 = {stage: 'idle', tStage: 0, t0: 0, ms: 0, penalty: 0,
+                capAt: 0, capIdx: 0, redditHit: false, grindT: 0, scoldAt: 0};
+var snowCells = [];        // {m, zone, cleared}
+var zoneState = [];        // per SNOW_ZONES: {total, cleared, done}
+var redditCells = [];
+var plowVeh = null, bladeDown = false, m2Npcs = [];
+var snowPts = null, snowGeo = null, m2Sky = 0;
+var mayorAv2 = null;
+var snowTex = makeTex(64, 64, function(g){
+  g.fillStyle = '#eef2f5'; g.fillRect(0, 0, 64, 64);
+  for (var i = 0; i < 130; i++){
+    g.fillStyle = 'rgba(255,255,255,' + (0.3 + Math.random() * 0.7) + ')';
+    g.fillRect(Math.random() * 64, Math.random() * 64, 2, 2);
+  }
+  for (i = 0; i < 30; i++){
+    g.fillStyle = 'rgba(180,195,210,0.35)';
+    g.fillRect(Math.random() * 64, Math.random() * 64, 3, 2);
+  }
+});
+snowTex.encoding = THREE.sRGBEncoding;
+var snowMat = new THREE.MeshStandardMaterial({map: snowTex, roughness: 1});
+var snowCellGeoX = new THREE.PlaneGeometry(4.8, 11);   // along x
+var snowCellGeoZ = new THREE.PlaneGeometry(11, 4.8);   // along z
+function buildSnow(){
+  clearSnow();
+  zoneState = SNOW_ZONES.map(function(){ return {total: 0, cleared: 0, done: false}; });
+  function lay(zone, zi, into){
+    for (var s = zone.lo; s < zone.hi; s += 5){
+      var x = zone.axis === 'x' ? s + 2.5 : zone.c;
+      var z = zone.axis === 'x' ? zone.c : s + 2.5;
+      var m = new THREE.Mesh(zone.axis === 'x' ? snowCellGeoX : snowCellGeoZ, snowMat);
+      m.rotation.x = -Math.PI / 2;
+      m.position.set(x, 0.22 + (zi >= 0 ? zi : 5) * 0.008, z);
+      m.receiveShadow = true;
+      scene.add(m);
+      into.push({m: m, x: x, z: z, cleared: false, zi: zi});
+      if (zi >= 0) zoneState[zi].total++;
+    }
+  }
+  SNOW_ZONES.forEach(function(zn, zi){ lay(zn, zi, snowCells); });
+  lay(REDDIT_ZONE, -1, redditCells);
+}
+function clearSnow(){
+  snowCells.forEach(function(c){ scene.remove(c.m); });
+  redditCells.forEach(function(c){ scene.remove(c.m); });
+  snowCells.length = 0; redditCells.length = 0;
+}
+function buildPlow(){
+  var g = new THREE.Group();
+  var orange = new THREE.MeshStandardMaterial({color: 0xd8821a, roughness: 0.5, metalness: 0.2});
+  var steel = new THREE.MeshStandardMaterial({color: 0x6a6f76, roughness: 0.4, metalness: 0.6});
+  var dark = new THREE.MeshStandardMaterial({color: 0x2c2f35, roughness: 0.7});
+  var bed = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.5, 2.4), orange);
+  bed.position.set(-1.1, 1.4, 0); bed.castShadow = true; g.add(bed);
+  var cab = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.7, 2.3), orange);
+  cab.position.set(1.4, 1.55, 0); cab.castShadow = true; g.add(cab);
+  var glass = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.8, 2.0), cabMat);
+  glass.position.set(2.25, 1.85, 0); g.add(glass);
+  var beacon = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.22, 0.5),
+    new THREE.MeshStandardMaterial({color: 0xd8821a, emissive: 0xffb020, emissiveIntensity: 0.9}));
+  beacon.position.set(1.4, 2.55, 0); g.add(beacon);
+  for (var w = 0; w < 6; w++){
+    var wh = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.4, 10), dark);
+    wh.rotation.x = Math.PI / 2;
+    wh.position.set([-2, 0, 1.7][w % 3], 0.55, w < 3 ? 1.15 : -1.15);
+    g.add(wh);
+  }
+  var blade = new THREE.Group();
+  var bl = new THREE.Mesh(new THREE.BoxGeometry(0.35, 1.5, 3.6), steel);
+  bl.rotation.y = 0.28;   // casts snow to the side
+  blade.add(bl);
+  var arm = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.18, 0.18), steel);
+  arm.position.set(-0.9, 0.3, 0); blade.add(arm);
+  blade.position.set(3.3, 1.6, 0);
+  g.add(blade);
+  g.position.set(150, 0.15, 0);   // Main St outside City Hall
+  g.rotation.y = Math.PI;         // nose west
+  scene.add(g);
+  var v = {g: g, ai: null, th: Math.PI, spd: 0, plow: true, blade: blade};
+  vehicles.push(v);
+  return v;
+}
+function removePlow(){
+  if (!plowVeh) return;
+  if (player.veh === plowVeh){ player.veh = null; player.av.g.visible = true; }
+  var i = vehicles.indexOf(plowVeh);
+  if (i >= 0) vehicles.splice(i, 1);
+  scene.remove(plowVeh.g);
+  plowVeh = null;
+}
+function toggleBlade(){
+  if (!player.veh || !player.veh.plow) return;
+  bladeDown = !bladeDown;
+  sndTone(bladeDown ? 180 : 320, 0.18, 0, 'square', 0.15, bladeDown ? 90 : 500);
+}
+var M2_AMBIENT = [
+  ['DISPATCH', 'BLADE DOWN ON SNOW. BLADE UP ON... NOT SNOW.'],
+  ['RADIO', 'CALLER SAYS A PLOW IS DOING GREAT WORK DOWNTOWN. SUSPICIOUS.'],
+  ['DISPATCH', 'REMEMBER: THE BLADE HAS TWO POSITIONS. YOU WANT THE CORRECT ONE.'],
+  ['RADIO', 'R/LEXINGTON IS POSTING PLOW SIGHTINGS AGAIN.'],
+  ['DISPATCH', 'FIVE STREETS. ONE TRUCK. NO PRESSURE.']
+];
+var M2_SCOLDS = [
+  ['DISPATCH', 'THAT SOUND IS THE ROAD. STOP THAT.'],
+  ['THE MAYOR', 'I CAN HEAR THE PAVEMENT FROM MY OFFICE.'],
+  ['DISPATCH', 'BLADE UP. BLADE UP. BLADE UP.']
+];
+function startMission2(){
+  mission2.stage = 'brief'; mission2.tStage = 0; mission2.capIdx = 0;
+  mission2.t0 = 0; mission2.penalty = 0; mission2.redditHit = false;
+  mission2.grindT = 0; mission2.scoldAt = 0; mission2.capAt = 0;
+  door.open = true;
+  sndTone(90, 0.7, 0, 'triangle', 0.2, 55);   // door creak
+  mayorAv2 = spawnNpc(161.3, DOOR_P.z, 0x8f2f3c, -Math.PI / 2, 0.95);
+  m2Npcs.push(mayorAv2);
+  caption('THE MAYOR', 'OH GOOD. THE CHOPPER PERSON.', 3200);
+}
+function m2Cleanup(){
+  mission2.stage = 'idle';
+  door.open = false;
+  clearSnow();
+  removePlow();
+  bladeDown = false;
+  m2Npcs.forEach(function(g){ scene.remove(g); });
+  m2Npcs.length = 0;
+  mayorAv2 = null;
+  if (snowPts) snowPts.visible = false;
+}
+function m2Fail(){
+  mission2.stage = 'fail'; mission2.tStage = 0;
+  caption('THE MAYOR', 'FORGET IT. IT WILL MELT EVENTUALLY.', 4200);
+}
+function spawnRedditCrowd(){
+  for (var k = 0; k < 8; k++){
+    var x = REDDIT_ZONE.lo + 8 + Math.random() * (REDDIT_ZONE.hi - REDDIT_ZONE.lo - 16);
+    var z = REDDIT_ZONE.c + (k % 2 ? 11 : -11);
+    var g = spawnNpc(x, z, [0x39404a, 0x2f5d8f, 0x6b4a8f, 0xc9a44a][k % 4],
+      k % 2 ? Math.PI : 0, 0.9);
+    m2Npcs.push(g);
+  }
+}
+function ensureSnowPts(){
+  if (snowPts) { snowPts.visible = true; return; }
+  var N = 1300;
+  snowGeo = new THREE.BufferGeometry();
+  var pos = new Float32Array(N * 3);
+  for (var i = 0; i < N; i++){
+    pos[i * 3] = (Math.random() - 0.5) * 260;
+    pos[i * 3 + 1] = Math.random() * 90;
+    pos[i * 3 + 2] = (Math.random() - 0.5) * 260;
+  }
+  snowGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  snowPts = new THREE.Points(snowGeo, new THREE.PointsMaterial({
+    color: 0xffffff, size: 0.55, transparent: true, opacity: 0.85, sizeAttenuation: true}));
+  scene.add(snowPts);
+}
+function updateSnowPts(dt){
+  if (!snowPts || !snowPts.visible) return;
+  var pos = snowGeo.attributes.position.array;
+  var t = performance.now() * 0.001;
+  for (var i = 0; i < pos.length; i += 3){
+    pos[i + 1] -= (6.5 + (i % 7)) * dt * 0.7;
+    pos[i] += Math.sin(t + i) * dt * 1.2;
+    if (pos[i + 1] < 0) pos[i + 1] = 90;
+  }
+  snowGeo.attributes.position.needsUpdate = true;
+  snowPts.position.set(camera.position.x, 0, camera.position.z);
+}
+function m2ZonesDone(){
+  for (var z = 0; z < zoneState.length; z++)
+    if (zoneState[z].cleared < zoneState[z].total - 2) return false;
+  return true;
+}
+// blade vs snow/pavement, run while driving the plow
+function updatePlowing(dt){
+  var v = plowVeh;
+  var g = v.g.position;
+  v.blade.position.y += ((bladeDown ? 0.62 : 1.6) - v.blade.position.y) * Math.min(1, dt * 6);
+  if (!bladeDown || Math.abs(v.spd) < 1.5) return;
+  var bx = g.x + Math.cos(v.th) * 3.4;
+  var bz = g.z - Math.sin(v.th) * 3.4;
+  var hitSnow = false;
+  function sweep(cells, isReddit){
+    for (var k = 0; k < cells.length; k++){
+      var c = cells[k];
+      if (c.cleared) continue;
+      var dx = bx - c.x, dz = bz - c.z;
+      if (dx * dx + dz * dz > 20) continue;
+      c.cleared = true;
+      c.m.visible = false;
+      hitSnow = true;
+      for (var p = 0; p < 3; p++)
+        puff(c.x + (Math.random() - 0.5) * 4, 1 + Math.random(), c.z + (Math.random() - 0.5) * 4,
+          0xffffff, 0.5, 3, 500, 2.5, 0.8);
+      sndNoise(0.25, 900, 300, 0.18);
+      if (isReddit){
+        mission2.penalty += 1;
+        for (var f = 0; f < 5; f++)   // camera flashes from the crowd
+          puff(c.x + (Math.random() - 0.5) * 14, 2.2, REDDIT_ZONE.c + (Math.random() < 0.5 ? 11 : -11),
+            0xffffff, 0.4, 6, 220, 0, 0.9);
+        if (!mission2.redditHit){
+          mission2.redditHit = true;
+          caption('RADIO', 'BREAKING: PLOW SPOTTED ON THE MAYOR\'S STREET. 4,000 UPVOTES AND CLIMBING.', 4200);
+          setTimeout(function(){ if (mission2.stage === 'plow') caption('THE MAYOR', 'I TOLD YOU. IT\'S ALREADY ON REDDIT.', 3800); }, 4400);
+        }
+      } else {
+        var zs = zoneState[c.zi];
+        zs.cleared++;
+        if (!zs.done && zs.cleared >= zs.total - 2){
+          zs.done = true;
+          sndTone(880, 0.25, 0, 'square', 0.14);
+          caption('DISPATCH', SNOW_ZONES[c.zi].name + ': PLOWED. GORGEOUS.', 3000);
+        }
+      }
+    }
+  }
+  sweep(snowCells, false);
+  sweep(redditCells, true);
+  if (!hitSnow){
+    // grinding bare pavement: sparks + penalty
+    mission2.grindT += dt;
+    if (mission2.grindT > 0.6){
+      mission2.grindT = 0;
+      mission2.penalty += 1;
+      sndNoise(0.3, 2600, 900, 0.22);
+      if (mission2.tStage > mission2.scoldAt){
+        mission2.scoldAt = mission2.tStage + 7;
+        var sc = M2_SCOLDS[(Math.random() * M2_SCOLDS.length) | 0];
+        caption(sc[0], sc[1]);
+      }
+    }
+    puff(bx, 0.5, bz, 0xffb020, 0.16, 1.6, 260, 1.5, 0.85);
+  } else mission2.grindT = 0;
+}
+function updateMission2(dt){
+  var now = performance.now();
+  door.ang += (((door.open ? 1.55 : 0)) - door.ang) * Math.min(1, dt * 2.5);
+  door.L.rotation.y = -door.ang;
+  door.R.rotation.y = door.ang;
+  door.ring.visible = heliUnlocked && mission2.stage === 'idle' && mission.stage === 'idle';
+  if (door.ring.visible) door.ring.rotation.z += dt * 0.8;
+  updateSnowPts(dt);
+  // overcast blend handled in frame() via m2Sky
+  var storm = mission2.stage === 'plow' || mission2.stage === 'brief';
+  m2Sky += ((storm ? 1 : 0) - m2Sky) * Math.min(1, dt * (storm ? 0.5 : 0.35));
+  if (mission2.stage === 'idle') return;
+  mission2.tStage += dt;
+  var t = mission2.tStage;
+  if (mission2.stage === 'brief'){
+    if (t > 3 && mission2.capIdx === 0){ mission2.capIdx = 1; caption('THE MAYOR', 'FREAK SNOWSTORM INBOUND. THE STREETS NEED PLOWING AND MY PLOW GUY IS AT THE LAKE.', 4400); }
+    if (t > 7.6 && mission2.capIdx === 1){ mission2.capIdx = 2; caption('THE MAYOR', 'TAKE THE TRUCK ON MAIN. BLADE DOWN ON SNOW ONLY - YOU GRIND MY ROADS, I HEAR IT.', 4600); }
+    if (t > 12.4 && mission2.capIdx === 2){ mission2.capIdx = 3; caption('THE MAYOR', 'WHATEVER YOU DO, DON\'T PLOW MY STREET. I GOT HALF OF REDDIT CAMPED OUT THERE WATCHING FOR THE PLOWS NOW.', 5200); }
+    if (t > 18){
+      mission2.stage = 'plow'; mission2.tStage = 0; mission2.capAt = 20;
+      ensureSnowPts();
+      buildSnow();
+      spawnRedditCrowd();
+      plowVeh = buildPlow();
+      bladeDown = false;
+      caption('DISPATCH', 'PLOW IS ON MAIN ST BY CITY HALL. CLOCK STARTS WHEN YOU CLIMB IN.', 4600);
+      addChatLine('* MISSION', 'SNOW EMERGENCY - plow the glowing streets', true);
+    }
+    return;
+  }
+  if (mission2.stage === 'plow'){
+    if (!mission2.t0){
+      if (player.veh === plowVeh){
+        mission2.t0 = now;
+        caption('DISPATCH', 'CLOCK STARTED. SPACE WORKS THE BLADE.', 3600);
+      } else if (t > 300){ m2Cleanup(); }   // nobody took the truck
+      return;
+    }
+    if (player.veh === plowVeh) updatePlowing(dt);
+    else if (plowVeh) plowVeh.blade.position.y += ((bladeDown ? 0.62 : 1.6) - plowVeh.blade.position.y) * Math.min(1, dt * 6);
+    if (t > mission2.capAt){
+      mission2.capAt = t + 11 + Math.random() * 5;
+      var c = M2_AMBIENT[(Math.random() * M2_AMBIENT.length) | 0];
+      caption(c[0], c[1]);
+    }
+    if ((now - mission2.t0) / 1000 > 420){ m2Fail(); return; }
+    if (m2ZonesDone()){
+      mission2.ms = (now - mission2.t0) + mission2.penalty * 1000;
+      mission2.stage = 'won'; mission2.tStage = 0;
+      sndWin(); sndApplause();
+      caption('THE MAYOR', mission2.redditHit
+        ? 'YOU HAD ONE RULE. ONE. ...BUT FINE, THE STREETS LOOK GREAT.'
+        : 'STREETS CLEAR. MY STREET REMAINS A LEGEND. PERFECT.', 4600);
+      try {
+        if (!m2Best || mission2.ms < m2Best){
+          m2Best = mission2.ms;
+          localStorage.setItem('lt_m2_best', String(Math.round(mission2.ms)));
+        }
+      } catch (e){}
+      if (online && ws && ws.readyState === 1)
+        ws.send(JSON.stringify({t: 'score', ms: Math.round(mission2.ms), m: 2}));
+    }
+    return;
+  }
+  if (mission2.stage === 'won'){
+    if (t > 4.6 && mission2.capIdx !== 9){
+      mission2.capIdx = 9;
+      caption('DISPATCH', 'DOWNTOWN: PLOWED. GO WARM UP.', 4000);
+      showScores(mission2.ms, 2);
+      mission2.stage = 'post'; mission2.tStage = 0;
+    }
+    return;
+  }
+  if (mission2.stage === 'fail'){
+    if (t > 5) m2Cleanup();
+    return;
+  }
+  if (mission2.stage === 'post'){
+    if (t > 22) m2Cleanup();
+  }
+}
+
 // dev hook, only with #debug=1: poke the mission from the console
 if (/debug=1/.test(hashStr)){
   window.__lt = {
     hit: function(){ missionHit(); },
     stage: function(){ return mission.stage; },
-    unlock: function(){ return heliUnlocked; }
+    unlock: function(){ return heliUnlocked; },
+    m2stage: function(){ return mission2.stage; },
+    tp: function(x, z){ player.x = x; player.z = z; player.y = groundY(x, z); },
+    m2: function(){ return {t0: mission2.t0, penalty: mission2.penalty,
+      zones: zoneState.map(function(z){ return z.cleared + '/' + z.total; })}; },
+    plowZone: function(zi){   // clear one zone's snow instantly
+      snowCells.forEach(function(c){
+        if (c.zi !== zi || c.cleared) return;
+        c.cleared = true; c.m.visible = false; zoneState[zi].cleared++;
+      });
+      zoneState[zi].done = zoneState[zi].cleared >= zoneState[zi].total - 2;
+    },
+    plowReddit: function(){
+      var c = redditCells.filter(function(x){ return !x.cleared; })[0];
+      if (c){ c.cleared = true; c.m.visible = false; mission2.penalty += 1;
+        if (!mission2.redditHit){ mission2.redditHit = true;
+          caption('RADIO', 'BREAKING: PLOW SPOTTED ON THE MAYOR\'S STREET. 4,000 UPVOTES AND CLIMBING.', 4200); } }
+    }
   };
 }
 
@@ -2098,8 +2489,13 @@ function tryEnterExit(){
     exitHeli(heli.y > hgy + 3);
     return;
   }
-  if (mission.stage === 'idle' && !player.veh && !isFrozen() && nearMissionTrig()){
+  if (mission.stage === 'idle' && mission2.stage === 'idle' && !player.veh && !isFrozen() && nearMissionTrig()){
     startMission();
+    return;
+  }
+  if (heliUnlocked && mission2.stage === 'idle' && mission.stage === 'idle' &&
+      !player.veh && !isFrozen() && nearDoor()){
+    startMission2();
     return;
   }
   if (canEnterHeli()){ requestHeli(); return; }
@@ -2391,7 +2787,7 @@ function handleNet(m){
     if (m.id !== myId)
       sprayBurst(m.ox, m.oy, m.oz, m.dx, m.dy, m.dz);
   } else if (m.t === 'scores'){
-    renderScores(m.top || []);
+    renderScores(m);
   } else if (m.t === 'sys'){
     addChatLine('⚙ SERVER', String(m.msg || ''), false);
   } else if (m.t === 'leave') removeRemote(m.id);
@@ -2766,6 +3162,7 @@ window.addEventListener('keydown', function(e){
   var k = e.key.toLowerCase();
   keysDown[k] = true;
   if (k === 'h'){ if (els.tut.hidden) tutOpen(); else tutClose(); }
+  if (k === ' ' && player.veh && player.veh.plow && !e.repeat){ toggleBlade(); }
   if (k === ' ' || k.indexOf('arrow') === 0) e.preventDefault();
   if (k === 'p') togglePause();
   if (k === 'v') toggleMode();
@@ -2873,7 +3270,10 @@ els.bFire.addEventListener('pointerdown', function(){
   fireTouchHeld = true;
   if (!player.heli) fireAction();
 });
-els.bJump.addEventListener('pointerdown', function(){ jumpQueued = true; stick.jets = true; });
+els.bJump.addEventListener('pointerdown', function(){
+  if (player.veh && player.veh.plow){ toggleBlade(); return; }
+  jumpQueued = true; stick.jets = true;
+});
 window.addEventListener('pointerup', function(){ stick.jets = false; fireTouchHeld = false; });
 els.bAuto.onclick = function(){ autoCam = !autoCam; tween = null; pTimer = 0; syncBtns(); };
 els.bBox.onclick = function(){ setToggle('box'); };
@@ -3008,15 +3408,39 @@ function drawOverlay(){
       chip(mTag[0] - ov.measureText(mTxt).width / 2, mTag[1], mTxt, '#ff5f52');
     }
   }
-  if (mission.stage === 'fight'){   // mission timer, top center
-    var mSecs = (performance.now() - mission.t0f) / 1000;
-    var tTxt = 'THE RIBBON CUTTING · ' + mSecs.toFixed(1) + 's';
+  var tTxt = null;
+  if (mission.stage === 'fight')
+    tTxt = 'THE RIBBON CUTTING · ' + ((performance.now() - mission.t0f) / 1000).toFixed(1) + 's';
+  else if (mission2.stage === 'plow' && mission2.t0)
+    tTxt = 'SNOW EMERGENCY · ' + ((performance.now() - mission2.t0) / 1000).toFixed(1) + 's' +
+      (mission2.penalty ? ' · +' + mission2.penalty + 's PENALTY' : '');
+  if (tTxt){   // mission timer, top center
     ov.font = '12px ui-monospace, Menlo, Consolas, monospace';
     var tw3 = ov.measureText(tTxt).width;
     ov.fillStyle = 'rgba(2,8,10,0.62)';
     ov.fillRect(vw / 2 - tw3 / 2 - 8, 12, tw3 + 16, 20);
     ov.fillStyle = '#ffd28a';
     ov.fillText(tTxt, vw / 2 - tw3 / 2, 26);
+  }
+  if (mission2.stage === 'plow'){   // snow zone markers + the forbidden street
+    ov.font = '9.5px ui-monospace, Menlo, Consolas, monospace';
+    for (k = 0; k < SNOW_ZONES.length; k++){
+      var zs = zoneState[k];
+      if (!zs || zs.done) continue;
+      var zn = SNOW_ZONES[k];
+      var zcx = zn.axis === 'x' ? (zn.lo + zn.hi) / 2 : zn.c;
+      var zcz = zn.axis === 'x' ? zn.c : (zn.lo + zn.hi) / 2;
+      var zp = project(zcx, 4, zcz);
+      if (!zp) continue;
+      var pct = zs.total ? Math.round(zs.cleared / zs.total * 100) : 0;
+      chip(zp[0] - 24, zp[1], zn.name + ' ' + pct + '%', '#8ef7ff');
+    }
+    if (plowVeh && player.veh !== plowVeh){
+      var pv = project(plowVeh.g.position.x, plowVeh.g.position.y + 4, plowVeh.g.position.z);
+      if (pv) chip(pv[0] - 26, pv[1], 'SNOW PLOW', '#ffd28a');
+    }
+    var rp2 = project((REDDIT_ZONE.lo + REDDIT_ZONE.hi) / 2, 4, REDDIT_ZONE.c);
+    if (rp2) chip(rp2[0] - 52, rp2[1], "MAYOR'S ST — DO NOT PLOW", '#ff5f52');
   }
   if (show.trk){
     ov.globalAlpha = 0.55;
@@ -3155,6 +3579,7 @@ function frame(now){
   updateRemotes(dt);
   updateHeli(dt);
   updateMission(dt);
+  updateMission2(dt);
   updateRockets(dt);
   updateDrops(dt);
   updatePuffs(dt);
@@ -3169,9 +3594,15 @@ function frame(now){
 
   // environment
   var env = envAt(simH);
+  if (m2Sky > 0.01){   // snowstorm: overcast blend
+    skyC.lerp(_snowSkyC, m2Sky);
+    fogC.lerp(_snowSkyC, m2Sky);
+    env.sun *= 1 - 0.75 * m2Sky;
+    env.hemi = env.hemi * (1 - m2Sky) + 0.55 * m2Sky;
+  }
   renderer.setClearColor(skyC);
   scene.fog.color.copy(fogC);
-  scene.fog.density = 0.0007 + env.night * 0.00045;
+  scene.fog.density = 0.0007 + env.night * 0.00045 + m2Sky * 0.0012;
   hemi.color.copy(skyC); hemi.intensity = env.hemi;
   var sa = (simH - 6) / 12 * Math.PI;
   sun.position.set(-Math.cos(sa) * 600, Math.max(30, Math.sin(sa) * 500), 220);
@@ -3201,8 +3632,12 @@ function frame(now){
     if (isFrozen()) hint = 'FROZEN — ' + Math.ceil((player.frozenUntil - performance.now()) / 1000) + 's';
     else if (missionFight()) hint = 'SHOOT DOWN THE CHOPPER · F/CLICK — FIRE · RMB — AIM · CHOPPER HP ' + mh.hp + '/3';
     else if (player.heli) hint = 'W/S A/D FLY · SPACE UP · SHIFT DOWN · HOLD F/CLICK — WATER CANNON · E — EXIT · HP ' + heli.hp + '/3';
+    else if (player.veh && player.veh.plow) hint = 'BLADE: ' + (bladeDown ? 'DOWN' : 'UP') + ' · SPACE — RAISE/LOWER · CLEAR THE SNOWY STREETS · E — EXIT';
     else if (player.veh) hint = 'E — EXIT · W/S DRIVE · A/D STEER · ' + Math.round(Math.abs(player.veh.spd) * 3.6) + ' KM/H';
-    else if (mission.stage === 'idle' && nearMissionTrig()) hint = 'E — START MISSION: THE RIBBON CUTTING';
+    else if (mission2.stage === 'plow' && plowVeh) hint = 'GET TO THE PLOW — MAIN ST BY CITY HALL (E TO BOARD)';
+    else if (mission.stage === 'idle' && mission2.stage === 'idle' && nearMissionTrig()) hint = 'E — START MISSION: THE RIBBON CUTTING';
+    else if (heliUnlocked && mission.stage === 'idle' && mission2.stage === 'idle' && nearDoor()) hint = 'E — CITY HALL: SEE THE MAYOR';
+    else if (!heliUnlocked && nearDoor()) hint = 'CITY HALL IS LOCKED — BEAT "THE RIBBON CUTTING" FIRST';
     else if (canEnterHeli()) hint = 'E — FLY THE NEWS CHOPPER';
     else if (!heliUnlocked && canEnterHeliBase()) hint = 'LOCKED — BEAT "THE RIBBON CUTTING" AT CITY HALL TO FLY';
     else if (player.grounded && nearestVehicle()) hint = 'E — ENTER CAR';

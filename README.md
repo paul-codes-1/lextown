@@ -15,6 +15,7 @@ The map is the real downtown core, stylized:
 - **Life** — 66 cars that queue and obey signals (steal any of them with `E`), 46 pedestrians, surface parking lots, Lexington-style green street-name blades at every corner, streetlights and neon that come on at dusk, sun shadows that rake through the afternoon.
 - **The news chopper** — a helipad juts off Big Blue's roof with the **LEXINGTON KY NEWS** helicopter parked on it. One pilot at a time; its belly-mounted water cannon shoves players around. While it's airborne, RPG crates unlock around downtown — three rockets bring it down (it respawns on the pad). **Flying it is locked until you beat the mission below** (once per device).
 - **Mission: THE RIBBON CUTTING** — press `E` at the gold ring by City Hall. The mayor is dedicating "a horse statue" and the news chopper keeps buzzing her press conference; take the ceremonial RPG (first-person aim) and shoot it down. The pilot bails out with a parachute, the ribbon gets cut, and your time goes to a **global high-score board** (SIM menu → SCORES). Fully replayable, with synthesized sound effects and live captions throughout.
+- **Mission 2: SNOW EMERGENCY** — beating the ribbon cutting unlocks the **City Hall door**. Inside, the mayor hands you a snow plow: a freak storm has buried five downtown streets. `Space` raises/lowers the blade — down on snow clears it, down on bare pavement grinds up the road for time penalties. And whatever you do, **don't plow the mayor's street** — half of reddit is camped out there watching for the plows. Timed, with its own global board.
 
 ## Quick start
 
@@ -38,6 +39,7 @@ No server? Opening `web/index.html` directly (or hosting `web/` statically) runs
 | In the chopper | W/S fly, A/D turn, `Space` climb, `Shift` descend, `E` lands (mid-air it bails out and the chopper crashes). Hold `F`/click for the **water cannon** — the jet pushes players around |
 | RPG | While the chopper is up, crates glow at five spots downtown. Walk over one to grab a launcher (2 rockets); `F` fires. Holding it locks you into first-person aim. Three hits down the chopper; rockets are harmless to people |
 | `E` at City Hall's gold ring | Start **THE RIBBON CUTTING** mission (see above) |
+| `E` at the City Hall door | Start **SNOW EMERGENCY** (after beating mission 1) — `Space` works the plow blade |
 | `C` | First-person / third-person camera (scrolling all the way in works too) |
 | Drag / wheel | Orbit / zoom camera |
 | `G` | Draw/holster the nerf blaster — **drawing opts you into PvP**; holstered players can't be tagged |
@@ -99,7 +101,7 @@ jq 'select(.e=="metrics") | {ts,online,rssMb}' logs/events-*.jsonl    # 5-min he
 
 - **Movement validation** — every accepted state must be inside the world bounds and reachable from the last accepted state at legal speed, with per-mode caps (walking, jetpack, driving, helicopter — the mode flag is client-declared, so this bounds absurdity rather than proving honesty). Rejected moves are not relayed; the offending client gets a `{t:'correct'}` that snaps it back. Names are sanitized and pinned server-side on first contact.
 - **The news chopper** — the server arbitrates the single pilot seat (`{t:'heli'}` enter/exit), tracks hull points, validates rocket-hit claims (`{t:'rhit'}`: shooter in range, not the pilot, rate-limited) and water-cannon shoves (`{t:'push'}`: pilot only, bounded impulse, target near the heli — relayed to everyone as `{t:'pushed'}`). Rockets and spray are cosmetic relays like darts. If the pilot disconnects, the chopper crashes and respawns on the pad.
-- **Mission leaderboard** — `{t:'score', ms}` submissions are bounds-checked (3s–10min) and rate-limited; the top 50 fastest times persist in `scores.json` and the top 10 are served back via `{t:'scores'}`. Wins are announced in chat. The mission itself runs entirely client-side (its chopper is a local NPC, not the shared one).
+- **Mission leaderboards** — `{t:'score', ms, m}` submissions are bounds-checked per board (m1: 3s–10min, m2: 20s–15min) and rate-limited; the top 50 of each persist in `scores.json` (`{m1:[], m2:[]}`) and the top 10 are served back via `{t:'scores'}`. Wins are announced in chat. The missions themselves run entirely client-side (the mission chopper is a local NPC, not the shared one).
 - **Chat** — `{t:'chat', msg}` messages are stripped to printable ASCII, capped at 120 chars, and rate-limited per client (3-message burst, ~1/1.2 s refill) before being broadcast to everyone. The client shows them in the log and as a speech bubble over the sender's head.
 - **Packet-rate limiting** — state packets beyond 15/s per client are dropped.
 

@@ -135,16 +135,25 @@ process.on('unhandledRejection', (err) => {
   logEvent('rejection', { msg: String(err && err.stack || err).slice(0, 500) });
 });
 
-// mission leaderboard: fastest "Ribbon Cutting" takedowns, [{n, ms, ts}]
-// persisted to scores.json (gitignored), capped at the top 50
+// mission leaderboards, persisted to scores.json (gitignored), top 50 each:
+//   m1 = THE RIBBON CUTTING (fastest chopper takedown)
+//   m2 = SNOW EMERGENCY (fastest plow, penalties included)
+// Migration: an old plain-array scores.json becomes the m1 board.
 const SCORES_PATH = path.join(__dirname, 'scores.json');
-let scores = [];
-try { scores = JSON.parse(fs.readFileSync(SCORES_PATH, 'utf8')); } catch { scores = []; }
+let scores = { m1: [], m2: [] };
+try {
+  const parsed = JSON.parse(fs.readFileSync(SCORES_PATH, 'utf8'));
+  if (Array.isArray(parsed)) scores.m1 = parsed;
+  else scores = { m1: parsed.m1 || [], m2: parsed.m2 || [] };
+} catch { /* fresh file */ }
 function saveScores() {
   try { fs.writeFileSync(SCORES_PATH, JSON.stringify(scores, null, 2)); }
   catch (e) { console.log('[warn] could not persist scores:', e.message); }
 }
-function topScores() { return scores.slice(0, 10).map((s) => ({ n: s.n, ms: s.ms })); }
+function topScores() {
+  const top = (b) => scores[b].slice(0, 10).map((s) => ({ n: s.n, ms: s.ms }));
+  return { m1: top('m1'), m2: top('m2') };
+}
 
 // persistent ban list: [{ip, name}]
 const BANS_PATH = path.join(__dirname, 'bans.json');
@@ -487,25 +496,29 @@ wss.on('connection', (ws, req) => {
     }
 
     if (msg.t === 'score') {
-      // mission completion: plausible time window, 1 per 15s per client
-      if (!num(msg.ms, 3000, 600000)) return;
+      // mission completion: plausible time window per board, 1 per 15s per client
+      const board = msg.m === 2 ? 'm2' : 'm1';
+      const okMs = board === 'm2' ? num(msg.ms, 20000, 900000) : num(msg.ms, 3000, 600000);
+      if (!okMs) return;
       if (client.lastScoreAt && now - client.lastScoreAt < 15000) return;
       client.lastScoreAt = now;
       const n = client.name || id;
-      scores.push({ n, ms: Math.round(msg.ms), ts: new Date().toISOString() });
-      scores.sort((a, b) => a.ms - b.ms);
-      scores = scores.slice(0, 50);
+      scores[board].push({ n, ms: Math.round(msg.ms), ts: new Date().toISOString() });
+      scores[board].sort((a, b) => a.ms - b.ms);
+      scores[board] = scores[board].slice(0, 50);
       saveScores();
       stats.missions++;
-      logEvent('mission_score', { id, n, ms: Math.round(msg.ms) });
+      logEvent('mission_score', { id, n, m: board, ms: Math.round(msg.ms) });
       broadcast({ t: 'chat', id: 'SERVER', n: '* MISSION',
-        msg: `${n} downed the chopper in ${(msg.ms / 1000).toFixed(1)}s` }, null);
-      ws.send(JSON.stringify({ t: 'scores', top: topScores() }));
+        msg: board === 'm2'
+          ? `${n} plowed downtown in ${(msg.ms / 1000).toFixed(1)}s`
+          : `${n} downed the chopper in ${(msg.ms / 1000).toFixed(1)}s` }, null);
+      ws.send(JSON.stringify(Object.assign({ t: 'scores' }, topScores())));
       return;
     }
 
     if (msg.t === 'scores') {
-      ws.send(JSON.stringify({ t: 'scores', top: topScores() }));
+      ws.send(JSON.stringify(Object.assign({ t: 'scores' }, topScores())));
       return;
     }
 
