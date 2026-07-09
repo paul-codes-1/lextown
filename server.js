@@ -226,12 +226,25 @@ function validMove(c, msg, now) {
   // entering/exiting a vehicle teleports the avatar a few meters — allow a
   // one-packet hop when the declared mode changes
   const slack = m !== c.lastM ? 7 : 0;
-  const dt = Math.min(2, Math.max(0.03, (now - c.posAt) / 1000));
+  const dt = Math.min(2, Math.max(0, (now - c.posAt) / 1000));
+  // token-bucket travel budgets, not per-packet caps: network jitter batches
+  // packets (a 400ms stall, then four arrive at once) and a strict cap*dt
+  // check false-rejects the burst — the "invisible wall at times" bug of
+  // 2026-07-09. Banked allowance absorbs bursts while still bounding
+  // sustained speed at the caps and any single hop at ~1.2s of travel.
+  c.bh = Math.min(caps.h * 1.2, (c.bh === undefined ? caps.h * 0.4 : c.bh) + caps.h * dt);
+  c.bv = Math.min(caps.v * 1.2, (c.bv === undefined ? caps.v * 0.4 : c.bv) + caps.v * dt);
+  c.bf = Math.min(MAX_FALL * 1.2, (c.bf === undefined ? MAX_FALL * 0.4 : c.bf) + MAX_FALL * dt);
   const dh = Math.hypot(msg.x - c.pos.x, msg.z - c.pos.z);
   const up = msg.y - c.pos.y;   // + rising, - falling
-  return dh <= caps.h * dt + 0.5 + slack &&
-    up <= caps.v * dt + 0.5 + slack &&
-    -up <= MAX_FALL * dt + 0.5 + slack;
+  const ok = dh <= c.bh + 0.5 + slack &&
+    up <= c.bv + 0.5 + slack &&
+    -up <= c.bf + 0.5 + slack;
+  if (ok) {
+    c.bh -= dh;
+    if (up > 0) c.bv -= up; else c.bf -= -up;
+  }
+  return ok;
 }
 
 function sys(ws, msg) {

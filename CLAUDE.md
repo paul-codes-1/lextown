@@ -56,9 +56,11 @@ Two files carry everything:
 
 **`server.js`** — static file host for `web/` + WS relay with server-side
 sanity enforcement. Message types: `welcome` (includes a heli snapshot),
-`state` (10 Hz, per-mode speed caps — mode `m` is client-declared
-walk/fly/drive/heli so caps bound absurdity, not dishonesty; a mode *switch*
-gets a one-packet 7 m slack because entering vehicles teleports the avatar),
+`state` (10 Hz, per-mode speed caps via a token-bucket travel budget —
+NOT per-packet cap×dt, which false-rejects when network jitter batches
+packets; mode `m` is client-declared walk/fly/drive/heli so caps bound
+absurdity, not dishonesty; a mode *switch* gets a one-packet 7 m slack
+because entering vehicles teleports the avatar),
 `chat` (token bucket, ASCII-sanitized; leading `/` routes to admin commands
 gated by `ADMIN_TOKEN`), `shot` (cosmetic dart relay), `hit` (freeze-tag
 validation: both opted in via `p` flag, ≤80 m, no re-freeze → broadcasts
