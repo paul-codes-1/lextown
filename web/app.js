@@ -2458,6 +2458,9 @@ if (/debug=1/.test(hashStr)){
     m2stage: function(){ return mission2.stage; },
     tp: function(x, z){ player.x = x; player.z = z; player.y = groundY(x, z); },
     audio: function(){ pokeAudio(); return AC ? AC.state : 'none'; },
+    pos: function(){ return {x: player.x, y: player.y, z: player.z}; },
+    cam: function(){ return {az: rigP.az, el: rigP.el}; },
+    setCam: function(az, el){ rigP.az = az; if (el !== undefined) rigP.el = el; followPause = 3; },
     audioTap: function(){   // MediaStream of the game's synth audio (for capture rigs)
       pokeAudio();
       if (!AC) return null;
@@ -2733,10 +2736,13 @@ function updatePlayerCam(dt){
   }
   rigP.r = Math.max(4, Math.min(90, rigP.r));
   camR += ((aiming ? (player.heli ? 9 : 4.4) : rigP.r) - camR) * Math.min(1, dt * 9);
-  // over-the-shoulder shift while aiming so the reticle clears the head
-  var offX = Math.cos(rigP.az) * 1.25 * aimBlend;
-  var offZ = -Math.sin(rigP.az) * 1.25 * aimBlend;
-  var offY = 0.4 * aimBlend;
+  // over-the-shoulder framing: a light constant offset on foot (the avatar
+  // rides left-of-center instead of blocking the view), stronger while aiming
+  var onFoot = !player.veh && !player.heli;
+  var offAmt = 1.25 * aimBlend + (onFoot ? 0.55 * (1 - aimBlend) : 0);
+  var offX = Math.cos(rigP.az) * offAmt;
+  var offZ = -Math.sin(rigP.az) * offAmt;
+  var offY = 0.4 * aimBlend + (onFoot ? 0.12 * (1 - aimBlend) : 0);
   camera.position.set(
     player.x + offX + camR * Math.cos(rigP.el) * Math.sin(rigP.az),
     player.y + 1.6 + offY + camR * Math.sin(rigP.el),
