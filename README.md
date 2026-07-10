@@ -54,7 +54,7 @@ No server? Opening `web/index.html` directly (or hosting `web/` statically) runs
 | `Enter` | Chat (Esc to cancel; messages appear in the log and as a bubble over your head) |
 | `V` | Toggle player / drone camera (drone mode has an auto-tour: `C`) |
 | `P` | Pause the city sim |
-| `B` / `T` / `L` | Toggle detection boxes / motion tracks / landmark labels |
+| `B` / `L` | Toggle player detection boxes / landmark labels |
 | `1` `2` `3` | Time speed 1× / 60× / 300× |
 
 Desktop mouse: click the game once to enter mouse-look (pointer lock) — the camera follows your mouse with no buttons held, settles in behind you while you walk or drive, and Esc releases the cursor.

@@ -1351,8 +1351,7 @@ lanes.forEach(function(L){
     g.rotation.y = L.axis === 'x' ? (L.dir > 0 ? 0 : Math.PI) : (L.dir > 0 ? -Math.PI / 2 : Math.PI / 2);
     scene.add(g);
     var car = {g: g, lane: L, s: lo + (k + Math.random() * 0.6) * (hi - lo) / count,
-               v: 0, vt: 10 + Math.random() * 4, id: 'CAR-' + ('0' + (cars.length + 1)).slice(-2),
-               trail: [], tt: 0};
+               v: 0, vt: 10 + Math.random() * 4, id: 'CAR-' + ('0' + (cars.length + 1)).slice(-2)};
     L.cars.push(car); cars.push(car);
     vehicles.push({g: g, ai: car, th: g.rotation.y, spd: 0});
   }
@@ -1394,15 +1393,9 @@ function updateCars(dt, tNow){
       if (gap < 26) desired = Math.min(desired, Math.max(0, (gap - 7) * 1.2));
       c.v += Math.max(-16 * dt, Math.min(6 * dt, desired - c.v));
       c.s += L.dir * c.v * dt;
-      if (c.s > hi){ c.s = lo; c.trail.length = 0; }
-      if (c.s < lo){ c.s = hi; c.trail.length = 0; }
+      if (c.s > hi) c.s = lo;
+      if (c.s < lo) c.s = hi;
       placeCar(c);
-      c.tt += dt;
-      if (c.tt > 0.35){
-        c.tt = 0;
-        c.trail.push([c.g.position.x, c.g.position.z]);
-        if (c.trail.length > 16) c.trail.shift();
-      }
     });
   });
 }
@@ -3626,11 +3619,19 @@ function allIdle(){
   return mission.stage === 'idle' && mission2.stage === 'idle' &&
          mission3.stage === 'idle' && mission4.stage === 'idle';
 }
-// mission markers on the tactical overlay (gold, like the rings)
-labels.push({name: '★ MISSION: THE RIBBON CUTTING', x: MISSION_TRIG.x, y: 9, z: MISSION_TRIG.z, col: '#ffd28a'});
-labels.push({name: '★ MISSION: SNOW EMERGENCY', x: DOOR_P.x, y: 13, z: DOOR_P.z, col: '#ffd28a'});
-labels.push({name: '★ MISSION: THE DATA CENTER', x: M3_TRIG.x, y: 9, z: M3_TRIG.z, col: '#ffd28a'});
-labels.push({name: '★ MISSION: HORSEPOWER', x: M4_TRIG.x, y: 9, z: M4_TRIG.z, col: '#ffd28a'});
+// Everything mission-related on the overlay (start markers, target
+// brackets, edge arrow, timers, zone chips, the fight chopper tag) draws
+// in this one color, so mission UI is instantly tellable from player tags
+// (#ffd28a) and ambient labels. Declared here — before the labels.push
+// below runs — because top-level statement order matters in this file.
+var MISSION_COL = '#ffd400';
+// mission markers on the tactical overlay (gold, like the rings).
+// `mission: true` hides them while any mission is running (the rings hide
+// the same way via allIdle()) so only the live objective wears the color.
+labels.push({name: '★ MISSION: THE RIBBON CUTTING', x: MISSION_TRIG.x, y: 9, z: MISSION_TRIG.z, col: MISSION_COL, mission: true});
+labels.push({name: '★ MISSION: SNOW EMERGENCY', x: DOOR_P.x, y: 13, z: DOOR_P.z, col: MISSION_COL, mission: true});
+labels.push({name: '★ MISSION: THE DATA CENTER', x: M3_TRIG.x, y: 9, z: M3_TRIG.z, col: MISSION_COL, mission: true});
+labels.push({name: '★ MISSION: HORSEPOWER', x: M4_TRIG.x, y: 9, z: M4_TRIG.z, col: MISSION_COL, mission: true});
 // the gentle shove: when nothing else is going on, point at the next mission
 function nextMissionHint(){
   if (!heliUnlocked) return 'FIRST MISSION: THE RIBBON CUTTING — GOLD RING BY CITY HALL';
@@ -4469,7 +4470,6 @@ window.addEventListener('keydown', function(e){
   if (k === 'g') setPvp(!player.pvp);
   if (k === 'f') fireAction();
   if (k === 'b') setToggle('box');
-  if (k === 't') setToggle('trk');
   if (k === 'l') setToggle('lbl');
   if (k === 'c'){
     if (mode === 'player'){ camFP = !camFP; syncBtns(); }
@@ -4503,7 +4503,7 @@ function applyWASD(dt){
 }
 
 // ---------- HUD state ----------
-var show = {box: true, trk: true, lbl: true};
+var show = {box: true, lbl: true};
 var simH = 19.35;
 (function(){
   var m = /h=([\d.]+)/.exec(location.hash || '');
@@ -4521,7 +4521,7 @@ var els = {
   bNerf: document.getElementById('bNerf'), bFire: document.getElementById('bFire'),
   tut: document.getElementById('tut'),
   bAuto: document.getElementById('bAuto'), bBox: document.getElementById('bBox'),
-  bTrk: document.getElementById('bTrk'), bLbl: document.getElementById('bLbl'),
+  bLbl: document.getElementById('bLbl'),
   bPause: document.getElementById('bPause'),
   bFP: document.getElementById('bFP'), bMenu: document.getElementById('bMenu'),
   tray: document.getElementById('tray'),
@@ -4536,7 +4536,6 @@ function syncBtns(){
   els.bFP.classList.toggle('on', camFP);
   els.bAuto.classList.toggle('on', autoCam);
   els.bBox.classList.toggle('on', show.box);
-  els.bTrk.classList.toggle('on', show.trk);
   els.bLbl.classList.toggle('on', show.lbl);
   els.bPause.classList.toggle('on', paused);
   els.bPause.textContent = paused ? '>' : '||';
@@ -4576,7 +4575,6 @@ els.bJump.addEventListener('pointerdown', function(){
 window.addEventListener('pointerup', function(){ stick.jets = false; fireTouchHeld = false; });
 els.bAuto.onclick = function(){ autoCam = !autoCam; tween = null; pTimer = 0; syncBtns(); };
 els.bBox.onclick = function(){ setToggle('box'); };
-els.bTrk.onclick = function(){ setToggle('trk'); };
 els.bLbl.onclick = function(){ setToggle('lbl'); };
 els.bPause.onclick = togglePause;
 els.s1.onclick = function(){ setSpeed(1); };
@@ -4702,7 +4700,7 @@ function missionTarget(){
 function drawMissionTarget(){
   var t = missionTarget();
   if (!t) return;
-  var col = '#ffd28a';
+  var col = MISSION_COL;
   var dTxt = ' · ' + Math.round(Math.hypot(t.x - player.x, t.z - player.z)) + 'M';
   var d = Math.hypot(t.x - camPos.x, t.z - camPos.z);
   var p = project(t.x, t.y, t.z);
@@ -4791,7 +4789,7 @@ function drawOverlay(){
     if (mTag){
       var mTxt = 'LEX NEWS CHOPPER (LIVE)' + (mh.alive ? ' · HP ' + mh.hp + '/3' : '');
       ov.font = '9.5px ui-monospace, Menlo, Consolas, monospace';
-      chip(mTag[0] - ov.measureText(mTxt).width / 2, mTag[1], mTxt, '#ff5f52');
+      chip(mTag[0] - ov.measureText(mTxt).width / 2, mTag[1], mTxt, MISSION_COL);
     }
   }
   var tTxt = null;
@@ -4805,7 +4803,7 @@ function drawOverlay(){
     var tw3 = ov.measureText(tTxt).width;
     ov.fillStyle = 'rgba(2,8,10,0.62)';
     ov.fillRect(vw / 2 - tw3 / 2 - 8, 12, tw3 + 16, 20);
-    ov.fillStyle = '#ffd28a';
+    ov.fillStyle = MISSION_COL;
     ov.fillText(tTxt, vw / 2 - tw3 / 2, 26);
   }
   if (mission2.stage === 'plow'){   // snow zone markers + the forbidden street
@@ -4819,64 +4817,19 @@ function drawOverlay(){
       var zp = project(zcx, 4, zcz);
       if (!zp) continue;
       var pct = zs.total ? Math.round(zs.cleared / zs.total * 100) : 0;
-      chip(zp[0] - 24, zp[1], zn.name + ' ' + pct + '%', '#8ef7ff');
+      chip(zp[0] - 24, zp[1], zn.name + ' ' + pct + '%', MISSION_COL);
     }
     if (plowVeh && player.veh !== plowVeh){
       var pv = project(plowVeh.g.position.x, plowVeh.g.position.y + 4, plowVeh.g.position.z);
-      if (pv) chip(pv[0] - 26, pv[1], 'SNOW PLOW', '#ffd28a');
+      if (pv) chip(pv[0] - 26, pv[1], 'SNOW PLOW', MISSION_COL);
     }
     var rp2 = project((REDDIT_ZONE.lo + REDDIT_ZONE.hi) / 2, 4, REDDIT_ZONE.c);
     if (rp2) chip(rp2[0] - 52, rp2[1], "MAYOR'S ST — DO NOT PLOW", '#ff5f52');
   }
-  if (show.trk){
-    ov.globalAlpha = 0.55;
-    for (k = 0; k < cars.length; k++){
-      var tr = cars[k].trail;
-      if (tr.length < 2) continue;
-      if (camPos.distanceTo(cars[k].g.position) > 480) continue;
-      ov.strokeStyle = '#4adfd0'; ov.lineWidth = 1;
-      ov.beginPath();
-      var started = false;
-      for (var q = 0; q < tr.length; q++){
-        var pp = project(tr[q][0], 0.8, tr[q][1]);
-        if (!pp){ started = false; continue; }
-        if (!started){ ov.moveTo(pp[0], pp[1]); started = true; }
-        else ov.lineTo(pp[0], pp[1]);
-      }
-      ov.stroke();
-    }
-    ov.globalAlpha = 1;
-  }
-  if (show.box){
-    var drawn = 0;
-    for (k = 0; k < cars.length && drawn < 26; k++){
-      var c = cars[k];
-      var dist = camPos.distanceTo(c.g.position);
-      if (dist > 460) continue;
-      var p = project(c.g.position.x, c.g.position.y + 1, c.g.position.z);
-      if (!p) continue;
-      var hpx = pxSize(2.4, dist), wpx = pxSize(5.2, dist);
-      if (hpx < 5) continue;
-      bracket(p[0] - wpx / 2, p[1] - hpx / 2, wpx, hpx, 'rgba(98,245,255,0.9)');
-      if (wpx > 26) chip(p[0] - wpx / 2, p[1] - hpx / 2 - 6,
-        c.id + ' ' + Math.round(c.v * 3.6) + 'KM/H', '#8ef7ff');
-      drawn++;
-    }
-    drawn = 0;
-    for (k = 0; k < peds.length && drawn < 18; k++){
-      var pd = peds[k];
-      var dist2 = camPos.distanceTo(pd.g.position);
-      if (dist2 > 260) continue;
-      var p2 = project(pd.g.position.x, pd.g.position.y + 0.9, pd.g.position.z);
-      if (!p2) continue;
-      var h2 = pxSize(2.0, dist2), w2 = pxSize(1.0, dist2);
-      if (h2 < 7) continue;
-      bracket(p2[0] - w2 / 2, p2[1] - h2 / 2, w2, h2, 'rgba(157,255,176,0.85)');
-      if (h2 > 22) chip(p2[0] - w2 / 2, p2[1] - h2 / 2 - 6, pd.id, '#b8ffc6');
-      drawn++;
-    }
-  }
-  // player name tags + chat bubbles (always on) + detection boxes for players
+  // NPC cars and pedestrians carry no HUD — detection boxes/tracks are
+  // reserved for players (show.box below) and mission objects.
+  // player name tags + chat bubbles + detection boxes for players — only
+  // within 100 m so the HUD stays readable in a crowd
   (function(){
     var nowMs = performance.now();
     function speech(px, py, msg){
@@ -4894,8 +4847,12 @@ function drawOverlay(){
     for (var id in remotes){
       var r = remotes[id];
       var pos = r.m === 2 && r.carG ? r.carG.position : r.av.g.position;
+      // 100 m proximity gate, measured from the avatar (not the camera —
+      // the drone/orbit rig flies hundreds of meters up and would hide
+      // every tag). Screen sizing below still uses camera distance.
+      var pdx = pos.x - player.x, pdy = pos.y - player.y, pdz = pos.z - player.z;
+      if (pdx * pdx + pdy * pdy + pdz * pdz > 100 * 100) continue;
       var dist = camPos.distanceTo(pos);
-      if (dist > 600) continue;
       var p = project(pos.x, pos.y + 2.9, pos.z);
       if (!p) continue;
       ov.font = '9.5px ui-monospace, Menlo, Consolas, monospace';
@@ -4924,8 +4881,10 @@ function drawOverlay(){
     }
   })();
   if (show.lbl){
+    var midMission = !allIdle();
     for (k = 0; k < labels.length; k++){
       var lb = labels[k];
+      if (lb.mission && midMission) continue;
       var d3 = camPos.distanceTo(_v.set(lb.x, lb.y, lb.z));
       if (d3 > 1300) continue;
       var lp = project(lb.x, lb.y, lb.z);
