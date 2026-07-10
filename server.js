@@ -18,6 +18,7 @@ const MIME = {
   '.ico': 'image/x-icon',
   '.txt': 'text/plain; charset=utf-8',
   '.xml': 'application/xml; charset=utf-8',
+  '.mp3': 'audio/mpeg',
 };
 
 const server = http.createServer((req, res) => {
@@ -46,7 +47,9 @@ const server = http.createServer((req, res) => {
     }
     res.writeHead(200, {
       'content-type': MIME[path.extname(filePath)] || 'application/octet-stream',
-      'cache-control': 'no-cache',
+      // audio assets are big (music ~1MB each) and change rarely — let
+      // returning players keep them for a day instead of refetching
+      'cache-control': urlPath.startsWith('/audio/') ? 'public, max-age=86400' : 'no-cache',
     });
     res.end(data);
   });

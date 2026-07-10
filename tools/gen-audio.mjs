@@ -60,6 +60,13 @@ const VOICE_DESIGNS = {
     sample:
       "Yeah hi, first time caller, long time — listen. I seen three horses downtown this morning. Three of em. One was standing real still, like a statue? Am I crazy? Hello? Am I on?"
   },
+  sportscaster: {
+    name: 'LEXTOWN PLAY-BY-PLAY',
+    description:
+      'Booming, high-energy male sports play-by-play announcer on AM radio, fast gravelly excitement that builds to a roar, classic basketball radio call style.',
+    sample:
+      "Under ten to play at Rupp, Wildcats down two — the inbound comes to the corner, three seconds, two — THE SHOT IS UP — IT'S GOOD! IT'S GOOD! THE WILDCATS WIN! Oh my stars, Rupp Arena is COMING DOWN!"
+  },
   dispatch: {
     name: 'LEXTOWN DISPATCH',
     description:
@@ -128,6 +135,30 @@ sfx('amb_birds', 'Gentle city park ambience, songbirds chirping, light breeze th
 sfx('amb_hum', 'Distant downtown traffic ambience, low city hum with an occasional passing car, seamless loop', 15, true);
 sfx('amb_wind', 'Cold winter wind blowing with light snow hiss, storm ambience, seamless loop', 12, true);
 sfx('amb_bells', 'Church bell tower slowly tolling three times, heard from a city street, with decay', 9);
+
+// --- radio: 98.5 THE CAT (UK sports) ---
+music('sp_jingle',
+  'Punchy retro AM sports-radio station jingle, driving brass stabs, urgent drum fill, ends on a tight stinger. No vocals.',
+  10000);
+tts('sp_id', 'sportscaster',
+  "You're locked in to ninety-eight-five, THE CAT — Lexington's home of the Wildcats. All Big Blue. All day. If it bounces, kicks, or gallops, we're calling it.");
+tts('sp_bball', 'sportscaster',
+  "Under ten to play at Rupp, Wildcats down two — the inbound comes to the corner... three seconds, two — THE SHOT IS UP — IT'S GOOD! IT'S GOOD! THE WILDCATS WIN! Rupp Arena is COMING DOWN, folks!");
+tts('sp_fb', 'sportscaster',
+  "Fourth and goal at Kroger Field, everything on the line... play action — HE'S GOT A MAN WIDE OPEN IN THE CORNER — TOUCHDOWN, WILDCATS! The Big Blue Wall holds, and the Cats stun 'em at the horn!");
+tts('sp_caller', 'caller',
+  "Longtime listener, first time yelling. Look — I love the Cats. I would run through a brick wall for the Cats. But if we run that same zone one more time, I'm calling my mother, and she is MUCH tougher than any defensive coordinator. I'll take my answer off the air.");
+tts('sp_ad', 'dj',
+  "This hour of Wildcat coverage is brought to you by TAILGATE DEPOT, out at the Kroger Field lots. Tents. Grills. Cornhole — regulation and otherwise. Season hasn't started? Doesn't matter. Tailgate Depot: it's always fourth quarter somewhere.");
+
+// --- radio: TRACKSIDE 1450 AM (thoroughbred racing) ---
+sfx('tr_bugle', 'Solo bugle playing a horse racing call to post fanfare, outdoors at a racetrack', 7);
+tts('tr_id', 'dj',
+  "This is TRACKSIDE, fourteen-fifty on your A-M dial — thoroughbred radio for the Horse Capital of the World. From the first call to post to the last photo finish.");
+tts('tr_race', 'sportscaster',
+  "Aaand they're off at Keeneland! Big Blue takes the early lead, Data Center presses on the rail, here comes Half of Reddit up the backstretch — Statue Horse has not moved, folks, Statue Horse is still in the gate — down the stretch they come, it's Big Blue, it's Gold Ring, GOLD RING BY A NOSE! Unbelievable scenes at Keeneland!");
+tts('tr_tips', 'caller',
+  "Tip sheet time. The three horse? Ate my program on Tuesday. Bet him. The six only fires on a wet track, so pray for rain. And the nine — listen close — the nine is technically a statue. Trifecta: three, six, nine. You did not hear it from me.");
 
 // --- radio: emergency alert (SNOW EMERGENCY interrupt) ---
 sfx('alert_tone', 'Emergency alert system attention signal, harsh dual-tone broadcast buzzer', 2.5);

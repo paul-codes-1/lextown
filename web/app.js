@@ -2376,7 +2376,11 @@ var RADIO_STATIONS = [
    breaks: ['radio_id_1', 'radio_id_2', 'ad_als', 'ad_cars', 'ad_park', 'ad_psa']},
   {name: 'NEWS 630 THE BLOCK',
    talk: ['news_id', 'news_1', 'news_wx', 'news_2', 'news_traffic', 'news_caller',
-          'ad_psa', 'ad_park', 'ad_als']}
+          'ad_psa', 'ad_park', 'ad_als']},
+  {name: '98.5 THE CAT — UK SPORTS',
+   talk: ['sp_id', 'sp_jingle', 'sp_bball', 'sp_fb', 'sp_caller', 'sp_ad', 'ad_als']},
+  {name: 'TRACKSIDE 1450 AM',
+   talk: ['tr_id', 'tr_bugle', 'tr_race', 'tr_tips', 'ad_park', 'ad_cars']}
 ];
 var radio = {st: 1, cur: null, last: '', lastKind: '', token: 0, queue: []};
 try { radio.st = Math.min(RADIO_STATIONS.length - 1, Math.max(0, parseInt(localStorage.getItem('lt_radio') || '1', 10) || 0)); } catch (e){}
@@ -2427,7 +2431,20 @@ function cycleRadio(){
   caption('RADIO', RADIO_STATIONS[radio.st].name, 1800);
   if (radio.st > 0) radioNext(true);
   else radioStop();
+  updateRadioChip();
   syncBtns();
+}
+// now-playing chip: prominent, tappable radio control shown while driving
+var _radioChipTxt = '';
+function updateRadioChip(){
+  var el = document.getElementById('radiochip');
+  if (!el) return;
+  var show = mode === 'player' && !!player.veh;
+  var txt = show ? RADIO_STATIONS[radio.st].name : '';
+  if (txt === _radioChipTxt) return;
+  _radioChipTxt = txt;
+  el.style.display = show ? 'block' : 'none';
+  if (show) document.getElementById('radiosta').textContent = txt;
 }
 
 // --- world/mission audio watcher, ticked from frame() ---
@@ -2444,6 +2461,7 @@ function stinger(stage, prev){
   return stage;
 }
 function updateAssetAudio(dt){
+  updateRadioChip();   // cheap (text-guarded); tracks vehicle enter/exit + mode
   if (!AC) return;
   assetAudioInit();
   // mission stingers on stage transitions (one watcher, no per-mission hooks)
@@ -4803,6 +4821,7 @@ els.bFP.onclick = function(){
 els.bMenu.onclick = function(){ els.tray.hidden = !els.tray.hidden; syncBtns(); };
 els.bSnd.onclick = function(){ pokeAudio(); setSnd(!sndOn); };
 els.bRadio.onclick = cycleRadio;
+document.getElementById('radiochip').onclick = cycleRadio;
 els.bScores.onclick = function(){ showScores(0); };
 document.getElementById('scoreClose').onclick = function(){ els.scores.hidden = true; };
 els.scores.addEventListener('pointerdown', function(e){ if (e.target === els.scores) els.scores.hidden = true; });

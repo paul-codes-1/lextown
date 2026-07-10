@@ -98,6 +98,13 @@
   #hint{position:absolute;left:50%;bottom:44px;transform:translateX(-50%);
         color:#ffd28a;font-size:10.5px;letter-spacing:.14em;background:var(--ink);
         border:1px solid rgba(255,210,138,.35);padding:5px 12px;white-space:nowrap;display:none}
+  #radiochip{position:absolute;left:50%;bottom:76px;transform:translateX(-50%);
+        color:var(--teal);font-size:11.5px;letter-spacing:.14em;background:var(--ink);
+        border:1px solid rgba(110,247,223,.5);padding:7px 15px;white-space:nowrap;
+        pointer-events:auto;cursor:pointer;display:none}
+  #radiochip b{color:#f2fffb;font-weight:600}
+  #radiochip .rk{color:#5f938a;font-size:9.5px;margin-left:6px}
+  #radiochip:hover{border-color:var(--teal)}
   #caption{position:absolute;left:50%;bottom:158px;transform:translateX(-50%);
            max-width:76vw;text-align:center;font-size:13px;letter-spacing:.08em;
            background:rgba(2,6,10,.82);border:1px solid rgba(255,210,138,.4);
@@ -168,6 +175,7 @@
     #caption{bottom:132px;font-size:11.5px;max-width:88vw}
     #counts{display:none}
     #hint{bottom:76px}
+    #radiochip{bottom:108px}
   }
 </style>
 </head>
@@ -203,6 +211,7 @@
     <input id="chatin" maxlength="120" placeholder="[ENTER] CHAT" autocomplete="off" spellcheck="false">
   </div>
   <div class="chip" id="hint"></div>
+  <div class="chip" id="radiochip" title="Change station">&#9834; <b id="radiosta"></b> <span class="rk">R / TAP</span></div>
   <div id="caption" hidden><b id="capWho"></b><span id="capText"></span></div>
   <div id="help">WASD MOVE · SPACE JET · E VEHICLE · R RADIO · G NERF · C CAMERA · ENTER CHAT · ? HELP
     &nbsp;·&nbsp; <a href="privacy.html">PRIVACY</a> · <a href="terms.html">TERMS</a></div>
@@ -282,7 +291,7 @@
     <div class="tut-grid">
       <b><kbd>E</kbd></b><span>enter or exit the nearest car (any car — traffic or parked)</span>
       <b><kbd>W</kbd>/<kbd>S</kbd> · <kbd>A</kbd>/<kbd>D</kbd></b><span>drive / brake · steer — tops out around 108 km/h</span>
-      <b><kbd>R</kbd></b><span>car radio — cycle BIG BLUE RADIO / NEWS 630 / off (also in the SIM menu)</span>
+      <b><kbd>R</kbd></b><span>car radio — BIG BLUE RADIO / NEWS 630 / 98.5 THE CAT / TRACKSIDE 1450 / off (or tap the dial chip)</span>
     </div>
     <h2>MISSION: THE RIBBON CUTTING</h2>
     <div class="tut-grid">
