@@ -129,7 +129,13 @@ sfx('amb_hum', 'Distant downtown traffic ambience, low city hum with an occasion
 sfx('amb_wind', 'Cold winter wind blowing with light snow hiss, storm ambience, seamless loop', 12, true);
 sfx('amb_bells', 'Church bell tower slowly tolling three times, heard from a city street, with decay', 9);
 
+// --- radio: emergency alert (SNOW EMERGENCY interrupt) ---
+sfx('alert_tone', 'Emergency alert system attention signal, harsh dual-tone broadcast buzzer', 2.5);
+tts('alert_snow', 'anchor',
+  "We interrupt this program. The National Weather Service has issued a SNOW EMERGENCY for downtown Lexington. Five streets are already buried. A city plow is staged on Main Street. If you can hear this broadcast: congratulations, you are the plow driver now. Blade down on snow. Blade UP on pavement. And whatever you do — do not plow the mayor's street. This has been the Lextown Emergency Alert System.");
+
 // --- world SFX ---
+sfx('sfx_jet', 'Continuous jetpack thrust, roaring turbine air blast with a steady flame hiss, seamless loop', 6, true);
 sfx('sfx_whinny', 'Single loud horse whinny outdoors', 2.5);
 sfx('sfx_gallop', 'Horse galloping on grass, rhythmic hoofbeats, seamless loop', 6, true);
 sfx('sfx_door', 'Car door opens then shuts firmly', 1.8);

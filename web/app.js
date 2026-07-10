@@ -2353,9 +2353,11 @@ function playClip(key, opts){
   });
   return h;
 }
-// looping ambience beds: created at gain 0 on first demand, then steered
+// looping ambience beds: created at gain 0 on first demand, then steered.
+// tc is the setTargetAtTime time constant — ambience wants a slow fade
+// (default 0.5s), the jetpack wants a snappy one.
 var ambLoops = {};
-function ambSet(key, target, rate){
+function ambSet(key, target, rate, tc){
   var L = ambLoops[key];
   if (!L){
     if (target < 0.02) return;
@@ -2363,7 +2365,7 @@ function ambSet(key, target, rate){
     if (!h) return;   // muted or no AC yet — retried next tick
     L = ambLoops[key] = {h: h};
   }
-  L.h.g.gain.setTargetAtTime(target, AC.currentTime, 0.5);
+  L.h.g.gain.setTargetAtTime(target, AC.currentTime, tc || 0.5);
 }
 
 // --- car radio ---
@@ -2376,7 +2378,7 @@ var RADIO_STATIONS = [
    talk: ['news_id', 'news_1', 'news_wx', 'news_2', 'news_traffic', 'news_caller',
           'ad_psa', 'ad_park', 'ad_als']}
 ];
-var radio = {st: 1, cur: null, last: '', lastKind: '', token: 0};
+var radio = {st: 1, cur: null, last: '', lastKind: '', token: 0, queue: []};
 try { radio.st = Math.min(RADIO_STATIONS.length - 1, Math.max(0, parseInt(localStorage.getItem('lt_radio') || '1', 10) || 0)); } catch (e){}
 function radioActive(){ return radio.st > 0 && mode === 'player' && !!player.veh; }
 function radioPick(){
@@ -2404,11 +2406,14 @@ function radioNext(tuneIn){
   radioStop();
   if (!radioActive()) return;
   var tok = radio.token;
-  var key = radioPick();
+  // queued interrupts (emergency alerts) preempt regular programming on
+  // every station
+  var fromQueue = radio.queue.length > 0;
+  var key = fromQueue ? radio.queue.shift() : radioPick();
   radio.cur = playClip(key, {
     gain: 1, out: radioGain,
     // tuning into a music station mid-song sells the "it was already on" feel
-    offsetFrac: tuneIn && radio.lastKind === 'music' ? Math.random() * 0.7 : 0,
+    offsetFrac: tuneIn && !fromQueue && radio.lastKind === 'music' ? Math.random() * 0.7 : 0,
     onended: function(){ if (tok === radio.token) radioNext(false); }
   });
   if (!radio.cur) radioStop();
@@ -2442,10 +2447,27 @@ function updateAssetAudio(dt){
   if (!AC) return;
   assetAudioInit();
   // mission stingers on stage transitions (one watcher, no per-mission hooks)
+  var prevM2 = aw.m2;
   aw.m1 = stinger(mission.stage, aw.m1);
   aw.m2 = stinger(mission2.stage, aw.m2);
   aw.m3 = stinger(mission3.stage, aw.m3);
   aw.m4 = stinger(mission4.stage, aw.m4);
+  // SNOW EMERGENCY: queue an EAS interrupt — it airs the moment the player
+  // hops in the plow (the radio auto-starts and plays the queue first)
+  if (aw.m2 === 'brief' && prevM2 !== 'brief' && prevM2 !== ''){
+    radio.queue = ['alert_tone', 'alert_snow'];
+    if (radioActive()) radioNext(false);   // already driving? cut in now
+  }
+  if (radio.queue.length && aw.m2 !== 'brief' && aw.m2 !== 'plow') radio.queue = [];
+  // jetpack thrust loop — yours at full gain, nearby fliers quieter
+  var jet = player.thrusting ? 0.5 : 0;
+  for (var ri in remotes){
+    var rr = remotes[ri];
+    if (rr.m !== 1) continue;
+    var rd = Math.hypot(rr.av.g.position.x - player.x, rr.av.g.position.z - player.z);
+    if (rd < 60) jet = Math.max(jet, (1 - rd / 60) * 0.25);
+  }
+  ambSet('sfx_jet', jet, 1, 0.08);
   // horses: whinny on bolt, gallop bed while one is bolting / being ridden
   var gallop = 0, gallopRate = 1;
   for (var i = 0; i < m4Horses.length; i++){
