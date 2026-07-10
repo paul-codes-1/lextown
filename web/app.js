@@ -5587,6 +5587,234 @@ function drawOverlay(){
   drawM4HorseArrows();
 }
 
+// ---------- route ribbon + destination beacon (street-graph wayfinding) ----------
+// A glowing gold GTA-style route drawn along the REAL street grid from the
+// player to the current wayfinding target, plus a tall light pillar at the
+// destination so it reads over the skyline. Both obey the WAYPT toggle / #wp=0
+// and hide in cinematic mode (#cine=1); pure client-side so they work offline /
+// bots-only. The straight-line diamond marker still draws on top as the
+// distance readout — this only adds the on-street route + the beacon under it.
+//
+// The street graph is built ONCE at boot from the EW/NS tables: nodes are the
+// intersections (meets(e,n)); edges join CONSECUTIVE intersections along each
+// street, so there is never an edge across a gap where a street doesn't exist
+// (partial-extent streets like Rose/MLK/Upper simply have fewer intersections).
+// The New Circle beltline legs are ordinary EW/NS rows, so their corner joins
+// fall straight out of the same consecutive-intersection rule. One-way street
+// directions are IGNORED here: pedestrians aren't bound by them and m5 drivers
+// read the painted road arrows, so every edge is bidirectional — no directed
+// edges, which keeps v1 simple.
+var RIBBON_COL = 0xffcf3a;   // gold, same family as the star mission gold
+var RIBBON_Y = 0.24;         // just above the road markings, below the cars
+var RIBBON_W = 1.9;          // ribbon width (m)
+var BEACON_H = 130;          // destination light-pillar height (m)
+var DASH_PERIOD = 16;        // metres per flowing pulse along the ribbon
+
+var rrNodes = [];   // {x, z} intersection points
+var rrAdj = [];     // rrAdj[i] = [{to, w}, ...] adjacency (bidirectional)
+var rrEdges = [];   // {a, b} node-index pairs (for nearest-segment projection)
+(function buildStreetGraph(){
+  var key = {};
+  function nodeAt(x, z){
+    var k = x + '|' + z;
+    if (key[k] === undefined){ key[k] = rrNodes.length; rrNodes.push({x: x, z: z}); rrAdj.push([]); }
+    return key[k];
+  }
+  function link(a, b){
+    if (a === b) return;
+    var w = Math.hypot(rrNodes[a].x - rrNodes[b].x, rrNodes[a].z - rrNodes[b].z);
+    rrAdj[a].push({to: b, w: w});
+    rrAdj[b].push({to: a, w: w});
+    rrEdges.push({a: a, b: b});
+  }
+  EW.forEach(function(e){   // horizontal runs: intersections sorted west->east
+    var xs = [];
+    NS.forEach(function(n){ if (meets(e, n)) xs.push(n.x); });
+    xs.sort(function(p, q){ return p - q; });
+    for (var i = 0; i < xs.length; i++){
+      if (i > 0) link(nodeAt(xs[i - 1], e.z), nodeAt(xs[i], e.z));
+      else nodeAt(xs[i], e.z);
+    }
+  });
+  NS.forEach(function(n){   // vertical runs: intersections sorted north->south
+    var zs = [];
+    EW.forEach(function(e){ if (meets(e, n)) zs.push(e.z); });
+    zs.sort(function(p, q){ return p - q; });
+    for (var i = 0; i < zs.length; i++){
+      if (i > 0) link(nodeAt(n.x, zs[i - 1]), nodeAt(n.x, zs[i]));
+      else nodeAt(n.x, zs[i]);
+    }
+  });
+  if (/debug=1/.test(hashStr)) console.log('[route] graph nodes', rrNodes.length, 'edges', rrEdges.length);
+})();
+
+// nearest point on the nearest street SEGMENT to (px,pz): so the ribbon starts
+// and ends on the road beside you, not at a block-distant node.
+function rrNearestSeg(px, pz){
+  var bestD2 = Infinity, res = null;
+  for (var i = 0; i < rrEdges.length; i++){
+    var ed = rrEdges[i];
+    var ax = rrNodes[ed.a].x, az = rrNodes[ed.a].z;
+    var dx = rrNodes[ed.b].x - ax, dz = rrNodes[ed.b].z - az;
+    var len2 = dx * dx + dz * dz;
+    var t = len2 > 0 ? ((px - ax) * dx + (pz - az) * dz) / len2 : 0;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    var cx = ax + t * dx, cz = az + t * dz;
+    var ex = px - cx, ez = pz - cz, d2 = ex * ex + ez * ez;
+    if (d2 < bestD2){ bestD2 = d2; res = {x: cx, z: cz, a: ed.a, b: ed.b}; }
+  }
+  return res;
+}
+// Dijkstra from the road point beside the player to the road point beside the
+// target, over the intersection graph augmented with two virtual endpoints S/T
+// (so the projected start/end points route through the real nodes). Graph is a
+// few hundred nodes, so a plain linear-scan Dijkstra is well under budget.
+// Returns a polyline [startRoadPoint, ...intersections..., endRoadPoint] or null.
+function rrCompute(px, pz, tx, tz){
+  if (rrEdges.length === 0) return null;
+  var s = rrNearestSeg(px, pz), t = rrNearestSeg(tx, tz);
+  if (!s || !t) return null;
+  var N = rrNodes.length, S = N, T = N + 1;
+  var sameSeg = (s.a === t.a && s.b === t.b) || (s.a === t.b && s.b === t.a);
+  var sa = Math.hypot(s.x - rrNodes[s.a].x, s.z - rrNodes[s.a].z);
+  var sb = Math.hypot(s.x - rrNodes[s.b].x, s.z - rrNodes[s.b].z);
+  var ta = Math.hypot(t.x - rrNodes[t.a].x, t.z - rrNodes[t.a].z);
+  var tb = Math.hypot(t.x - rrNodes[t.b].x, t.z - rrNodes[t.b].z);
+  var dist = [], prev = [], done = [];
+  for (var i = 0; i < N + 2; i++){ dist[i] = Infinity; prev[i] = -1; done[i] = false; }
+  dist[S] = 0;
+  function relax(u, v, w){ var nd = dist[u] + w; if (nd < dist[v]){ dist[v] = nd; prev[v] = u; } }
+  while (true){
+    var u = -1, best = Infinity;
+    for (var j = 0; j < N + 2; j++){ if (!done[j] && dist[j] < best){ best = dist[j]; u = j; } }
+    if (u === -1 || u === T) break;
+    done[u] = true;
+    if (u === S){
+      relax(S, s.a, sa); relax(S, s.b, sb);
+      if (sameSeg) relax(S, T, Math.hypot(s.x - t.x, s.z - t.z));
+    } else {
+      var al = rrAdj[u];
+      for (var q = 0; q < al.length; q++) relax(u, al[q].to, al[q].w);
+      if (u === t.a) relax(u, T, ta);
+      if (u === t.b) relax(u, T, tb);
+    }
+  }
+  if (dist[T] === Infinity) return null;
+  var seq = [], cur = prev[T];
+  while (cur !== -1 && cur !== S){ seq.push(cur); cur = prev[cur]; }
+  seq.reverse();
+  var pts = [{x: s.x, z: s.z}];
+  for (var r = 0; r < seq.length; r++) pts.push({x: rrNodes[seq[r]].x, z: rrNodes[seq[r]].z});
+  pts.push({x: t.x, z: t.z});
+  return pts;
+}
+// unit normal (perp to travel) in XZ
+function rrPerp(dx, dz){ var l = Math.hypot(dx, dz) || 1; return [dz / l, -dx / l]; }
+// One triangle-strip mesh for the whole polyline (plain THREE.Line is 1px in
+// r147 UMD — no Line2/jsm — so we build fat quads with mitred corners). UVs run
+// as world-distance / DASH_PERIOD along the length so a scrolling texture reads
+// as flow toward the destination. Rebuilt only on recompute, never per-frame.
+function rrBuildGeometry(pts){
+  var p = [];
+  for (var i = 0; i < pts.length; i++){
+    if (i === 0 || Math.hypot(pts[i].x - p[p.length - 1].x, pts[i].z - p[p.length - 1].z) > 0.4) p.push(pts[i]);
+  }
+  if (p.length < 2) return null;
+  var half = RIBBON_W * 0.5;
+  var verts = [], uvs = [], idx = [], cum = 0;
+  for (var i2 = 0; i2 < p.length; i2++){
+    var mx, mz;
+    if (i2 === 0){ var n0 = rrPerp(p[1].x - p[0].x, p[1].z - p[0].z); mx = n0[0]; mz = n0[1]; }
+    else if (i2 === p.length - 1){ var n1 = rrPerp(p[i2].x - p[i2 - 1].x, p[i2].z - p[i2 - 1].z); mx = n1[0]; mz = n1[1]; }
+    else {
+      var ni = rrPerp(p[i2].x - p[i2 - 1].x, p[i2].z - p[i2 - 1].z);
+      var no = rrPerp(p[i2 + 1].x - p[i2].x, p[i2 + 1].z - p[i2].z);
+      var sx = ni[0] + no[0], sz = ni[1] + no[1], sl = Math.hypot(sx, sz);
+      if (sl < 0.001){ mx = ni[0]; mz = ni[1]; }
+      else { var mux = sx / sl, muz = sz / sl, c = mux * ni[0] + muz * ni[1], sc = c > 0.25 ? 1 / c : 4; mx = mux * sc; mz = muz * sc; }
+    }
+    if (i2 > 0) cum += Math.hypot(p[i2].x - p[i2 - 1].x, p[i2].z - p[i2 - 1].z);
+    var u = cum / DASH_PERIOD;
+    verts.push(p[i2].x + mx * half, RIBBON_Y, p[i2].z + mz * half);
+    verts.push(p[i2].x - mx * half, RIBBON_Y, p[i2].z - mz * half);
+    uvs.push(u, 0, u, 1);
+  }
+  for (var k = 0; k < p.length - 1; k++){
+    var a = k * 2, b = k * 2 + 1, cc = (k + 1) * 2, d = (k + 1) * 2 + 1;
+    idx.push(a, cc, b, b, cc, d);
+  }
+  var g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  g.setIndex(idx);
+  return g;
+}
+var rrDashTex = makeTex(64, 8, function(g, w, h){
+  g.clearRect(0, 0, w, h);
+  g.fillStyle = 'rgba(205,205,205,0.82)';   // base -> tinted gold by material.color
+  g.fillRect(0, 0, w, h);
+  var grad = g.createLinearGradient(0, 0, w, 0);   // one bright pulse per tile
+  grad.addColorStop(0.0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.28, 'rgba(255,255,255,0)');
+  grad.addColorStop(1.0, 'rgba(255,255,255,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, w, h);
+});
+rrDashTex.wrapT = THREE.ClampToEdgeWrapping;
+var ribbonMat = new THREE.MeshBasicMaterial({color: RIBBON_COL, map: rrDashTex,
+  transparent: true, opacity: 0.82, depthWrite: false, side: THREE.DoubleSide});
+var ribbonMesh = new THREE.Mesh(new THREE.BufferGeometry(), ribbonMat);
+ribbonMesh.frustumCulled = false; ribbonMesh.renderOrder = 3; ribbonMesh.visible = false;
+scene.add(ribbonMesh);
+var beaconMat = new THREE.MeshBasicMaterial({color: RIBBON_COL, transparent: true,
+  opacity: 0.16, depthWrite: false, depthTest: false, side: THREE.DoubleSide});
+var beaconMesh = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, BEACON_H, 18, 1, true), beaconMat);
+beaconMesh.position.y = BEACON_H / 2; beaconMesh.renderOrder = 999; beaconMesh.visible = false;
+scene.add(beaconMesh);
+// One target for BOTH ribbon and beacon, mirroring the overlay marker
+// precedence exactly (drawMissionTarget vs drawObjectiveWaypoint): the
+// persistent objective when everything is idle, else the live mission's target
+// (m5 checkpoints, m3 tail, m4 horses, ...). Either may be null (all missions
+// beaten, or a mission stage with no single point), in which case the ribbon +
+// beacon hide just like the diamond does.
+function routeTarget(){
+  return allIdle() ? currentObjective() : missionTarget();
+}
+var rrLast = {tx: null, tz: null, px: 0, pz: 0, at: 0, has: false};
+function rrRecompute(t){
+  var pts = rrCompute(player.x, player.z, t.x, t.z);
+  var g = pts ? rrBuildGeometry(pts) : null;
+  ribbonMesh.geometry.dispose();
+  ribbonMesh.geometry = g || new THREE.BufferGeometry();
+  ribbonMesh.visible = !!g;
+  rrLast.tx = t.x; rrLast.tz = t.z; rrLast.px = player.x; rrLast.pz = player.z;
+  rrLast.at = performance.now(); rrLast.has = !!g;
+}
+function updateRouteRibbon(dt){
+  var t = (show.waypt && !CINE) ? routeTarget() : null;
+  if (!t){ ribbonMesh.visible = false; beaconMesh.visible = false; return; }
+  var now = performance.now();
+  // destination beacon: move to target, gentle pulse, fade out up close so it
+  // isn't blinding once the ring + hint take over from ~25 m in.
+  beaconMesh.position.set(t.x, BEACON_H / 2, t.z);
+  var d = Math.hypot(t.x - player.x, t.z - player.z);
+  var near = d < 25 ? Math.max(0, (d - 6) / 19) : 1;
+  beaconMat.opacity = (0.10 + 0.06 * (0.5 + 0.5 * Math.sin(now * 0.004))) * near;
+  beaconMesh.visible = near > 0.01;
+  // ribbon: scroll the dash every frame (cheap); rebuild geometry only per the
+  // recompute policy — target moved, player moved >20 m, or >3 s stale — and
+  // never more often than ~3x/s so a fast-moving target can't thrash Dijkstra.
+  rrDashTex.offset.x = (rrDashTex.offset.x - dt * 0.5) % 1;
+  var moved = Math.hypot(player.x - rrLast.px, player.z - rrLast.pz);
+  var tgtMoved = rrLast.tx === null || Math.hypot(t.x - rrLast.tx, t.z - rrLast.tz) > 1.5;
+  var due = tgtMoved || moved > 20 || (now - rrLast.at) > 3000;
+  if (due && (rrLast.tx === null || now - rrLast.at > 320)) rrRecompute(t);
+  else if (rrLast.has) ribbonMesh.visible = true;
+}
+if (window.__lt){   // dev hook (only under #debug=1): inspect the route graph
+  window.__lt.route = {ribbon: ribbonMesh, beacon: beaconMesh, nodes: rrNodes,
+    edges: rrEdges, target: routeTarget, compute: rrCompute, last: rrLast};
+}
+
 // ---------- main loop ----------
 var last = performance.now(), t0 = last, simT = 0;
 function fmtClock(h){
@@ -5620,6 +5848,7 @@ function frameStep(now){
   updateMission3(dt);
   updateMission4(dt);
   updateMission5(dt);
+  updateRouteRibbon(dt);
   updateRockets(dt);
   updateDrops(dt);
   updatePuffs(dt);

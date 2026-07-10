@@ -86,7 +86,7 @@ Handy while modding and testing — every one of these is real, parsed in `app.j
 | `#x=..&z=..` | Deep-link your spawn point, e.g. `#x=200&z=100`. Clamped to the world bounds. |
 | `#debug=1` | Exposes `window.__lt` in the console: `__lt.pos()`, `__lt.tp(x,z)`, `__lt.tpcar()`, `__lt.stage()`, `__lt.unlock()`, `__lt.radio()`, `__lt.tick()` (pump one frame in a hidden tab), and more. Your fastest way to jump around while building. |
 | `#ws=<url>` | Point at a specific relay, e.g. `#ws=wss://your-host`. `#ws=1` means "same origin." Default is same-origin over http(s). |
-| `#wp=0` | Force the objective waypoint marker off. |
+| `#wp=0` | Force the objective waypoint off — the diamond marker, the on-street route ribbon, and the destination beacon. |
 | `#cine=1` | **Cinematic capture:** chrome-free frame — no HUD, overlay, or captions, plus letterbox bars. Add `#debug=1` and drive scripted shots from the console via `window.__lt.cine`: `.shot({from,to,dur,ease})` (pose = `{x,y,z,ry,pitch}`, ry=yaw / pitch=tilt), `.orbit({x,z,r,y,degStart,degEnd,dur,lookY})`, `.follow({what:'car'\|'heli'\|'player',dist,height,dur})`, `.stop()`. Poll `__lt.cine.busy` to sequence moves; `.setBars(false)` drops the letterbox. |
 | `#admin=<token>` | Auto-run `/admin <token>` on connect (see admin commands). |
 | `?v=N` | A cache-bust query on the *page* URL. The game doesn't read it; it just changes the URL so a browser/CDN refetches `app.js`. The origin server already sends `no-cache` for `app.js`, so this mostly matters behind a CDN. |

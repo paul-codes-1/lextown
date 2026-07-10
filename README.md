@@ -64,7 +64,7 @@ Desktop mouse: click the game once to enter mouse-look (pointer lock) — the ca
 
 The HUD keeps just chat, status, and a `?` help button on screen; everything else (drone cam, first-person toggle, overlay toggles, sim speed) lives under the **SIM** menu in the corner. On touch devices the NERF / FIRE / E-VEH / JUMP buttons appear alongside it.
 
-A persistent **gold objective marker** always points to your next unbeaten mission — an on-screen diamond with its label and range, or a screen-edge arrow when the objective is behind you — with a one-time onboarding banner for first-timers; toggle it with **WAYPT** in the SIM menu (or force it off with `#wp=0`).
+A persistent **gold objective marker** always points to your next unbeaten mission — an on-screen diamond with its label and range, or a screen-edge arrow when the objective is behind you — and a **gold route line follows the real streets to it**, turning at the intersections, with a tall light beacon marking the destination over the skyline. A one-time onboarding banner shows for first-timers; toggle it all with **WAYPT** in the SIM menu (or force it off with `#wp=0`).
 
 Touch: left half of the screen is a virtual movement stick, right half orbits the camera, JUMP/FIRE/NERF buttons in the control rail.
 
