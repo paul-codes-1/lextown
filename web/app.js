@@ -2298,6 +2298,195 @@ function updateRotorSnd(){
   rotorGain.gain.setTargetAtTime(v * 0.55, AC.currentTime, 0.12);
 }
 
+// ---------- asset audio (generated suite: web/audio/*.mp3) ----------
+// MP3s baked offline by tools/gen-audio.mjs (ElevenLabs); the client only
+// fetches static files, lazily, on first use. Everything routes through
+// assetGain -> sndMaster so the SND toggle mutes the whole suite. The synth
+// SFX above stay authoritative for combat/heli; this layer adds the radio,
+// mission stingers, dispatch VO, and world ambience.
+var assetGain = null, radioGain = null;
+var clips = {};   // key -> {buf, cbs}
+function assetAudioInit(){
+  if (assetGain || !AC) return;
+  assetGain = AC.createGain(); assetGain.gain.value = 1; assetGain.connect(sndMaster);
+  radioGain = AC.createGain(); radioGain.gain.value = 0.5; radioGain.connect(assetGain);
+}
+function loadClip(key, cb){
+  var c = clips[key];
+  if (c && c.buf){ if (cb) cb(c.buf); return; }
+  if (c){ if (cb) c.cbs.push(cb); return; }
+  c = clips[key] = {buf: null, cbs: cb ? [cb] : []};
+  fetch('audio/' + key + '.mp3').then(function(r){
+    if (!r.ok) throw new Error('http ' + r.status);
+    return r.arrayBuffer();
+  }).then(function(ab){
+    return new Promise(function(res, rej){ AC.decodeAudioData(ab, res, rej); });
+  }).then(function(buf){
+    c.buf = buf;
+    var cbs = c.cbs; c.cbs = [];
+    for (var i = 0; i < cbs.length; i++) cbs[i](buf);
+  }).catch(function(){ delete clips[key]; });   // missing asset = silent no-op
+}
+function playClip(key, opts){
+  if (!AC || !sndOn) return null;
+  assetAudioInit();
+  opts = opts || {};
+  var h = {src: null, stopped: false, g: AC.createGain()};
+  h.g.gain.value = opts.gain !== undefined ? opts.gain : 0.8;
+  h.g.connect(opts.out || assetGain);
+  h.stop = function(){
+    h.stopped = true;
+    if (h.src){ try { h.src.onended = null; h.src.stop(); } catch (e){} }
+    try { h.g.disconnect(); } catch (e){}
+  };
+  loadClip(key, function(buf){
+    if (h.stopped) return;
+    var s = AC.createBufferSource();
+    s.buffer = buf; s.loop = !!opts.loop;
+    if (opts.rate) s.playbackRate.value = opts.rate;
+    s.connect(h.g);
+    if (opts.onended) s.onended = opts.onended;
+    var off = opts.offsetFrac ? buf.duration * opts.offsetFrac : 0;
+    if (off > buf.duration - 2) off = 0;
+    s.start(AC.currentTime, off);
+    h.src = s;
+  });
+  return h;
+}
+// looping ambience beds: created at gain 0 on first demand, then steered
+var ambLoops = {};
+function ambSet(key, target, rate){
+  var L = ambLoops[key];
+  if (!L){
+    if (target < 0.02) return;
+    var h = playClip(key, {gain: 0, loop: true, rate: rate});
+    if (!h) return;   // muted or no AC yet — retried next tick
+    L = ambLoops[key] = {h: h};
+  }
+  L.h.g.gain.setTargetAtTime(target, AC.currentTime, 0.5);
+}
+
+// --- car radio ---
+var RADIO_STATIONS = [
+  {name: 'RADIO OFF'},
+  {name: 'BIG BLUE RADIO 100.1 FM',
+   music: ['radio_bg_1', 'radio_bg_2', 'radio_bg_3'],
+   breaks: ['radio_id_1', 'radio_id_2', 'ad_als', 'ad_cars', 'ad_park', 'ad_psa']},
+  {name: 'NEWS 630 THE BLOCK',
+   talk: ['news_id', 'news_1', 'news_wx', 'news_2', 'news_traffic', 'news_caller',
+          'ad_psa', 'ad_park', 'ad_als']}
+];
+var radio = {st: 1, cur: null, last: '', lastKind: '', token: 0};
+try { radio.st = Math.min(RADIO_STATIONS.length - 1, Math.max(0, parseInt(localStorage.getItem('lt_radio') || '1', 10) || 0)); } catch (e){}
+function radioActive(){ return radio.st > 0 && mode === 'player' && !!player.veh; }
+function radioPick(){
+  var st = RADIO_STATIONS[radio.st], pool;
+  if (st.music){
+    var brk = radio.lastKind === 'music' && Math.random() < 0.45;
+    pool = brk ? st.breaks : st.music;
+    radio.lastKind = brk ? 'break' : 'music';
+  } else {
+    pool = st.talk; radio.lastKind = 'talk';
+  }
+  var key = pool[(Math.random() * pool.length) | 0];
+  var guard = 4;
+  while (key === radio.last && pool.length > 1 && guard-- > 0)
+    key = pool[(Math.random() * pool.length) | 0];
+  radio.last = key;
+  return key;
+}
+function radioStop(){
+  radio.token++;
+  if (radio.cur) radio.cur.stop();
+  radio.cur = null;
+}
+function radioNext(tuneIn){
+  radioStop();
+  if (!radioActive()) return;
+  var tok = radio.token;
+  var key = radioPick();
+  radio.cur = playClip(key, {
+    gain: 1, out: radioGain,
+    // tuning into a music station mid-song sells the "it was already on" feel
+    offsetFrac: tuneIn && radio.lastKind === 'music' ? Math.random() * 0.7 : 0,
+    onended: function(){ if (tok === radio.token) radioNext(false); }
+  });
+  if (!radio.cur) radioStop();
+}
+function cycleRadio(){
+  if (!player.veh || mode !== 'player') return;
+  pokeAudio(); assetAudioInit();
+  radio.st = (radio.st + 1) % RADIO_STATIONS.length;
+  try { localStorage.setItem('lt_radio', String(radio.st)); } catch (e){}
+  playClip('sfx_static', {gain: 0.4});
+  caption('RADIO', RADIO_STATIONS[radio.st].name, 1800);
+  if (radio.st > 0) radioNext(true);
+  else radioStop();
+  syncBtns();
+}
+
+// --- world/mission audio watcher, ticked from frame() ---
+var PARK_PTS = [[-171, 40], [122, 50], [250, 50], [350, 300], [150, -535], [150, -874]];
+var BELL_PT = {x: -46, z: -262};   // First Presbyterian tower
+var aw = {m1: '', m2: '', m3: '', m4: '', hFloor: -1, horse: [], acc: 0};
+function stinger(stage, prev){
+  if (stage === prev) return stage;
+  if (prev !== ''){   // skip the very first observation (page load)
+    if (stage === 'intro' || stage === 'brief') playClip('st_start', {gain: 0.7});
+    else if (stage === 'won') playClip('st_win', {gain: 0.8});
+    else if (stage === 'fail') playClip('st_fail', {gain: 0.8});
+  }
+  return stage;
+}
+function updateAssetAudio(dt){
+  if (!AC) return;
+  assetAudioInit();
+  // mission stingers on stage transitions (one watcher, no per-mission hooks)
+  aw.m1 = stinger(mission.stage, aw.m1);
+  aw.m2 = stinger(mission2.stage, aw.m2);
+  aw.m3 = stinger(mission3.stage, aw.m3);
+  aw.m4 = stinger(mission4.stage, aw.m4);
+  // horses: whinny on bolt, gallop bed while one is bolting / being ridden
+  var gallop = 0, gallopRate = 1;
+  for (var i = 0; i < m4Horses.length; i++){
+    var h = m4Horses[i];
+    var hd = Math.hypot(h.g.position.x - player.x, h.g.position.z - player.z);
+    if (h.state === 'bolt' && aw.horse[i] !== 'bolt' && hd < 150)
+      playClip('sfx_whinny', {gain: Math.max(0.15, 1 - hd / 150) * 0.8});
+    aw.horse[i] = h.state;
+    if (h.state === 'bolt') gallop = Math.max(gallop, (1 - Math.min(1, hd / 120)) * 0.6);
+    if (h.state === 'riding' || h.state === 'trot'){ gallop = Math.max(gallop, 0.5); gallopRate = 1.08; }
+  }
+  // slow ticks: ambience beds + bells
+  aw.acc += dt;
+  if (aw.acc < 0.25) return;
+  aw.acc = 0;
+  ambSet('sfx_gallop', gallop, gallopRate);
+  var night = envAt(simH).night;
+  var pd = 1e9;
+  for (var k = 0; k < PARK_PTS.length; k++){
+    var dpk = Math.hypot(PARK_PTS[k][0] - player.x, PARK_PTS[k][1] - player.z);
+    if (dpk < pd) pd = dpk;
+  }
+  ambSet('amb_birds', Math.max(0, 1 - pd / 160) * 0.45 * (1 - night));
+  var dc = Math.hypot(player.x, player.z);
+  ambSet('amb_hum', Math.max(0, 1 - dc / 500) * (0.22 - night * 0.08));
+  ambSet('amb_wind', m2Sky * 0.55);
+  // church bells at 06:00 / 12:00 / 18:00 sim time, if within earshot
+  var hf = Math.floor(simH);
+  if (hf !== aw.hFloor){
+    var first = aw.hFloor === -1;
+    aw.hFloor = hf;
+    if (!first && hf > 0 && hf % 6 === 0){
+      var bd = Math.hypot(BELL_PT.x - player.x, BELL_PT.z - player.z);
+      if (bd < 420) playClip('amb_bells', {gain: Math.max(0.08, 1 - bd / 420) * 0.7});
+    }
+  }
+  // radio resumes if a clip failed to start (e.g. tuned while muted)
+  if (radioActive() && !radio.cur) radioNext(true);
+  if (!radioActive() && radio.cur) radioStop();
+}
+
 // ---------- mission: THE RIBBON CUTTING ----------
 // The mayor dedicates "a horse statue" at City Hall; the news chopper keeps
 // buzzing the press conference. Shoot it down with the ceremonial RPG.
@@ -3657,7 +3846,29 @@ if (/debug=1/.test(hashStr)){
     m4horses: function(){ return m4Horses.map(function(h){ return {s: h.state, x: Math.round(h.g.position.x), z: Math.round(h.g.position.z)}; }); },
     photo: function(){ takePhoto(); },
     tp: function(x, z){ player.x = x; player.z = z; player.y = groundY(x, z); },
+    tick: function(){ frameStep(performance.now()); },   // pump one frame while rAF is paused (hidden tab)
+    tpcar: function(){   // hop next to the nearest vehicle (radio/drive testing)
+      var best = null, bd = 1e12;
+      for (var k = 0; k < vehicles.length; k++){
+        var g = vehicles[k].g;
+        var dx = g.position.x - player.x, dz = g.position.z - player.z;
+        var d2 = dx * dx + dz * dz;
+        if (d2 < bd){ bd = d2; best = vehicles[k]; }
+      }
+      if (best){
+        player.x = best.g.position.x + 2; player.z = best.g.position.z;
+        player.y = groundY(player.x, player.z);
+      }
+      return Math.round(Math.sqrt(bd));
+    },
     audio: function(){ pokeAudio(); return AC ? AC.state : 'none'; },
+    radio: function(){ return {st: radio.st, name: RADIO_STATIONS[radio.st].name, playing: !!radio.cur, last: radio.last}; },
+    aud: function(){
+      var g = {};
+      for (var k in ambLoops) g[k] = Math.round(ambLoops[k].h.g.gain.value * 100) / 100;
+      return {simH: Math.round(simH * 10) / 10, night: envAt(simH).night, hFloor: aw.hFloor, loops: g};
+    },
+    clips: function(){ return Object.keys(clips).map(function(k){ return k + (clips[k].buf ? ':ok' : ':loading'); }); },
     pos: function(){ return {x: player.x, y: player.y, z: player.z}; },
     cam: function(){ return {az: rigP.az, el: rigP.el}; },
     setCam: function(az, el){ rigP.az = az; if (el !== undefined) rigP.el = el; followPause = 3; },
@@ -3755,6 +3966,8 @@ function tryEnterExit(){
     var px = v.g.position.x + Math.sin(v.th) * 3.4;
     var pz = v.g.position.z + Math.cos(v.th) * 3.4;
     player.veh = null;
+    radioStop();
+    playClip('sfx_door', {gain: 0.6});
     player.av.g.visible = true;
     player.x = px; player.z = pz;
     player.y = groundY(px, pz, player.y + 1); player.vy = 0;
@@ -3774,6 +3987,9 @@ function tryEnterExit(){
   player.veh = nv;
   player.av.g.visible = false;
   rigP.r = Math.max(rigP.r, 17);
+  playClip('sfx_door', {gain: 0.6});
+  playClip('sfx_engine', {gain: 0.5});
+  if (radio.st > 0) setTimeout(function(){ if (radioActive()) radioNext(true); }, 900);
 }
 function updateDrive(dt){
   var v = player.veh;
@@ -4471,6 +4687,7 @@ window.addEventListener('keydown', function(e){
   if (k === 'f') fireAction();
   if (k === 'b') setToggle('box');
   if (k === 'l') setToggle('lbl');
+  if (k === 'r') cycleRadio();
   if (k === 'c'){
     if (mode === 'player'){ camFP = !camFP; syncBtns(); }
     else { autoCam = !autoCam; tween = null; pTimer = 0; syncBtns(); }
@@ -4525,7 +4742,8 @@ var els = {
   bPause: document.getElementById('bPause'),
   bFP: document.getElementById('bFP'), bMenu: document.getElementById('bMenu'),
   tray: document.getElementById('tray'),
-  bSnd: document.getElementById('bSnd'), bScores: document.getElementById('bScores'),
+  bSnd: document.getElementById('bSnd'), bRadio: document.getElementById('bRadio'),
+  bScores: document.getElementById('bScores'),
   scores: document.getElementById('scores'),
   s1: document.getElementById('s1'), s60: document.getElementById('s60'), s300: document.getElementById('s300')
 };
@@ -4545,6 +4763,7 @@ function syncBtns(){
   els.bMenu.classList.toggle('on', !els.tray.hidden);
   els.bSnd.classList.toggle('on', sndOn);
   els.bSnd.textContent = sndOn ? 'SND ON' : 'SND OFF';
+  els.bRadio.classList.toggle('on', radio.st > 0);
   els.camlabel.textContent = mode === 'player'
     ? (camFP ? 'CAM-FP · ' : 'CAM-FOLLOW · ') + myName
     : 'CAM-ORBIT · ' + (autoCam ? 'AUTO' : 'MANUAL');
@@ -4561,6 +4780,7 @@ els.bFP.onclick = function(){
 };
 els.bMenu.onclick = function(){ els.tray.hidden = !els.tray.hidden; syncBtns(); };
 els.bSnd.onclick = function(){ pokeAudio(); setSnd(!sndOn); };
+els.bRadio.onclick = cycleRadio;
 els.bScores.onclick = function(){ showScores(0); };
 document.getElementById('scoreClose').onclick = function(){ els.scores.hidden = true; };
 els.scores.addEventListener('pointerdown', function(e){ if (e.target === els.scores) els.scores.hidden = true; });
@@ -4606,7 +4826,10 @@ function tutClose(){
   if (!_welcomed && !heliUnlocked && allIdle()){
     _welcomed = true;
     setTimeout(function(){
-      if (allIdle()) caption('DISPATCH', 'WELCOME TO LEXTOWN. SEE THE GOLD RING BY CITY HALL? GO PRESS E ON IT. TRUST ME.', 6500);
+      if (allIdle()){
+        caption('DISPATCH', 'WELCOME TO LEXTOWN. SEE THE GOLD RING BY CITY HALL? GO PRESS E ON IT. TRUST ME.', 6500);
+        playClip('vo_welcome', {gain: 0.85});
+      }
     }, 4000);
   }
 }
@@ -4911,6 +5134,9 @@ function fmtElapsed(s){
 }
 function frame(now){
   requestAnimationFrame(frame);
+  frameStep(now);
+}
+function frameStep(now){
   var dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   if (!paused){
@@ -4933,6 +5159,7 @@ function frame(now){
   updatePuffs(dt);
   updatePickups(dt);
   updateRotorSnd();
+  updateAssetAudio(dt);
   netTick(dt);
   diagTick(dt);
   if (mode === 'drone'){
