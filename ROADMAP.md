@@ -38,6 +38,15 @@ The retention release. Detailed build spec lives in `PHASE1-SPEC.md`.
 - **HORSEPOWER gets found.** Mission 4 has *zero* recorded completions. The new
   waypoint plus per-horse guidance and a first-attempt coaching line fix the
   "I never found the green ring" problem; difficulty tuning follows the data.
+- **New Circle Road, the whole loop.** The beltline stops being a single
+  northern edge: east, west, and south legs close the ring around the city,
+  with real crossings where the grid's radials meet it. Lap it.
+- **Cinematic mode.** `#cine=1` gives a chrome-free letterboxed frame, and a
+  scripted camera (`__lt.cine` under `#debug=1`) does dollies, orbits, and
+  chase shots — built for the teaser trailer, free for anyone making videos.
+- **A real modding guide.** `MODDING.md`: recipes for missions, landmarks,
+  streets, radio stations, and NPCs — written so you can hand the repo to an
+  AI coding agent and it'll mod safely. Fork the city.
 
 ---
 

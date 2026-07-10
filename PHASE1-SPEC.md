@@ -15,6 +15,10 @@ Ground rules that bind all four (from CLAUDE.md, do not violate):
 - No map growth this phase. If any feature ever needed to extend the world
   bounds, `WORLD` in `server.js` must move in lockstep with `X0/X1/Z0/Z1` in
   `app.js` — but nothing in Phase 1 does, and that's deliberate.
+  *(Addendum, as-shipped: the New Circle Road beltline was added mid-phase as
+  owner-requested follow-on scope, outside F1–F4. It DID grow the map — extents
+  to X0=-720/X1=820/Z0=-1500/Z1=1000 with server WORLD moved in lockstep — so
+  the "no map growth" rule above describes the original F1–F4 scope only.)*
 - Verification is the standing one: `node --check web/app.js && node --check
   server.js`, then two browser tabs against localhost exercising the feature.
 

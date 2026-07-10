@@ -47,6 +47,47 @@ if you do, switch Caddy to a CF origin cert or keep LE via DNS challenge).
 cd /opt/lextown && sudo git pull && sudo systemctl restart lextown
 ```
 
+## Ambient NPCs (optional)
+
+`bots/npcs.mjs` runs a handful of preset-line chatter characters (no AI calls)
+that connect to the relay as ordinary clients so the city feels inhabited when
+few humans are online. They degrade gracefully — if the process dies the game
+is unaffected, you just get fewer chatters. They are excluded from the human
+join/peak stats and from cheat heuristics but stay visible in-world and appear
+in the `/admin/stats` roster tagged `npc:1`.
+
+The `npc` tag is a shared secret. **systemd gotcha:** `Environment=` lines do
+not expand `${VAR}` from another unit's drop-in, so the same literal token must
+be written into BOTH the NPC unit's drop-in and the server's env drop-in. The
+NPC process appends it to the WS URL as `?npc=<token>` itself; the server reads
+`NPC_TOKEN` from its own environment and compares.
+
+```bash
+# 1. install the NPC unit
+sudo cp deploy/lextown-npcs.service /etc/systemd/system/
+
+# 2. give the SERVER the token (same file as ADMIN_TOKEN, or a new drop-in)
+sudo mkdir -p /etc/systemd/system/lextown.service.d
+printf '[Service]\nEnvironment=NPC_TOKEN=%s\n' "$(openssl rand -hex 16)" \
+  | sudo tee /etc/systemd/system/lextown.service.d/npc.conf
+# copy the value it printed — it must match the NPC drop-in below
+
+# 3. give the NPC process the SAME token
+sudo mkdir -p /etc/systemd/system/lextown-npcs.service.d
+sudo tee /etc/systemd/system/lextown-npcs.service.d/npc.conf <<'EOF'
+[Service]
+Environment=NPC_TOKEN=PASTE_THE_SAME_TOKEN_HERE
+EOF
+
+# 4. reload + start both (restart the server so it picks up NPC_TOKEN)
+sudo systemctl daemon-reload
+sudo systemctl restart lextown
+sudo systemctl enable --now lextown-npcs
+```
+
+Without a token the NPCs still connect and chat — they just count as ordinary
+players in the stats. `journalctl -u lextown-npcs -f` shows their join lines.
+
 ## Notes
 
 - The client auto-connects `wss://` same-origin, so no client config is needed.

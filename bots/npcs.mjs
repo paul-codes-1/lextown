@@ -14,6 +14,13 @@
 import WebSocket from 'ws';
 
 const WS_URL = process.env.LEXTOWN_WS || 'ws://localhost:8080';
+// Optional shared secret; when set, the server tags these connections as NPCs
+// (excluded from human stats + cheat heuristics). Appended to the WS URL as a
+// query param so operators can leave LEXTOWN_WS clean. Never logged.
+const NPC_TOKEN = process.env.NPC_TOKEN || '';
+const CONNECT_URL = NPC_TOKEN
+  ? WS_URL + (WS_URL.includes('?') ? '&' : '?') + 'npc=' + encodeURIComponent(NPC_TOKEN)
+  : WS_URL;
 const NPC_COUNT = Math.min(6, parseInt(process.env.NPC_COUNT || '5', 10) || 5);
 const AMBIENT_MS = parseInt(process.env.NPC_AMBIENT_MS || '', 10) || 240e3;
 
@@ -161,7 +168,7 @@ function pickLine(npc, list) {
   return list[(Math.random() * list.length) | 0];
 }
 
-function makeNpc(persona) {
+function makeNpc(persona, i) {
   const npc = {
     ...persona,
     ws: null, alive: false,
@@ -175,12 +182,17 @@ function makeNpc(persona) {
   };
   npc.line = npc.axis === 'x' ? EW[(Math.random() * EW.length) | 0] : NS[(Math.random() * NS.length) | 0];
   npc.s = -150 + Math.random() * 300;
+  // Seed the first two NPCs right by the player spawn (x:14, z:-9.5) so a fresh
+  // player sees a couple of people moving within the first few seconds. (axis
+  // 'x' walks E-W with z = line+side; axis 'z' walks N-S with x = line+side.)
+  if (i === 0) { npc.axis = 'x'; npc.line = 0; npc.side = -11; npc.s = 14; npc.dir = 1; }
+  else if (i === 1) { npc.axis = 'z'; npc.line = 0; npc.side = 11; npc.s = -9.5; npc.dir = -1; }
   return npc;
 }
 const npcs = PERSONAS.slice(0, NPC_COUNT).map(makeNpc);
 
 function connect(npc) {
-  const ws = new WebSocket(WS_URL);
+  const ws = new WebSocket(CONNECT_URL);
   npc.ws = ws;
   ws.on('open', () => { npc.alive = true; console.log(`[join] ${npc.n}`); });
   ws.on('close', () => {

@@ -29,17 +29,25 @@ scene.fog = new THREE.FogExp2(0x1a1030, 0.0011);
 
 // ---------- street grid ----------
 var SW = 16;                      // street width
-var X0 = -520, X1 = 620, Z0 = -1500, Z1 = 800;   // map extents
+var X0 = -720, X1 = 820, Z0 = -1500, Z1 = 1000;   // map extents
 // dirs: EW +1 = eastbound(+x); NS +1 = southbound(+z)
 // Streets can carry a partial extent (x0/x1 on EW, z0/z1 on NS) so they end
 // where they really end — MLK and Upper stop at Euclid, Mill at Maxwell,
 // Rose starts at Main — instead of slicing through the UK superblock.
-// EW must stay sorted north→south (the block loop pairs consecutive rows).
-// North of New Circle Rd (the Urban Service Boundary) there is no grid at
-// all — Broadway continues as Paris Pike, Limestone as Russell Cave Rd,
-// and the horse farms are hand-built.
+// EW must stay sorted north→south (the block loop pairs consecutive rows);
+// NS must stay sorted west→east for the same reason.
+// New Circle Rd is a full beltline loop (belt:true on all four legs): the
+// northern leg (z=-950) is the Urban Service Boundary, a southern leg (z=900)
+// and east/west legs (x=720 / x=-620) close the ring around the built city.
+// Each leg carries partial extents so the four legs terminate at the corners.
+// The loop is sidewalk-free and open-shouldered: belt legs are skipped by both
+// pedStreets and the block-fill loop, so the fringe between the outer grid and
+// the beltline stays grass. Full-extent grid streets run out to cross the legs
+// (that is how the loop hooks into the grid). North of the USB there is no grid
+// — Broadway continues as Paris Pike, Limestone as Russell Cave Rd, and the
+// horse farms are hand-built.
 var EW = [
-  {name:'NEW CIRCLE RD', z:-950, dirs:[1,-1]},
+  {name:'NEW CIRCLE RD', z:-950, dirs:[1,-1], x0:-620, x1:720, belt:true},  // north leg / USB
   {name:'LOUDON AVE',    z:-800, dirs:[1,-1], x0:-200, x1:200},
   {name:'SEVENTH ST',    z:-700, dirs:[1],    x0:-200, x1:200},
   {name:'SIXTH ST',      z:-600, dirs:[-1],   x0:-200, x1:200},
@@ -52,9 +60,11 @@ var EW = [
   {name:'VINE ST',    z:100,  dirs:[-1]},
   {name:'HIGH ST',    z:200,  dirs:[1,-1]},
   {name:'MAXWELL ST', z:300,  dirs:[1],    x0:-200, x1:300},
-  {name:'EUCLID AVE', z:400,  dirs:[1,-1], x0:100}
+  {name:'EUCLID AVE', z:400,  dirs:[1,-1], x0:100},
+  {name:'NEW CIRCLE RD', z:900, dirs:[1,-1], x0:-620, x1:720, belt:true}  // south leg
 ];
 var NS = [
+  {name:'NEW CIRCLE RD', x:-620, dirs:[1,-1], z0:-950, z1:900, belt:true}, // west leg
   {name:'BROADWAY',  x:-200, dirs:[1,-1]},                    // Paris Pike up north
   {name:'MILL ST',   x:-100, dirs:[-1],  z0:-400, z1:300},
   {name:'UPPER ST',  x:0,    dirs:[-1],  z0:-800, z1:400},
@@ -62,7 +72,8 @@ var NS = [
   {name:'MLK BLVD',  x:200,  dirs:[1,-1], z0:-800, z1:400},
   {name:'ROSE ST',   x:300,  dirs:[1,-1], z0:0},
   {name:'WOODLAND',  x:400,  dirs:[1,-1], z0:0, z1:400},
-  {name:'ASHLAND',   x:500,  dirs:[1,-1], z0:200}
+  {name:'ASHLAND',   x:500,  dirs:[1,-1], z0:200},
+  {name:'NEW CIRCLE RD', x:720, dirs:[1,-1], z0:-950, z1:900, belt:true}   // east leg
 ];
 function ewLo(s){ return s.x0 === undefined ? X0 : s.x0; }
 function ewHi(s){ return s.x1 === undefined ? X1 : s.x1; }
@@ -476,6 +487,9 @@ for (var i = 0; i < NS.length - 1; i++){
   for (var j = 0; j < EW.length - 1; j++){
     var bx0 = NS[i].x + SW / 2 + 3, bx1 = NS[i + 1].x - SW / 2 - 3;
     var bz0 = EW[j].z + SW / 2 + 3, bz1 = EW[j + 1].z - SW / 2 - 3;
+    // beltline legs bound the outer ring; leave that fringe open (grass), never
+    // fill it with towers/houses — keeps edge-of-town sparse and authentic.
+    if (EW[j].belt || EW[j + 1].belt || NS[i].belt || NS[i + 1].belt) continue;
     if (SKIP[NS[i].name + '|' + EW[j].name]) continue;
     // all four bounding street segments must exist here (partial extents);
     // uncovered regions (campus, Chevy Chase, NE side) are hand-built below
@@ -1067,6 +1081,18 @@ function pond(x, z, rx, rz){
   });
 })();
 
+// ---------- New Circle Rd beltline labels ----------
+// Green sign blades already auto-render 'NEW CIRCLE RD' at every crossing
+// (from XINGS); these ambient labels only mark the long open stretches between
+// crossings so the loop reads as one continuous road from a distance.
+[[-410, -950], [470, -950],           // north leg (USB) — outside the Broadway/Lime blades
+ [-410, 900], [610, 900],             // south leg
+ [-620, -600], [-620, 560],           // west leg
+ [720, -600], [720, 620]              // east leg
+].forEach(function(p){
+  labels.push({name: 'NEW CIRCLE RD', x: p[0], y: 11, z: p[1]});
+});
+
 // ---------- houses (instanced: one draw per siding color + roof color) ----------
 (function(){
   if (!housePts.length) return;
@@ -1409,10 +1435,12 @@ var pedHeadG = new THREE.SphereGeometry(0.22, 8, 8);
 var peds = [];
 var pedStreets = [];
 EW.forEach(function(s){
+  if (s.belt) return;   // no sidewalks on the New Circle beltline
   pedStreets.push({axis: 'x', c: s.z, lo: Math.max(ewLo(s) + 40, -230), hi: ewHi(s) - 40});
 });
 NS.forEach(function(s){
-  // sidewalks stop at the USB — nobody window-shops on Paris Pike
+  // sidewalks stop at the USB — nobody window-shops on Paris Pike (or the beltline)
+  if (s.belt) return;
   pedStreets.push({axis: 'z', c: s.x, lo: Math.max(nsLo(s) + 40, -920), hi: nsHi(s) - 40});
 });
 for (var pk = 0; pk < 64; pk++){
@@ -2752,18 +2780,20 @@ function showScores(myMs, board){
   var you;
   if (myMs){
     var verb = board === 2 ? 'PLOWED IN ' : board === 3 ? 'STORY BROKEN IN ' :
-               board === 4 ? 'HORSES HOME IN ' : 'CHOPPER DOWN IN ';
+               board === 4 ? 'HORSES HOME IN ' : board === 5 ? 'DEADLINE MET IN ' : 'CHOPPER DOWN IN ';
     you = verb + fmtMs(myMs) + ' · +' + missionPoints(myMs) + ' PTS';
-    var best = board === 2 ? m2Best : board === 3 ? m3Best : board === 4 ? m4Best : missionBest;
+    var best = board === 2 ? m2Best : board === 3 ? m3Best : board === 4 ? m4Best :
+               board === 5 ? m5Best : missionBest;
     if (best) you += ' · DEVICE BEST ' + fmtMs(best);
   } else {
     you = (missionBest ? 'RIBBON: ' + fmtMs(missionBest) : 'RIBBON: —') +
       ' · ' + (m2Best ? 'SNOW: ' + fmtMs(m2Best) : 'SNOW: —') +
       ' · ' + (m3Best ? 'DATA CENTER: ' + fmtMs(m3Best) : 'DATA CENTER: —') +
-      ' · ' + (m4Best ? 'HORSEPOWER: ' + fmtMs(m4Best) : 'HORSEPOWER: —');
+      ' · ' + (m4Best ? 'HORSEPOWER: ' + fmtMs(m4Best) : 'HORSEPOWER: —') +
+      ' · ' + (m5Best ? 'DEADLINE: ' + fmtMs(m5Best) : 'DEADLINE: —');
   }
   document.getElementById('scoreYou').textContent = you;
-  ['scoreList', 'scoreList2', 'scoreList3', 'scoreList4'].forEach(function(id){
+  ['scoreList', 'scoreList2', 'scoreList3', 'scoreList4', 'scoreList5'].forEach(function(id){
     var list = document.getElementById(id);
     if (!list) return;
     list.textContent = '';
@@ -2795,6 +2825,7 @@ function renderScores(m){
   fill('scoreList2', m.m2 || []);
   fill('scoreList3', m.m3 || []);
   fill('scoreList4', m.m4 || []);
+  fill('scoreList5', m.m5 || []);
 }
 function updateMission(dt){
   var now = performance.now();
@@ -3651,7 +3682,17 @@ function startMission4(){
   mission4.t0 = 0; mission4.penned = 0; mission4.capAt = 0;
   var trainer = spawnNpc(245, 68, 0x4a7a52, Math.PI, 0.95);
   m4Npcs.push(trainer);
-  caption('THE TRAINER', 'YOU. HORSE EMERGENCY. THREE OF OURS GOT LOOSE. THE AUCTION IS TONIGHT.', 4400);
+  // First-ever attempt leads with the spook rule (the likeliest reason m4
+  // stalls); once coached, returning players get the flavor intro instead.
+  // One caption() call only — a second would clobber the first the same frame.
+  var m4Coached = true;
+  try { m4Coached = localStorage.getItem('lt_m4_coached') === '1'; } catch (e){}
+  if (!m4Coached){
+    caption('THE TRAINER', 'WALK UP SLOW - RUN AND THE HORSE BOLTS.', 4200);
+    try { localStorage.setItem('lt_m4_coached', '1'); } catch (e){}
+  } else {
+    caption('THE TRAINER', 'YOU. HORSE EMERGENCY. THREE OF OURS GOT LOOSE. THE AUCTION IS TONIGHT.', 4400);
+  }
   addChatLine('* MISSION', 'HORSEPOWER - bring the loose horses home', true);
 }
 function m4Cleanup(){
@@ -3844,9 +3885,124 @@ function updateMission4(dt){
   if (mission4.stage === 'fail'){ if (t > 5) m4Cleanup(); return; }
   if (mission4.stage === 'post'){ if (t > 22) m4Cleanup(); }
 }
+
+// ---------- mission 5: DEADLINE ----------
+// NEWS 630 "THE BLOCK" needs footage for the six o'clock. Steal the news car
+// at the newsroom ring on Main and drive five downtown checkpoints against a
+// 180s clock. A checkpoint only banks while you're IN a car (on foot the ring
+// shows but doesn't count) so it reads as a driving mission. The route flows
+// with the one-way grid (Main is eastbound; High/MLK/Broadway are two-way).
+// Declared here — before the labels.push block below runs — so M5_TRIG exists
+// when that top-level statement reads M5_TRIG.x (statement order matters).
+var M5_TRIG = {x: 60, z: 14};                       // Main St south sidewalk, THE BLOCK newsroom
+var M5_CPS = [
+  {x: 200, z: 0,    name: 'THOROUGHBRED PARK'},     // MLK & Main
+  {x: 200, z: 200,  name: 'MLK AND HIGH'},          // MLK & High
+  {x: -200, z: 200, name: 'RUPP ARENA'},            // Broadway & High
+  {x: 0,   z: 0,    name: 'CHEAPSIDE COURTHOUSE'},  // Main & Upper
+  {x: 60,  z: 0,    name: 'THE BLOCK - WRAP'}       // finish on Main by the newsroom
+];
+var M5_BUDGET = 180;                                // seconds on the clock
+var m5Best = 0;
+try { m5Best = parseInt(localStorage.getItem('lt_m5_best') || '0', 10) || 0; } catch (e){}
+var mission5 = {stage: 'idle', tStage: 0, t0: 0, ms: 0, cur: 0, capIdx: 0};
+var m5Rings = [], m5Trig = null;
+(function(){
+  m5Trig = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.06, 6, 24),
+    new THREE.MeshBasicMaterial({color: 0xffd400, transparent: true, opacity: 0.85}));
+  m5Trig.rotation.x = Math.PI / 2;
+  m5Trig.position.set(M5_TRIG.x, 0.9, M5_TRIG.z);
+  scene.add(m5Trig);
+  M5_CPS.forEach(function(cp){
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(4.5, 0.12, 6, 28),
+      new THREE.MeshBasicMaterial({color: 0xffd400, transparent: true, opacity: 0.7}));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(cp.x, 1.2, cp.z);
+    ring.visible = false;
+    scene.add(ring);
+    m5Rings.push(ring);
+  });
+})();
+function nearM5Trig(){
+  var dx = player.x - M5_TRIG.x, dz = player.z - M5_TRIG.z;
+  return dx * dx + dz * dz < 16;
+}
+function startMission5(){
+  mission5.stage = 'driving'; mission5.tStage = 0; mission5.capIdx = 0;
+  mission5.cur = 0; mission5.ms = 0; mission5.t0 = performance.now();
+  caption('THE BLOCK', 'THE BLOCK NEEDS ART FOR THE SIX O CLOCK. GRAB A CAR AND GET ME THESE FIVE SHOTS.', 5200);
+  addChatLine('* MISSION', 'DEADLINE - drive five downtown checkpoints before air', true);
+}
+function m5Cleanup(){
+  mission5.stage = 'idle';
+  for (var k = 0; k < m5Rings.length; k++) m5Rings[k].visible = false;
+}
+function updateMission5(dt){
+  if (m5Trig){
+    m5Trig.visible = allIdle();
+    if (m5Trig.visible) m5Trig.rotation.z += dt * 0.8;
+  }
+  if (mission5.stage === 'idle') return;
+  var now = performance.now();
+  mission5.tStage += dt;
+  var t = mission5.tStage;
+  if (mission5.stage === 'driving'){
+    // only the current checkpoint ring is lit; it spins slowly
+    for (var k = 0; k < m5Rings.length; k++){
+      var on = k === mission5.cur;
+      m5Rings[k].visible = on;
+      if (on) m5Rings[k].rotation.z += dt * 0.9;
+    }
+    // clock expiry: fail, hide rings, no submit; back to idle after a beat
+    if ((now - mission5.t0) / 1000 > M5_BUDGET){
+      mission5.stage = 'fail'; mission5.tStage = 0;
+      for (var f = 0; f < m5Rings.length; f++) m5Rings[f].visible = false;
+      caption('THE BLOCK', 'AND WE ARE OUT OF TIME. DEAD AIR. THE WORST AIR.', 4600);
+      return;
+    }
+    // bank the current checkpoint ONLY while driving a car within ~7m
+    if (player.veh){
+      var cp = M5_CPS[mission5.cur];
+      if (Math.hypot(cp.x - player.x, cp.z - player.z) < 7){
+        mission5.cur++;
+        if (mission5.cur >= M5_CPS.length){
+          mission5.ms = now - mission5.t0;
+          mission5.stage = 'won'; mission5.tStage = 0; mission5.capIdx = 0;
+          for (var w = 0; w < m5Rings.length; w++) m5Rings[w].visible = false;
+          sndWin(); sndApplause();
+          caption('THE BLOCK', 'THAT IS OUR SIX O CLOCK. WELCOME TO THE BIG TIME.', 4600);
+          try {
+            if (!m5Best || mission5.ms < m5Best){
+              m5Best = mission5.ms;
+              localStorage.setItem('lt_m5_best', String(Math.round(mission5.ms)));
+            }
+          } catch (e){}
+          if (online && ws && ws.readyState === 1)
+            ws.send(JSON.stringify({t: 'score', ms: Math.round(mission5.ms), m: 5}));
+        } else {
+          sndTone(880, 0.18, 0, 'square', 0.14);
+          caption('THE BLOCK', 'GOT IT. NEXT: ' + M5_CPS[mission5.cur].name + '.', 3200);
+        }
+      }
+    }
+    return;
+  }
+  if (mission5.stage === 'won'){
+    if (t > 5.4 && mission5.capIdx === 0){
+      mission5.capIdx = 1;
+      caption('RADIO', 'NEWS 630 THE BLOCK LEADS AT SIX WITH FIVE FRESH SHOTS FROM DOWNTOWN.', 5000);
+      showScores(mission5.ms, 5);
+      mission5.stage = 'post'; mission5.tStage = 0;
+    }
+    return;
+  }
+  if (mission5.stage === 'fail'){ if (t > 5) m5Cleanup(); return; }
+  if (mission5.stage === 'post'){ if (t > 22) m5Cleanup(); }
+}
 function allIdle(){
   return mission.stage === 'idle' && mission2.stage === 'idle' &&
-         mission3.stage === 'idle' && mission4.stage === 'idle';
+         mission3.stage === 'idle' && mission4.stage === 'idle' &&
+         mission5.stage === 'idle';
 }
 // Everything mission-related on the overlay (start markers, target
 // brackets, edge arrow, timers, zone chips, the fight chopper tag) draws
@@ -3861,12 +4017,14 @@ labels.push({name: '★ MISSION: THE RIBBON CUTTING', x: MISSION_TRIG.x, y: 9, z
 labels.push({name: '★ MISSION: SNOW EMERGENCY', x: DOOR_P.x, y: 13, z: DOOR_P.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: THE DATA CENTER', x: M3_TRIG.x, y: 9, z: M3_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: HORSEPOWER', x: M4_TRIG.x, y: 9, z: M4_TRIG.z, col: MISSION_COL, mission: true});
+labels.push({name: '★ MISSION: DEADLINE', x: M5_TRIG.x, y: 9, z: M5_TRIG.z, col: MISSION_COL, mission: true});
 // the gentle shove: when nothing else is going on, point at the next mission
 function nextMissionHint(){
   if (!heliUnlocked) return 'FIRST MISSION: THE RIBBON CUTTING — GOLD RING BY CITY HALL';
   if (!m2Best) return 'NEXT MISSION: SNOW EMERGENCY — E AT THE CITY HALL DOOR';
   if (!m3Best) return 'NEXT MISSION: THE DATA CENTER — TEAL RING, PHOENIX PARK';
   if (!m4Best) return 'NEXT MISSION: HORSEPOWER — GREEN RING, THOROUGHBRED PARK';
+  if (!m5Best) return 'NEXT MISSION: DEADLINE — GOLD RING, THE BLOCK NEWSROOM (MAIN ST)';
   return '';
 }
 
@@ -3994,6 +4152,10 @@ function tryEnterExit(){
   }
   if (allIdle() && !player.veh && !isFrozen() && nearM4Trig()){
     startMission4();
+    return;
+  }
+  if (allIdle() && !player.veh && !isFrozen() && nearM5Trig()){
+    startMission5();
     return;
   }
   if (!player.veh && !isFrozen()){
@@ -4588,14 +4750,179 @@ function updateRig(dt){
 }
 function manual(){ if (autoCam){ autoCam = false; tween = null; syncBtns(); } }
 
+// ---------- cinematic mode (trailer capture) ----------
+// #cine=1 strips every bit of chrome (DOM HUD + the tactical overlay + the
+// CRT/vignette layer + captions) so the frame is nothing but the 3D world.
+// The scripted-camera primitives below are wired onto window.__lt (only under
+// #debug=1) so a CDP-driven capture can compose deterministic shots. Nothing
+// here touches the net or the sim — traffic, missions and day/night keep
+// running underneath so the shots have life. A pose is {x,y,z,ry,pitch} where
+// ry is compass yaw (0 looks toward +z, +PI/2 toward +x) and pitch tilts up
+// (+) / down (-); cineCurrentPose and cineApplyPose are exact inverses (they
+// round-trip through camera.getWorldDirection) so there's no conversion drift.
+var CINE = /cine=1/.test(hashStr);
+var cine = {active: false, busy: false, bars: true, mode: null, t: 0,
+            from: null, to: null, dur: 0, ease: 'inout', orbitP: null, followP: null};
+if (CINE){
+  var _hudEl = document.getElementById('hud');
+  if (_hudEl) _hudEl.style.display = 'none';
+  var _fxEl = document.getElementById('fx');
+  if (_fxEl) _fxEl.style.display = 'none';
+}
+function cineEase(f, kind){
+  if (f <= 0) return 0;
+  if (f >= 1) return 1;
+  if (kind === 'linear') return f;
+  if (kind === 'in') return f * f;
+  if (kind === 'out') return f * (2 - f);
+  return f * f * (3 - 2 * f);   // smoothstep (inout), the default
+}
+function cinePoseFrom(p){
+  return {x: p.x || 0, y: p.y || 0, z: p.z || 0, ry: p.ry || 0, pitch: p.pitch || 0};
+}
+function cineCurrentPose(){
+  var d = new THREE.Vector3();
+  camera.getWorldDirection(d);
+  return {x: camera.position.x, y: camera.position.y, z: camera.position.z,
+          ry: Math.atan2(d.x, d.z),
+          pitch: Math.asin(Math.max(-1, Math.min(1, d.y)))};
+}
+function cineApplyPose(p){
+  var cp = Math.cos(p.pitch);
+  camera.position.set(p.x, p.y, p.z);
+  camera.lookAt(p.x + cp * Math.sin(p.ry), p.y + Math.sin(p.pitch), p.z + cp * Math.cos(p.ry));
+}
+function cineShot(o){
+  o = o || {};
+  cine.mode = 'shot';
+  cine.from = o.from ? cinePoseFrom(o.from) : cineCurrentPose();
+  cine.to = o.to ? cinePoseFrom(o.to) : cine.from;
+  cine.dur = o.dur > 0 ? o.dur : 3;
+  cine.ease = o.ease || 'inout';
+  cine.t = 0; cine.active = true; cine.busy = true;
+  return cine;
+}
+function cineOrbit(o){
+  o = o || {};
+  cine.mode = 'orbit';
+  cine.orbitP = {x: o.x || 0, z: o.z || 0, r: o.r > 0 ? o.r : 120,
+                 y: o.y === undefined ? 70 : o.y,
+                 degStart: o.degStart || 0,
+                 degEnd: o.degEnd === undefined ? 90 : o.degEnd,
+                 dur: o.dur > 0 ? o.dur : 8,
+                 lookY: o.lookY === undefined ? 12 : o.lookY};
+  cine.t = 0; cine.active = true; cine.busy = true;
+  return cine;
+}
+function cineFollowPick(what){
+  if (what === 'heli') return heli;
+  if (what === 'player') return player;
+  var best = null, bd = 1e18;   // nearest AI traffic car to the current camera
+  for (var i = 0; i < cars.length; i++){
+    var g = cars[i].g;
+    var dx = g.position.x - camera.position.x, dz = g.position.z - camera.position.z;
+    var d2 = dx * dx + dz * dz;
+    if (d2 < bd){ bd = d2; best = cars[i]; }
+  }
+  return best;
+}
+function cineFollowPos(ent, what){
+  if (!ent) return null;
+  if (what === 'heli') return {x: heli.x, y: heli.y, z: heli.z};
+  if (what === 'player') return {x: player.x, y: player.y, z: player.z};
+  return {x: ent.g.position.x, y: ent.g.position.y, z: ent.g.position.z};
+}
+function cineFollow(o){
+  o = o || {};
+  var what = o.what || 'car';
+  var ent = cineFollowPick(what);
+  var pos = cineFollowPos(ent, what);
+  cine.mode = 'follow';
+  cine.followP = {what: what, target: ent,
+                  dist: o.dist > 0 ? o.dist : 12,
+                  height: o.height === undefined ? 4 : o.height,
+                  dur: o.dur > 0 ? o.dur : 8,
+                  lx: pos ? pos.x : 0, lz: pos ? pos.z : 0,
+                  hx: 0, hz: 1, snapped: false};
+  cine.t = 0; cine.active = true; cine.busy = true;
+  return cine;
+}
+function cineStop(){ cine.active = false; cine.busy = false; cine.mode = null; return true; }
+function cineSetBars(on){ cine.bars = !!on; return cine.bars; }
+function cineLetterbox(){
+  var bh = Math.round(vh * 0.12);
+  ov.fillStyle = '#000';
+  ov.fillRect(0, 0, vw, bh);
+  ov.fillRect(0, vh - bh, vw, bh);
+}
+function updateCineCam(dt){
+  if (cine.mode === 'shot'){
+    cine.t += dt;
+    var f = cine.dur > 0 ? Math.min(1, cine.t / cine.dur) : 1;
+    var e = cineEase(f, cine.ease);
+    var a = cine.from, b = cine.to;
+    cineApplyPose({
+      x: a.x + (b.x - a.x) * e,
+      y: a.y + (b.y - a.y) * e,
+      z: a.z + (b.z - a.z) * e,
+      ry: a.ry + angDelta(a.ry, b.ry) * e,
+      pitch: a.pitch + (b.pitch - a.pitch) * e
+    });
+    if (f >= 1) cine.busy = false;
+  } else if (cine.mode === 'orbit'){
+    var op = cine.orbitP;
+    cine.t += dt;
+    var f2 = op.dur > 0 ? Math.min(1, cine.t / op.dur) : 1;
+    var deg = op.degStart + (op.degEnd - op.degStart) * cineEase(f2, 'inout');
+    var rad = deg * Math.PI / 180;
+    camera.position.set(op.x + op.r * Math.sin(rad), op.y, op.z + op.r * Math.cos(rad));
+    camera.lookAt(op.x, op.lookY, op.z);
+    if (f2 >= 1) cine.busy = false;
+  } else if (cine.mode === 'follow'){
+    var fo = cine.followP;
+    cine.t += dt;
+    var pos = cineFollowPos(fo.target, fo.what);
+    if (pos){
+      var vx = pos.x - fo.lx, vz = pos.z - fo.lz;
+      var vl = Math.hypot(vx, vz);
+      if (vl > 0.03){ fo.hx = vx / vl; fo.hz = vz / vl; }
+      fo.lx = pos.x; fo.lz = pos.z;
+      var dX = pos.x - fo.hx * fo.dist;
+      var dZ = pos.z - fo.hz * fo.dist;
+      var dY = pos.y + fo.height;
+      if (!fo.snapped && vl > 0.03){
+        camera.position.set(dX, dY, dZ); fo.snapped = true;
+      } else {
+        var kk = Math.min(1, dt * 2.4);
+        camera.position.set(
+          camera.position.x + (dX - camera.position.x) * kk,
+          camera.position.y + (dY - camera.position.y) * kk,
+          camera.position.z + (dZ - camera.position.z) * kk);
+      }
+      camera.lookAt(pos.x, pos.y + 1.1, pos.z);
+    }
+    if (fo.dur > 0 && cine.t >= fo.dur) cine.busy = false;
+  }
+}
+if (window.__lt){   // extend the debug hook (only present under #debug=1)
+  window.__lt.cine = cine;   // busy is a live boolean on this same object
+  cine.shot = cineShot;
+  cine.orbit = cineOrbit;
+  cine.follow = cineFollow;
+  cine.stop = cineStop;
+  cine.setBars = cineSetBars;
+  cine.pose = cineCurrentPose;   // read the live camera pose to seed a shot
+}
+
 // pointer controls
 var drag = null;
 var stick = {active: false, id: null, ox: 0, oy: 0, x: 0, y: 0, jets: false};
 var ptrLocked = false, ads = false, followPause = 0;
 // pointer lock: free mouse-look in player mode; LMB fires, RMB aims
 glCanvas.addEventListener('click', function(){
-  if (mode === 'player' && !IS_COARSE && !ptrLocked && els.tut.hidden)
-    glCanvas.requestPointerLock();
+  if (mode === 'player' && !IS_COARSE && !ptrLocked && els.tut.hidden){
+    try { var pl = glCanvas.requestPointerLock(); if (pl && pl.catch) pl.catch(function(){}); } catch (e){}
+  }
 });
 document.addEventListener('pointerlockchange', function(){
   ptrLocked = document.pointerLockElement === glCanvas;
@@ -4760,7 +5087,11 @@ function applyWASD(dt){
 }
 
 // ---------- HUD state ----------
-var show = {box: true, lbl: true};
+var show = {box: true, lbl: true, waypt: true};
+try { if (localStorage.getItem('lt_waypt') === '0') show.waypt = false; } catch (e){}
+if (/wp=0/.test(location.hash)) show.waypt = false;
+var objBannerDone = false;
+try { objBannerDone = localStorage.getItem('lt_obj_banner_seen') === '1'; } catch (e){}
 var simH = 19.35;
 (function(){
   var m = /h=([\d.]+)/.exec(location.hash || '');
@@ -4778,7 +5109,7 @@ var els = {
   bNerf: document.getElementById('bNerf'), bFire: document.getElementById('bFire'),
   tut: document.getElementById('tut'),
   bAuto: document.getElementById('bAuto'), bBox: document.getElementById('bBox'),
-  bLbl: document.getElementById('bLbl'),
+  bLbl: document.getElementById('bLbl'), bWaypt: document.getElementById('bWaypt'),
   bPause: document.getElementById('bPause'),
   bFP: document.getElementById('bFP'), bMenu: document.getElementById('bMenu'),
   tray: document.getElementById('tray'),
@@ -4795,6 +5126,7 @@ function syncBtns(){
   els.bAuto.classList.toggle('on', autoCam);
   els.bBox.classList.toggle('on', show.box);
   els.bLbl.classList.toggle('on', show.lbl);
+  els.bWaypt.classList.toggle('on', show.waypt);
   els.bPause.classList.toggle('on', paused);
   els.bPause.textContent = paused ? '>' : '||';
   els.s1.classList.toggle('on', speed === 1 && !paused);
@@ -4837,6 +5169,11 @@ window.addEventListener('pointerup', function(){ stick.jets = false; fireTouchHe
 els.bAuto.onclick = function(){ autoCam = !autoCam; tween = null; pTimer = 0; syncBtns(); };
 els.bBox.onclick = function(){ setToggle('box'); };
 els.bLbl.onclick = function(){ setToggle('lbl'); };
+els.bWaypt.onclick = function(){
+  show.waypt = !show.waypt;
+  try { localStorage.setItem('lt_waypt', show.waypt ? '1' : '0'); } catch (e){}
+  syncBtns();
+};
 els.bPause.onclick = togglePause;
 els.s1.onclick = function(){ setSpeed(1); };
 els.s60.onclick = function(){ setSpeed(60); };
@@ -4881,7 +5218,7 @@ els.tut.addEventListener('pointerdown', function(e){ if (e.target === els.tut) t
 (function(){
   var seen = false;
   try { seen = localStorage.getItem('lt_tut_seen') === '1'; } catch (e){}
-  if (!seen) tutOpen();
+  if (!seen && !CINE) tutOpen();   // cinematic capture never pops the tutorial
 })();
 
 function dayName(h){
@@ -4938,6 +5275,10 @@ function chip(x, y, text, col){
 // mission objective tracker: gold brackets on the live target, edge arrow
 // with bearing + distance when it's off-screen
 function missionTarget(){
+  if (mission5.stage === 'driving' && mission5.cur < M5_CPS.length){
+    var cp5 = M5_CPS[mission5.cur];
+    return {x: cp5.x, y: 3, z: cp5.z, label: 'CHECKPOINT ' + (mission5.cur + 1) + '/' + M5_CPS.length};
+  }
   if (mission3.stage === 'tail'){
     if (m3Car && m3Car.boarded && !m3Car.done)
       return {x: m3Car.g.position.x, y: 2.4, z: m3Car.g.position.z, label: 'GRAFT'};
@@ -4961,16 +5302,35 @@ function missionTarget(){
   }
   return null;
 }
-function drawMissionTarget(){
-  var t = missionTarget();
-  if (!t) return;
-  var col = MISSION_COL;
+// A single reusable objective marker: on-screen it's a bracket (or a gold
+// diamond for the persistent waypoint), off-screen it clamps to a screen-edge
+// arrow using camera-relative bearing math, and both carry a label + range.
+// drawMissionTarget below is a thin wrapper so the live-mission path stays
+// pixel-identical; opts only ADD the diamond / arrival-pulse variants.
+function drawWaypointMarker(t, col, opts){
+  opts = opts || {};
   var dTxt = ' · ' + Math.round(Math.hypot(t.x - player.x, t.z - player.z)) + 'M';
   var d = Math.hypot(t.x - camPos.x, t.z - camPos.z);
   var p = project(t.x, t.y, t.z);
   if (p && p[0] > 20 && p[0] < vw - 20 && p[1] > 20 && p[1] < vh - 20){
     var s = Math.max(16, Math.min(46, pxSize(3.4, d)));
-    bracket(p[0] - s / 2, p[1] - s / 2, s, s, col);
+    if (opts.diamond){
+      var r = s / 2;
+      ov.strokeStyle = col; ov.lineWidth = 1.4;
+      ov.beginPath();
+      ov.moveTo(p[0], p[1] - r); ov.lineTo(p[0] + r, p[1]);
+      ov.lineTo(p[0], p[1] + r); ov.lineTo(p[0] - r, p[1]);
+      ov.closePath(); ov.stroke();
+    } else {
+      bracket(p[0] - s / 2, p[1] - s / 2, s, s, col);
+    }
+    if (opts.pulse){
+      ov.save();
+      ov.globalAlpha = opts.pulse;
+      ov.strokeStyle = col; ov.lineWidth = 2;
+      ov.beginPath(); ov.arc(p[0], p[1], s / 2 + 4 + (1 - opts.pulse) * 14, 0, Math.PI * 2); ov.stroke();
+      ov.restore();
+    }
     chip(p[0] + s / 2 + 4, p[1] - s / 2 + 8, t.label + dTxt, col);
   } else {
     camera.getWorldDirection(_camDir);
@@ -4990,9 +5350,68 @@ function drawMissionTarget(){
     chip(Math.max(6, Math.min(vw - tw - 10, cx - tw / 2)), cy + 18, t.label + dTxt, col);
   }
 }
+function drawMissionTarget(){
+  var t = missionTarget();
+  if (t) drawWaypointMarker(t, MISSION_COL);
+}
+// F1: the next unbeaten mission, mirroring nextMissionHint()'s progression.
+// m5Best / M5_TRIG belong to the mission-5 island; the m5 clause is guarded
+// so this stays crash-safe even if that island loads after these helpers.
+function currentObjective(){
+  if (!heliUnlocked) return {x: MISSION_TRIG.x, y: 9, z: MISSION_TRIG.z, label: 'THE RIBBON CUTTING'};
+  if (!m2Best) return {x: DOOR_P.x, y: 13, z: DOOR_P.z, label: 'CITY HALL DOOR'};
+  if (!m3Best) return {x: M3_TRIG.x, y: 9, z: M3_TRIG.z, label: 'THE DATA CENTER'};
+  if (!m4Best) return {x: M4_TRIG.x, y: 9, z: M4_TRIG.z, label: 'HORSEPOWER'};
+  if (typeof m5Best !== 'undefined' && !m5Best && typeof M5_TRIG !== 'undefined')
+    return {x: M5_TRIG.x, y: 9, z: M5_TRIG.z, label: 'DEADLINE'};
+  return null;
+}
+// F1: persistent gold diamond pointing at the current objective plus a
+// first-session banner. Defers to drawMissionTarget during any live mission
+// (all camera modes) and honors the WAYPT toggle. Pure local overlay.
+var objArriveAt = 0;
+function drawObjectiveWaypoint(){
+  if (!show.waypt || !allIdle()) return;
+  var o = currentObjective();
+  if (!o) return;
+  var dist = Math.hypot(o.x - player.x, o.z - player.z);
+  var pulse = 0;
+  if (dist < 15){
+    if (!objArriveAt) objArriveAt = performance.now();
+    var pl = performance.now() - objArriveAt;
+    if (pl < 700) pulse = 1 - pl / 700;
+    if (!objBannerDone){
+      objBannerDone = true;
+      try { localStorage.setItem('lt_obj_banner_seen', '1'); } catch (e){}
+    }
+  } else {
+    objArriveAt = 0;
+  }
+  drawWaypointMarker(o, MISSION_COL, {diamond: true, pulse: pulse});
+  if (!objBannerDone){
+    var bTxt = 'OBJECTIVE - ' + o.label;
+    ov.font = '12px ui-monospace, Menlo, Consolas, monospace';
+    var bw = ov.measureText(bTxt).width;
+    ov.fillStyle = 'rgba(2,8,10,0.62)';
+    ov.fillRect(vw / 2 - bw / 2 - 8, 12, bw + 16, 20);
+    ov.fillStyle = MISSION_COL;
+    ov.fillText(bTxt, vw / 2 - bw / 2, 26);
+  }
+}
+// F4a: during the wrangle, mark every un-penned horse so players learn there
+// are three and where they scattered (reuses the F1 marker primitive).
+function drawM4HorseArrows(){
+  if (mission4.stage !== 'wrangle') return;
+  for (var k = 0; k < m4Horses.length; k++){
+    var h = m4Horses[k];
+    if (h.state === 'penned') continue;
+    drawWaypointMarker({x: h.g.position.x, y: 3, z: h.g.position.z, label: h.name}, MISSION_COL);
+  }
+}
 var camPos = new THREE.Vector3();
 function drawOverlay(){
   ov.clearRect(0, 0, vw, vh);
+  if (CINE){ if (cine.bars) cineLetterbox(); return; }   // trailer: nothing but the 3D world (+ optional bars)
   camera.getWorldPosition(camPos);
   var k;
   if (stick.active){   // touch joystick
@@ -5062,6 +5481,9 @@ function drawOverlay(){
   else if (mission2.stage === 'plow' && mission2.t0)
     tTxt = 'SNOW EMERGENCY · ' + ((performance.now() - mission2.t0) / 1000).toFixed(1) + 's' +
       (mission2.penalty ? ' · +' + mission2.penalty + 's PENALTY' : '');
+  else if (mission5.stage === 'driving')
+    tTxt = 'DEADLINE · CP ' + Math.min(mission5.cur + 1, M5_CPS.length) + '/' + M5_CPS.length + ' · ' +
+      Math.max(0, Math.ceil(M5_BUDGET - (performance.now() - mission5.t0) / 1000)) + 's';
   if (tTxt){   // mission timer, top center
     ov.font = '12px ui-monospace, Menlo, Consolas, monospace';
     var tw3 = ov.measureText(tTxt).width;
@@ -5161,6 +5583,8 @@ function drawOverlay(){
     }
   }
   drawMissionTarget();
+  drawObjectiveWaypoint();
+  drawM4HorseArrows();
 }
 
 // ---------- main loop ----------
@@ -5195,6 +5619,7 @@ function frameStep(now){
   updateMission2(dt);
   updateMission3(dt);
   updateMission4(dt);
+  updateMission5(dt);
   updateRockets(dt);
   updateDrops(dt);
   updatePuffs(dt);
@@ -5203,7 +5628,9 @@ function frameStep(now){
   updateAssetAudio(dt);
   netTick(dt);
   diagTick(dt);
-  if (mode === 'drone'){
+  if (cine.active){
+    updateCineCam(dt);   // scripted trailer camera takes over while running
+  } else if (mode === 'drone'){
     applyWASD(dt);
     updateRig(dt);
   } else updatePlayerCam(dt);
@@ -5249,6 +5676,7 @@ function frameStep(now){
     else if (missionFight()) hint = 'SHOOT DOWN THE CHOPPER · F/CLICK — FIRE · RMB — AIM · CHOPPER HP ' + mh.hp + '/3';
     else if (player.heli) hint = 'W/S A/D FLY · SPACE UP · SHIFT DOWN · HOLD F/CLICK — WATER CANNON · E — EXIT · HP ' + heli.hp + '/3';
     else if (player.veh && player.veh.plow) hint = 'BLADE: ' + (bladeDown ? 'DOWN' : 'UP') + ' · SPACE — RAISE/LOWER · CLEAR THE SNOWY STREETS · E — EXIT';
+    else if (mission5.stage === 'driving') hint = 'DEADLINE · CP ' + (mission5.cur + 1) + '/' + M5_CPS.length + ' · ' + Math.max(0, Math.ceil(M5_BUDGET - (performance.now() - mission5.t0) / 1000)) + 's LEFT';
     else if (player.veh) hint = 'E — EXIT · W/S DRIVE · A/D STEER · ' + Math.round(Math.abs(player.veh.spd) * 3.6) + ' KM/H';
     else if (mission2.stage === 'plow' && plowVeh) hint = 'GET TO THE PLOW — MAIN ST BY CITY HALL (E TO BOARD)';
     else if (mission3.stage === 'tail') hint = 'TAIL THE COUNCILMAN — STAY BACK, STAY CLOSE ENOUGH';
@@ -5263,6 +5691,7 @@ function frameStep(now){
     else if (!heliUnlocked && nearDoor()) hint = 'CITY HALL IS LOCKED — BEAT "THE RIBBON CUTTING" FIRST';
     else if (allIdle() && nearM3Trig()) hint = 'E — START MISSION: THE DATA CENTER';
     else if (allIdle() && nearM4Trig()) hint = 'E — START MISSION: HORSEPOWER';
+    else if (allIdle() && nearM5Trig()) hint = 'E — START MISSION: DEADLINE';
     else if (canEnterHeli()) hint = 'E — FLY THE NEWS CHOPPER';
     else if (!heliUnlocked && canEnterHeliBase()) hint = 'LOCKED — BEAT "THE RIBBON CUTTING" AT CITY HALL TO FLY';
     else if (player.grounded && nearestVehicle()) hint = 'E — ENTER CAR';

@@ -111,8 +111,8 @@
            padding:8px 16px;color:#f2fffb}
   #caption[hidden]{display:none}
   #caption b{color:var(--teal);font-weight:600}
-  #scoreList,#scoreList2,#scoreList3,#scoreList4{margin:8px 0 0;padding-left:26px;font-size:12.5px;line-height:1.9}
-  #scoreList li::marker,#scoreList2 li::marker,#scoreList3 li::marker,#scoreList4 li::marker{color:#ffd28a}
+  #scoreList,#scoreList2,#scoreList3,#scoreList4,#scoreList5{margin:8px 0 0;padding-left:26px;font-size:12.5px;line-height:1.9}
+  #scoreList li::marker,#scoreList2 li::marker,#scoreList3 li::marker,#scoreList4 li::marker,#scoreList5 li::marker{color:#ffd28a}
   #scoreYou{color:#ffd28a;font-size:12px;letter-spacing:.12em;margin:10px 0 2px}
   #botright{position:absolute;right:14px;bottom:14px;display:flex;flex-direction:column;
             align-items:flex-end;gap:6px;pointer-events:auto;max-width:80vw}
@@ -226,6 +226,7 @@
       <div class="trayrow">
         <button class="tbtn on" id="bBox">BOX</button>
         <button class="tbtn on" id="bLbl">LBL</button>
+        <button class="tbtn on" id="bWaypt">WAYPT</button>
         <button class="tbtn" id="bPause">||</button>
       </div>
       <div class="trayrow">
@@ -265,6 +266,8 @@
     <ol id="scoreList3"></ol>
     <h2>HORSEPOWER — FASTEST ROUNDUPS</h2>
     <ol id="scoreList4"></ol>
+    <h2>DEADLINE — FASTEST DRIVES</h2>
+    <ol id="scoreList5"></ol>
     <p class="tut-links">replay any time at the gold rings by City Hall · <kbd>Esc</kbd>/<kbd>Enter</kbd> closes</p>
   </div>
 </div>
@@ -273,7 +276,7 @@
     <button class="tbtn" id="tutClose">✕</button>
     <h1>LEXTOWN-01 · HOW TO PLAY</h1>
     <p class="tagline">A multiplayer mini-Lexington — downtown to the horse farms. Everyone on this page shares one world.
-    Four timed missions with global leaderboards; the gold <b>★</b> markers on your HUD point the way. Start at the gold ring by City Hall.</p>
+    Five timed missions with global leaderboards; the gold <b>★</b> markers on your HUD point the way. Start at the gold ring by City Hall.</p>
     <h2>CALL SIGN</h2>
     <div class="name-row">
       <input id="nameIn" maxlength="14" autocomplete="off" spellcheck="false"
@@ -333,6 +336,7 @@
       <b><kbd>V</kbd></b><span>drone camera (<kbd>C</kbd> there toggles the auto-tour) · <kbd>P</kbd> pause the city</span>
       <b><kbd>B</kbd> <kbd>L</kbd></b><span>player detection boxes · landmark labels (also in the SIM menu)</span>
       <b><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></b><span>day-cycle speed (1× / 60× / 300×)</span>
+      <b>Gold marker</b><span>always points to your next mission — toggle in the SIM menu (WAYPT)</span>
     </div>
     <h2>ON A PHONE</h2>
     <div class="tut-grid">

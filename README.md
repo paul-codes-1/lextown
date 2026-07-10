@@ -10,7 +10,7 @@ Built with [Three.js](https://threejs.org/) (vendored, no build step) and a smal
 
 The map runs from the horse farms north of New Circle Road down through NoLi, the downtown core, the UK campus, and Chevy Chase, stylized:
 
-- **Streets** — Fourth through Seventh, Loudon, and New Circle up north; Third, Second, Short, Main, Vine, High, Maxwell, and Euclid crossed by Broadway, Mill, Upper, Limestone, MLK, Rose, Woodland, and Ashland — with the correct one-way pairs (Main/Short/Maxwell eastbound, Vine/Second westbound, Upper northbound, Limestone southbound) and working traffic signals. Streets end where they really end — MLK and Upper stop at Euclid; Rose starts at Main; north of New Circle the grid gives way entirely.
+- **Streets** — Fourth through Seventh, Loudon, and New Circle up north; Third, Second, Short, Main, Vine, High, Maxwell, and Euclid crossed by Broadway, Mill, Upper, Limestone, MLK, Rose, Woodland, and Ashland — with the correct one-way pairs (Main/Short/Maxwell eastbound, Vine/Second westbound, Upper northbound, Limestone southbound) and working traffic signals. Streets end where they really end — MLK and Upper stop at Euclid; Rose starts at Main; north of New Circle the grid gives way entirely. New Circle Road itself is a full beltline loop enclosing the whole built city — north, south, east, and west legs joined at the corners, two-way the whole way around, with an open grassy shoulder between the outer grid and the ring.
 - **The horse farms** — past the Urban Service Boundary (New Circle Rd, board fence and all), Broadway becomes Paris Pike and Limestone becomes Russell Cave Road, running between black four-board paddocks: Elmendorf (with the lone white columns standing in the pasture), Gainesway, Mt. Brilliant, and Spendthrift. Tobacco-black and green-roofed barns, ponds, and grazing horses in five coat colors.
 - **NoLi** — shotgun houses line the North Limestone corridor, with Al's Bar on the corner at Sixth & Lime, Duncan Park beside it, and Castlewood Park up by Loudon.
 - **Landmarks** — Big Blue (Lexington Financial Center), the Central Bank Tower, City Center, 21c Museum Hotel, the old courthouse dome on Cheapside, the Circuit Court towers, City Hall, Central Library, Phoenix Park, Triangle Park, Thoroughbred Park (bronze horses included), and Rupp Arena.
@@ -23,6 +23,7 @@ The map runs from the horse farms north of New Circle Road down through NoLi, th
 - **Mission 2: SNOW EMERGENCY** — beating the ribbon cutting unlocks the **City Hall door**. Inside, the mayor hands you a snow plow: a freak storm has buried five downtown streets. `Space` raises/lowers the blade — down on snow clears it, down on bare pavement grinds up the road for time penalties. And whatever you do, **don't plow the mayor's street** — half of reddit is camped out there watching for the plows. Timed, with its own global board.
 - **Mission 3: THE DATA CENTER** — the mayor (off the record, on a Phoenix Park bench) has you tail Councilman Graft up Limestone to Al's Bar, where he and a developer plan to hide a data center inside luxury student housing at UK — they just have to bulldoze a few historic buildings that are *definitely not already falling down*. Eavesdrop, beat them to the quad, photograph the scouting trip (`F` is the camera — don't get made), and bring back the photos. They leak on r/lexington, the data center dies, and the councilman resigns to spend more time with his data. Timed, global board.
 - **Mission 4: HORSEPOWER** — three thoroughbreds got loose the night before the auction: one tailgating at the Kroger Field lots, one eating the flowers at Chevy Chase, and one in Thoroughbred Park **pretending to be a statue**. Walk up slow (run at a horse and the horse wins), take the lead rope with `E`, and get them home to the Elmendorf paddock — a calm horse follows you, and if you get in a car, **the horse gets in the car**. Timed, global board.
+- **Mission 5: DEADLINE** — NEWS 630 THE BLOCK needs art for the six o'clock. Press `E` at the gold ring outside the newsroom on Main St, grab a car, and drive five downtown checkpoints — Thoroughbred Park, MLK & High, Rupp Arena, the Cheapside courthouse, back to The Block — against a 180-second clock. Checkpoints only bank while you're **in a car** (on foot the ring shows but doesn't count), and the route flows with the one-way grid. Beat the clock and your time lands on a global board.
 
 ## Quick start
 
@@ -62,6 +63,8 @@ No server? Opening `web/index.html` directly (or hosting `web/` statically) runs
 Desktop mouse: click the game once to enter mouse-look (pointer lock) — the camera follows your mouse with no buttons held, settles in behind you while you walk or drive, and Esc releases the cursor.
 
 The HUD keeps just chat, status, and a `?` help button on screen; everything else (drone cam, first-person toggle, overlay toggles, sim speed) lives under the **SIM** menu in the corner. On touch devices the NERF / FIRE / E-VEH / JUMP buttons appear alongside it.
+
+A persistent **gold objective marker** always points to your next unbeaten mission — an on-screen diamond with its label and range, or a screen-edge arrow when the objective is behind you — with a one-time onboarding banner for first-timers; toggle it with **WAYPT** in the SIM menu (or force it off with `#wp=0`).
 
 Touch: left half of the screen is a virtual movement stick, right half orbits the camera, JUMP/FIRE/NERF buttons in the control rail.
 
@@ -109,13 +112,33 @@ jq 'select(.e=="metrics") | {ts,online,rssMb}' logs/events-*.jsonl    # 5-min he
 
 - **Movement validation** — every accepted state must be inside the world bounds and reachable from the last accepted state at legal speed, with per-mode caps (walking, jetpack, driving, helicopter — the mode flag is client-declared, so this bounds absurdity rather than proving honesty). Rejected moves are not relayed; the offending client gets a `{t:'correct'}` that snaps it back. Names are sanitized and pinned server-side on first contact.
 - **The news chopper** — the server arbitrates the single pilot seat (`{t:'heli'}` enter/exit), tracks hull points, validates rocket-hit claims (`{t:'rhit'}`: shooter in range, not the pilot, rate-limited) and water-cannon shoves (`{t:'push'}`: pilot only, bounded impulse, target near the heli — relayed to everyone as `{t:'pushed'}`). Rockets and spray are cosmetic relays like darts. If the pilot disconnects, the chopper crashes and respawns on the pad.
-- **Mission leaderboards** — `{t:'score', ms, m}` submissions are bounds-checked per board (m1: 3s–10min, m2: 20s–15min) and rate-limited; the top 50 of each persist in `scores.json` (`{m1:[], m2:[]}`) and the top 10 are served back via `{t:'scores'}`. Wins are announced in chat. The missions themselves run entirely client-side (the mission chopper is a local NPC, not the shared one).
+- **Mission leaderboards** — `{t:'score', ms, m}` submissions are bounds-checked per board (m1: 3s–10min, m2: 20s–15min, m5: 30s–8min) and rate-limited; the top 50 of each persist in `scores.json` (`{m1:[], m2:[], …, m5:[]}`) and the top 10 are served back via `{t:'scores'}`. Wins are announced in chat. The missions themselves run entirely client-side (the mission chopper is a local NPC, not the shared one).
 - **Chat** — `{t:'chat', msg}` messages are stripped to printable ASCII, capped at 120 chars, and rate-limited per client (3-message burst, ~1/1.2 s refill) before being broadcast to everyone. The client shows them in the log and as a speech bubble over the sender's head.
 - **Packet-rate limiting** — state packets beyond 15/s per client are dropped.
 
 The client renders remote players through a small interpolation buffer (~160 ms), so movement is smooth at any reasonable latency, and auto-reconnects with backoff if the relay drops. There is no world persistence — only the mission leaderboards survive a server restart.
 
 Ideas for where to take it: spatial interest management, persistence, private worlds, riding the cars.
+
+## Ambient NPCs
+
+`bots/npcs.mjs` runs a few preset-line characters (BIG LEX the talking horse, a
+LFUCG permits clerk, a shell-shocked news cameraman, and friends) that connect
+to the relay like any other client so the streets and chat feel inhabited when
+few humans are online. They speak from fixed line pools only — **no AI calls**
+(the old Claude hook is suspended) — and throttle themselves well under the chat
+rate limit. Run them locally against a dev server:
+
+```bash
+LEXTOWN_WS=ws://localhost:8080 node bots/npcs.mjs
+```
+
+They connect as ordinary WS clients but are **excluded from the human join/peak
+counters and cheat heuristics** (so telemetry stays honest) while still being
+visible in-world; in `/admin/stats` they show up tagged `npc:1`. In production
+they run under their own `lextown-npcs` systemd unit — see
+[`deploy/SETUP.md`](deploy/SETUP.md) for the token-shared-between-two-drop-ins
+setup and the graceful-degradation note.
 
 ## Deploying
 
@@ -126,6 +149,15 @@ PORT=80 node server.js
 ```
 
 Put it behind a TLS proxy (Caddy, nginx, Cloudflare) and the client automatically uses `wss://`. The static `web/` directory can also be served by a CDN with `#ws=wss://your-relay` pointing at the relay.
+
+## Modding
+
+It's MIT and it's basically two files with no build step — forkable in an
+afternoon. [`MODDING.md`](MODDING.md) is a full guide for humans and AI agents
+alike: run it locally, the architecture tour, copy-paste recipes for new
+landmarks / streets / missions / radio stations / NPCs / multiplayer toys, how
+to self-host, and a ready-to-hand-off brief for pointing a coding agent at the
+repo.
 
 ## License
 

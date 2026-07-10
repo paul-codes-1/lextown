@@ -28,8 +28,9 @@ const server = http.createServer((req, res) => {
     if (!ADMIN_TOKEN || q.get('token') !== ADMIN_TOKEN) { res.writeHead(404); return res.end(); }
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     return res.end(JSON.stringify({
-      stats, online: [...clients.values()].map((c) => ({
-        id: c.id, name: c.name, ip: c.ip, pvp: c.pvp,
+      stats, humans: humanCount(), total: clients.size,
+      online: [...clients.values()].map((c) => ({
+        id: c.id, name: c.name, ip: c.ip, pvp: c.pvp, npc: c.npc ? 1 : 0,
         secs: Math.round((Date.now() - c.joinedAt) / 1000),
       })),
     }, null, 2));
@@ -78,10 +79,14 @@ const server = http.createServer((req, res) => {
 // KEEP IN SYNC with X0/X1/Z0/Z1 in web/app.js (+25 clamp slack): the client
 // clamps to extents+20, and anything outside these bounds gets move-rejected
 // (the "invisible wall" bug of 2026-07-09 was this constant going stale).
-const WORLD = { x0: -545, x1: 645, z0: -1525, z1: 825, y0: -1, y1: 190 };
+const WORLD = { x0: -745, x1: 845, z0: -1525, z1: 1025, y0: -1, y1: 190 };
 const FREEZE_MS = 4000;
 const HIT_RANGE = 80;          // max shooter->target distance for a valid tag
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+// Shared secret that marks a connection as an ambient NPC (bots/npcs.mjs).
+// NPCs pass it as a `?npc=<token>` query param; tagged clients are excluded
+// from human join/peak stats and cheat heuristics but stay fully in-world.
+const NPC_TOKEN = process.env.NPC_TOKEN || '';
 
 // --- telemetry -----------------------------------------------------------
 // Structured JSONL event log for post-hoc analytics + bug hunting. Rotates
@@ -118,7 +123,7 @@ const stats = {
 };
 function statsLine() {
   const up = Math.round((Date.now() - stats.boot) / 60000);
-  return `up ${up}m · online ${clients.size} (peak ${stats.peak}) · joins ${stats.joins}` +
+  return `up ${up}m · online ${humanCount()} human +${clients.size - humanCount()} npc (peak ${stats.peak}) · joins ${stats.joins}` +
     ` · chats ${stats.chats} · shots ${stats.shots} · freezes ${stats.hits}` +
     ` · heli flights ${stats.heliFlights} · heli downs ${stats.heliDowns}` +
     ` · rockets ${stats.rockets} · pushes ${stats.pushes} · missions ${stats.missions}` +
@@ -127,7 +132,7 @@ function statsLine() {
 }
 setInterval(() => {
   logEvent('metrics', {
-    online: clients.size, peak: stats.peak, joins: stats.joins, chats: stats.chats,
+    online: clients.size, humans: humanCount(), peak: stats.peak, joins: stats.joins, chats: stats.chats,
     shots: stats.shots, hits: stats.hits, corrections: stats.corrections,
     clientErrs: stats.clientErrs, rssMb: Math.round(process.memoryUsage().rss / 1048576),
   });
@@ -146,10 +151,11 @@ process.on('unhandledRejection', (err) => {
 //   m2 = SNOW EMERGENCY (fastest plow, penalties included)
 //   m3 = THE DATA CENTER (fastest investigation)
 //   m4 = HORSEPOWER (fastest horse roundup)
+//   m5 = DEADLINE (fastest checkpoint drive race)
 // Migration: an old plain-array scores.json becomes the m1 board.
 const SCORES_PATH = path.join(__dirname, 'scores.json');
-const BOARDS = ['m1', 'm2', 'm3', 'm4'];
-let scores = { m1: [], m2: [], m3: [], m4: [] };
+const BOARDS = ['m1', 'm2', 'm3', 'm4', 'm5'];
+let scores = { m1: [], m2: [], m3: [], m4: [], m5: [] };
 try {
   const parsed = JSON.parse(fs.readFileSync(SCORES_PATH, 'utf8'));
   if (Array.isArray(parsed)) scores.m1 = parsed;
@@ -161,7 +167,7 @@ function saveScores() {
 }
 function topScores() {
   const top = (b) => scores[b].slice(0, 10).map((s) => ({ n: s.n, ms: s.ms }));
-  return { m1: top('m1'), m2: top('m2'), m3: top('m3'), m4: top('m4') };
+  return { m1: top('m1'), m2: top('m2'), m3: top('m3'), m4: top('m4'), m5: top('m5') };
 }
 
 // persistent ban list: [{ip, name}]
@@ -214,6 +220,13 @@ function broadcast(msg, except) {
   for (const ws of clients.keys()) {
     if (ws !== except && ws.readyState === ws.OPEN) ws.send(s);
   }
+}
+
+// count of non-NPC connections — the honest "how many real players" number
+function humanCount() {
+  let n = 0;
+  for (const c of clients.values()) if (!c.npc) n++;
+  return n;
 }
 
 function num(v, lo, hi) {
@@ -327,9 +340,21 @@ wss.on('connection', (ws, req) => {
   const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
     req.socket.remoteAddress;
   if (isBanned(ip, null)) { ws.close(4003, 'banned'); return; }
+  // Ambient NPCs (bots/npcs.mjs) identify with a shared token in the query
+  // string. They connect straight to the node port (not through Caddy), so a
+  // query param is more reliable than an IP check — behind Caddy every human
+  // is also 127.0.0.1. Tagged clients stay fully in-world but drop out of the
+  // human KPIs and cheat heuristics.
+  // req.url can be a malformed request-target; an unguarded throw here would
+  // hit uncaughtException -> process.exit(1) and drop every connected player.
+  let isNpc = false;
+  if (NPC_TOKEN) {
+    try { isNpc = new URL(req.url, 'http://x').searchParams.get('npc') === NPC_TOKEN; }
+    catch (e) { isNpc = false; }
+  }
   const id = 'P' + nextId++;
   const client = {
-    id, ip,
+    id, ip, npc: isNpc,
     state: null,          // last accepted state (relayed to new joiners)
     pos: null, posAt: 0,  // last accepted position for speed checks
     name: null,
@@ -344,9 +369,11 @@ wss.on('connection', (ws, req) => {
     joinedAt: Date.now(), chatCount: 0, shotCount: 0, tagCount: 0, errCount: 0,
   };
   clients.set(ws, client);
-  stats.joins++;
-  stats.peak = Math.max(stats.peak, clients.size);
-  logEvent('join', { id, ip, online: clients.size,
+  // joins/peak track HUMANS only: NPCs reconnect on every relay restart and
+  // could churn, so counting them would inflate the retention KPIs. They stay
+  // visible in-world and in the /admin/stats roster (tagged npc:1).
+  if (!isNpc) { stats.joins++; stats.peak = Math.max(stats.peak, humanCount()); }
+  logEvent('join', { id, ip, npc: isNpc ? 1 : 0, online: clients.size,
     ua: String(req.headers['user-agent'] || '').slice(0, 120) });
   const peers = [...clients.values()]
     .filter((c) => c.id !== id && c.state)
@@ -383,7 +410,7 @@ wss.on('connection', (ws, req) => {
         stats.corrections++;
         if (client.strikes % 5 === 1 && client.pos) // don't spam corrections
           ws.send(JSON.stringify({ t: 'correct', x: client.pos.x, y: client.pos.y, z: client.pos.z }));
-        if (client.strikes === 20) {
+        if (client.strikes === 20 && !client.npc) {
           console.log(`[cheat?] ${id}/${client.name} ${client.strikes} rejected moves`);
           logEvent('cheat_suspect', { id, n: client.name, strikes: client.strikes });
         }
@@ -519,9 +546,10 @@ wss.on('connection', (ws, req) => {
 
     if (msg.t === 'score') {
       // mission completion: plausible time window per board, 1 per 15s per client
-      const board = { 2: 'm2', 3: 'm3', 4: 'm4' }[msg.m] || 'm1';
+      const board = { 2: 'm2', 3: 'm3', 4: 'm4', 5: 'm5' }[msg.m] || 'm1';
       const WIN = { m1: [3000, 600000], m2: [20000, 900000],
-                    m3: [20000, 900000], m4: [30000, 1500000] }[board];
+                    m3: [20000, 900000], m4: [30000, 1500000],
+                    m5: [30000, 480000] }[board];
       if (!num(msg.ms, WIN[0], WIN[1])) return;
       if (client.lastScoreAt && now - client.lastScoreAt < 15000) return;
       client.lastScoreAt = now;
@@ -537,7 +565,8 @@ wss.on('connection', (ws, req) => {
         msg: { m1: `${n} downed the chopper in ${sec}s`,
                m2: `${n} plowed downtown in ${sec}s`,
                m3: `${n} broke the data center story in ${sec}s`,
-               m4: `${n} got the horses home in ${sec}s` }[board] }, null);
+               m4: `${n} got the horses home in ${sec}s`,
+               m5: `${n} beat the deadline in ${sec}s` }[board] }, null);
       ws.send(JSON.stringify(Object.assign({ t: 'scores' }, topScores())));
       return;
     }

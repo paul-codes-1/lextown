@@ -1,0 +1,21 @@
+[Unit]
+Description=LEXTOWN-01 ambient NPC chatter (preset lines, no API)
+After=lextown.service
+Wants=lextown.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/lextown
+# Connect to the local relay directly (not through Caddy).
+Environment=LEXTOWN_WS=ws://127.0.0.1:8080
+# NPC_TOKEN is NOT set here. Put it in a drop-in
+# (/etc/systemd/system/lextown-npcs.service.d/npc.conf) and set the SAME value
+# in the server's env drop-in — systemd Environment= lines do not expand
+# ${VAR} across units, so the literal token must live in both. See SETUP.md.
+ExecStart=/usr/bin/node bots/npcs.mjs
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
