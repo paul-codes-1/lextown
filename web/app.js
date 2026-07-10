@@ -2396,7 +2396,12 @@ function caption(who, text, dur){
   capWhoEl.textContent = who + ': ';
   capTextEl.textContent = text;
   capEl.hidden = false;
-  capUntil = performance.now() + (dur || 3400);
+  // reading time scales with length: ~14 chars/sec + a beat to notice.
+  // (BBC / Game Accessibility Guidelines: 160-180 wpm ≈ 15-17 cps is
+  // comfortable for film; all-caps read mid-gameplay is slower.) A passed
+  // dur acts as a minimum — computed time can extend it, never shorten it.
+  var need = Math.min(9000, Math.max(2600, 1400 + text.length * 70));
+  capUntil = performance.now() + Math.max(dur || 0, need);
 }
 var AMBIENT_CAPS = [
   ['THE MAYOR', 'AS I WAS SAYING--'],
@@ -2612,11 +2617,11 @@ function updateMission(dt){
     mh.th = -Math.PI / 2;   // nose south, toward City Hall
     mh.mesh.position.set(mh.x, mh.y, mh.z);
     mh.mesh.rotation.y = mh.th;
-    if (t > 2.8 && mission.capIdx === 0){ mission.capIdx = 1; caption('THE MAYOR', 'THANK YOU ALL. TODAY WE HONOR... A HORSE.'); }
-    if (t > 5.6 && mission.capIdx === 1){ mission.capIdx = 2; caption('THE MAYOR', 'POSSIBLY SEVERAL HORSES. THE PLAQUE IS AMBIGUOUS.'); }
-    if (t > 8.2 && mission.capIdx === 2){ mission.capIdx = 3; caption('ANNOUNCER', 'IS THAT... THE NEWS CHOPPER?'); }
-    if (t > 10.5){
-      mission.stage = 'fight'; mission.tStage = 0; mission.capAt = 4;
+    if (t > 5.4 && mission.capIdx === 0){ mission.capIdx = 1; caption('THE MAYOR', 'THANK YOU ALL. TODAY WE HONOR... A HORSE.'); }
+    if (t > 9.8 && mission.capIdx === 1){ mission.capIdx = 2; caption('THE MAYOR', 'POSSIBLY SEVERAL HORSES. THE PLAQUE IS AMBIGUOUS.'); }
+    if (t > 14.6 && mission.capIdx === 2){ mission.capIdx = 3; caption('ANNOUNCER', 'IS THAT... THE NEWS CHOPPER?'); }
+    if (t > 18.2){
+      mission.stage = 'fight'; mission.tStage = 0; mission.capAt = 8;
       mission.t0f = now;
       mh.alive = true;
       caption('SECURITY', 'CIVILIAN - TAKE THIS RPG. IT IS CEREMONIAL.', 4200);
@@ -2664,7 +2669,7 @@ function updateMission(dt){
       }
       submitScore(mission.ms);
     }
-    if (t > 6 && mission.capIdx === 9){
+    if (t > 7.2 && mission.capIdx === 9){
       mission.capIdx = 10;
       caption('ANNOUNCER', 'RIBBON CUT. STATUE HORSED. DEMOCRACY SAVED.', 4200);
       showScores(mission.ms);
@@ -2981,10 +2986,10 @@ function updateMission2(dt){
   mission2.tStage += dt;
   var t = mission2.tStage;
   if (mission2.stage === 'brief'){
-    if (t > 3 && mission2.capIdx === 0){ mission2.capIdx = 1; caption('THE MAYOR', 'FREAK SNOWSTORM INBOUND. THE STREETS NEED PLOWING AND MY PLOW GUY IS AT THE LAKE.', 4400); }
-    if (t > 7.6 && mission2.capIdx === 1){ mission2.capIdx = 2; caption('THE MAYOR', 'TAKE THE TRUCK ON MAIN. BLADE DOWN ON SNOW ONLY - YOU GRIND MY ROADS, I HEAR IT.', 4600); }
-    if (t > 12.4 && mission2.capIdx === 2){ mission2.capIdx = 3; caption('THE MAYOR', 'WHATEVER YOU DO, DON\'T PLOW MY STREET. I GOT HALF OF REDDIT CAMPED OUT THERE WATCHING FOR THE PLOWS NOW.', 5200); }
-    if (t > 18){
+    if (t > 3.6 && mission2.capIdx === 0){ mission2.capIdx = 1; caption('THE MAYOR', 'FREAK SNOWSTORM INBOUND. THE STREETS NEED PLOWING AND MY PLOW GUY IS AT THE LAKE.', 4400); }
+    if (t > 10.8 && mission2.capIdx === 1){ mission2.capIdx = 2; caption('THE MAYOR', 'TAKE THE TRUCK ON MAIN. BLADE DOWN ON SNOW ONLY - YOU GRIND MY ROADS, I HEAR IT.', 4600); }
+    if (t > 17.8 && mission2.capIdx === 2){ mission2.capIdx = 3; caption('THE MAYOR', 'WHATEVER YOU DO, DON\'T PLOW MY STREET. I GOT HALF OF REDDIT CAMPED OUT THERE WATCHING FOR THE PLOWS NOW.', 5200); }
+    if (t > 26.6){
       mission2.stage = 'plow'; mission2.tStage = 0; mission2.capAt = 20;
       ensureSnowPts();
       buildSnow();
@@ -3031,7 +3036,7 @@ function updateMission2(dt){
     return;
   }
   if (mission2.stage === 'won'){
-    if (t > 4.6 && mission2.capIdx !== 9){
+    if (t > 6.4 && mission2.capIdx !== 9){
       mission2.capIdx = 9;
       caption('DISPATCH', 'DOWNTOWN: PLOWED. GO WARM UP.', 4000);
       showScores(mission2.ms, 2);
@@ -3061,7 +3066,7 @@ var M3_QUAD = {x: 200, z: 530};                // UK quad scouting area
 var m3Best = 0;
 try { m3Best = parseInt(localStorage.getItem('lt_m3_best') || '0', 10) || 0; } catch (e){}
 var mission3 = {stage: 'idle', tStage: 0, t0: 0, ms: 0, capIdx: 0,
-                sus: 0, listen: 0, photos: 0, lastShot: 0};
+                sus: 0, listen: 0, li: 0, breathed: false, photos: 0, lastShot: 0};
 var m3Npcs = [], m3Mayor = null, m3Graft = null, m3Dev = null, m3Car = null;
 var m3Ring = null, m3Obj = null;
 (function(){
@@ -3095,6 +3100,7 @@ function m3CarPos(){ return m3Car ? m3Car.g.position : null; }
 function startMission3(){
   mission3.stage = 'brief'; mission3.tStage = 0; mission3.capIdx = 0;
   mission3.t0 = 0; mission3.sus = 0; mission3.listen = 0;
+  mission3.li = 0; mission3.breathed = false;
   mission3.photos = 0; mission3.lastShot = 0;
   m3Mayor = spawnNpc(M3_TRIG.x, M3_TRIG.z - 3, 0x8f2f3c, 0, 0.95);
   m3Npcs.push(m3Mayor);
@@ -3181,6 +3187,13 @@ var M3_LISTEN_CAPS = [
   ['GRAFT', 'PERFECT. WE\'LL CALL THE ZONING AMBIGUOUS. ZONING IS ALWAYS AMBIGUOUS.'],
   ['DEVELOPER', 'MEET ME AT THE QUAD. BRING YOUR POINTING FINGER. WE\'RE SCOUTING.']
 ];
+// each line holds for its own reading time (~20 cps + a beat, 3s floor)
+var M3_LISTEN_AT = (function(){
+  var t = 0.8, at = [];
+  M3_LISTEN_CAPS.forEach(function(c){ at.push(t); t += Math.max(3, 0.6 + c[1].length * 0.05); });
+  at.push(t + 0.4);   // final entry = total scene length
+  return at;
+})();
 var M3_SCOUT_PTS = [[165, 522], [208, 545], [242, 530], [192, 508]];
 function updateMission3(dt){
   if (m3Ring){
@@ -3197,10 +3210,10 @@ function updateMission3(dt){
     m3Fail('timeout'); return;
   }
   if (mission3.stage === 'brief'){
-    if (t > 3 && mission3.capIdx === 0){ mission3.capIdx = 1; caption('THE MAYOR', 'OFF THE RECORD: COUNCILMAN GRAFT HAS BEEN TAKING A LOT OF MEETINGS.', 4400); }
-    if (t > 7.6 && mission3.capIdx === 1){ mission3.capIdx = 2; caption('THE MAYOR', 'THAT\'S HIM BY CITY HALL. FOLLOW HIM. DON\'T BE WEIRD ABOUT IT.', 4200); }
-    if (t > 12 && mission3.capIdx === 2){ mission3.capIdx = 3; caption('THE MAYOR', 'IF HE LOOKS AT YOU, BE A PEDESTRIAN. NOBODY SUSPECTS PEDESTRIANS.', 4200); }
-    if (t > 16.4){
+    if (t > 5.6 && mission3.capIdx === 0){ mission3.capIdx = 1; caption('THE MAYOR', 'OFF THE RECORD: COUNCILMAN GRAFT HAS BEEN TAKING A LOT OF MEETINGS.', 4400); }
+    if (t > 12 && mission3.capIdx === 1){ mission3.capIdx = 2; caption('THE MAYOR', 'THAT\'S HIM BY CITY HALL. FOLLOW HIM. DON\'T BE WEIRD ABOUT IT.', 4200); }
+    if (t > 17.8 && mission3.capIdx === 2){ mission3.capIdx = 3; caption('THE MAYOR', 'IF HE LOOKS AT YOU, BE A PEDESTRIAN. NOBODY SUSPECTS PEDESTRIANS.', 4200); }
+    if (t > 24){
       mission3.stage = 'tail'; mission3.tStage = 0; mission3.capIdx = 0;
       mission3.t0 = now;
       m3Graft = spawnNpc(158, 12, 0x39404a, -Math.PI / 2, 0.95);
@@ -3252,6 +3265,7 @@ function updateMission3(dt){
     if (npcWalk(m3Graft, M3_LZ.x, M3_LZ.z + 1.5, 3.2, dt)){
       mission3.stage = 'listen'; mission3.tStage = 0; mission3.capIdx = 0;
       mission3.listen = 0; mission3.sus = 0;
+      mission3.li = 0; mission3.breathed = false;
       caption('DISPATCH', 'HE\'S MEETING SOMEONE BEHIND AL\'S. GET CLOSE ENOUGH TO HEAR. NOT CLOSER.', 4400);
     }
     return;
@@ -3260,23 +3274,22 @@ function updateMission3(dt){
     var ld = Math.hypot(M3_LZ.x - player.x, M3_LZ.z - player.z);
     if (ld < 6.5){
       mission3.sus += dt / 3;
-      if (mission3.sus > 0.5 && mission3.capIdx < 90){
-        mission3.capIdx = 90;
+      if (mission3.sus > 0.5 && !mission3.breathed){
+        mission3.breathed = true;
         caption('GRAFT', '...DO YOU HEAR BREATHING?', 2600);
       }
       if (mission3.sus >= 1){ m3Fail('seen'); return; }
     } else {
       mission3.sus = Math.max(0, mission3.sus - dt / 2);
-      if (mission3.capIdx === 90) mission3.capIdx = Math.floor(mission3.listen / 2);
+      if (mission3.sus < 0.2) mission3.breathed = false;
     }
     if (ld >= 6.5 && ld < 17){
       mission3.listen += dt;
-      var li = Math.floor(mission3.listen / 2);
-      if (li < M3_LISTEN_CAPS.length && mission3.capIdx <= li && mission3.capIdx < 90){
-        mission3.capIdx = li + 1;
-        caption(M3_LISTEN_CAPS[li][0], M3_LISTEN_CAPS[li][1], 2600);
+      if (mission3.li < M3_LISTEN_CAPS.length && mission3.listen >= M3_LISTEN_AT[mission3.li]){
+        caption(M3_LISTEN_CAPS[mission3.li][0], M3_LISTEN_CAPS[mission3.li][1]);
+        mission3.li++;
       }
-      if (mission3.listen > M3_LISTEN_CAPS.length * 2 + 0.5){
+      if (mission3.listen > M3_LISTEN_AT[M3_LISTEN_CAPS.length]){
         mission3.stage = 'scout'; mission3.tStage = 0; mission3.capIdx = 0;
         m3Obj.visible = true;
         m3Obj.position.set(M3_QUAD.x, 0.9, M3_QUAD.z);
@@ -3341,10 +3354,10 @@ function updateMission3(dt){
     return;
   }
   if (mission3.stage === 'won'){
-    if (t > 4.4 && mission3.capIdx === 0){ mission3.capIdx = 1; caption('RADIO', 'BREAKING: SECRET DATA CENTER PHOTOS HIT R/LEXINGTON. 40,000 UPVOTES. THE COMMENTS ARE NOT KIND.', 5000); }
-    if (t > 9.8 && mission3.capIdx === 1){ mission3.capIdx = 2; caption('RADIO', 'THE DEVELOPER NOW SAYS THE DATA CENTER WAS "MORE OF A VIBE".', 4400); }
-    if (t > 14.6 && mission3.capIdx === 2){ mission3.capIdx = 3; caption('RADIO', 'COUNCILMAN GRAFT HAS RESIGNED TO SPEND MORE TIME WITH HIS DATA.', 5000); }
-    if (t > 20 && mission3.capIdx === 3){
+    if (t > 5.2 && mission3.capIdx === 0){ mission3.capIdx = 1; caption('RADIO', 'BREAKING: SECRET DATA CENTER PHOTOS HIT R/LEXINGTON. 40,000 UPVOTES. THE COMMENTS ARE NOT KIND.', 5000); }
+    if (t > 13.2 && mission3.capIdx === 1){ mission3.capIdx = 2; caption('RADIO', 'THE DEVELOPER NOW SAYS THE DATA CENTER WAS "MORE OF A VIBE".', 4400); }
+    if (t > 19 && mission3.capIdx === 2){ mission3.capIdx = 3; caption('RADIO', 'COUNCILMAN GRAFT HAS RESIGNED TO SPEND MORE TIME WITH HIS DATA.', 5000); }
+    if (t > 25 && mission3.capIdx === 3){
       mission3.capIdx = 4;
       sndApplause();
       caption('THE MAYOR', 'THE HISTORIC BUILDINGS REMAIN DEFINITELY NOT ALREADY FALLING DOWN. GOOD WORK.', 4600);
@@ -3442,7 +3455,7 @@ function calmableHorse(){
     var h = m4Horses[k];
     if (h.state !== 'wild') continue;
     var d = Math.hypot(h.g.position.x - player.x, h.g.position.z - player.z);
-    if (d < 4.5) return h;
+    if (d < 5.5) return h;
   }
   return null;
 }
@@ -3523,11 +3536,12 @@ function updateHorse(h, dt, now){
     if (h.boltT > 2.3){ h.state = 'wild'; }
     return;
   }
-  // wild: graze in place, bolt if rushed
+  // wild: graze in place, bolt if rushed. Walking (7.5 m/s) is fine —
+  // only a shift-sprint (13.5), jetpack, or a moving car spooks him.
   g.position.y = groundY(g.position.x, g.position.z) + 0.05 + Math.sin(now * 0.002 + h.i) * 0.04;
   var pd = Math.hypot(player.x - g.position.x, player.z - g.position.z);
-  var rushing = playerSpeed() > 4.5 || (player.veh && Math.abs(player.veh.spd) > 3);
-  if (pd < 16 && rushing){
+  var rushing = (!player.veh && playerSpeed() > 9) || (player.veh && Math.abs(player.veh.spd) > 3);
+  if (pd < 13 && rushing){
     var ang = Math.atan2(g.position.x - player.x, g.position.z - player.z) + (Math.random() - 0.5) * 1.2;
     var dist = 42 + Math.random() * 22;
     h.state = 'bolt'; h.boltT = 0;
@@ -3556,10 +3570,10 @@ function updateMission4(dt){
   var t = mission4.tStage;
   m4Horses.forEach(function(h){ updateHorse(h, dt, now); });
   if (mission4.stage === 'brief'){
-    if (t > 4 && mission4.capIdx === 0){ mission4.capIdx = 1; caption('THE TRAINER', 'ONE OF THEM IS IN THIS PARK. PRETENDING TO BE A STATUE. HE\'S BEEN AT IT FOR HOURS.', 4800); }
-    if (t > 9 && mission4.capIdx === 1){ mission4.capIdx = 2; caption('THE TRAINER', 'ONE\'S TAILGATING AT THE KROGER FIELD LOTS. SEASON HASN\'T STARTED. ONE\'S EATING THE FLOWERS AT CHEVY CHASE.', 5200); }
-    if (t > 14.4 && mission4.capIdx === 2){ mission4.capIdx = 3; caption('THE TRAINER', 'SNEAK UP. PRESS E FOR THE LEAD ROPE. A CALM HORSE FOLLOWS YOU — CAR, WHATEVER, HE\'S FLEXIBLE. ELMENDORF PADDOCK. GO.', 5600); }
-    if (t > 20){
+    if (t > 6.6 && mission4.capIdx === 0){ mission4.capIdx = 1; caption('THE TRAINER', 'ONE OF THEM IS IN THIS PARK. PRETENDING TO BE A STATUE. HE\'S BEEN AT IT FOR HOURS.', 4800); }
+    if (t > 13.6 && mission4.capIdx === 1){ mission4.capIdx = 2; caption('THE TRAINER', 'ONE\'S TAILGATING AT THE KROGER FIELD LOTS. SEASON HASN\'T STARTED. ONE\'S EATING THE FLOWERS AT CHEVY CHASE.', 5200); }
+    if (t > 22.4 && mission4.capIdx === 2){ mission4.capIdx = 3; caption('THE TRAINER', 'SNEAK UP. PRESS E FOR THE LEAD ROPE. A CALM HORSE FOLLOWS YOU — CAR, WHATEVER, HE\'S FLEXIBLE. ELMENDORF PADDOCK. GO.', 5600); }
+    if (t > 31.6){
       mission4.stage = 'wrangle'; mission4.tStage = 0; mission4.capAt = 24;
       mission4.t0 = now;
       M4_SPOTS.forEach(function(s, i){
@@ -3597,7 +3611,7 @@ function updateMission4(dt){
     return;
   }
   if (mission4.stage === 'won'){
-    if (t > 5 && mission4.capIdx === 0){
+    if (t > 6.8 && mission4.capIdx === 0){
       mission4.capIdx = 1;
       caption('RADIO', 'AUCTION UPDATE: ALL HORSES PRESENT. ONE SMELLS LIKE FLOWERS. ONE INSISTS HE IS A STATUE.', 5000);
       showScores(mission4.ms, 4);
