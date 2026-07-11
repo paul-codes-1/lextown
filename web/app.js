@@ -2478,11 +2478,12 @@ function updateRadioChip(){
 // --- world/mission audio watcher, ticked from frame() ---
 var PARK_PTS = [[-171, 40], [122, 50], [250, 50], [350, 300], [150, -535], [150, -874]];
 var BELL_PT = {x: -46, z: -262};   // First Presbyterian tower
-var aw = {m1: '', m2: '', m3: '', m4: '', hFloor: -1, horse: [], acc: 0};
+var aw = {m1: '', m2: '', m3: '', m4: '', m5: '', m6: '', m7: '', hFloor: -1, horse: [], acc: 0};
 function stinger(stage, prev){
   if (stage === prev) return stage;
   if (prev !== ''){   // skip the very first observation (page load)
-    if (stage === 'intro' || stage === 'brief') playClip('st_start', {gain: 0.7});
+    if (stage === 'intro' || stage === 'brief' || stage === 'driving' ||
+        stage === 'drive' || stage === 'tag') playClip('st_start', {gain: 0.7});
     else if (stage === 'won') playClip('st_win', {gain: 0.8});
     else if (stage === 'fail') playClip('st_fail', {gain: 0.8});
   }
@@ -2498,6 +2499,9 @@ function updateAssetAudio(dt){
   aw.m2 = stinger(mission2.stage, aw.m2);
   aw.m3 = stinger(mission3.stage, aw.m3);
   aw.m4 = stinger(mission4.stage, aw.m4);
+  aw.m5 = stinger(mission5.stage, aw.m5);
+  aw.m6 = stinger(mission6.stage, aw.m6);
+  aw.m7 = stinger(mission7.stage, aw.m7);
   // SNOW EMERGENCY: queue an EAS interrupt — it airs the moment the player
   // hops in the plow (the radio auto-starts and plays the queue first)
   if (aw.m2 === 'brief' && prevM2 !== 'brief' && prevM2 !== ''){
@@ -2780,20 +2784,23 @@ function showScores(myMs, board){
   var you;
   if (myMs){
     var verb = board === 2 ? 'PLOWED IN ' : board === 3 ? 'STORY BROKEN IN ' :
-               board === 4 ? 'HORSES HOME IN ' : board === 5 ? 'DEADLINE MET IN ' : 'CHOPPER DOWN IN ';
+               board === 4 ? 'HORSES HOME IN ' : board === 5 ? 'DEADLINE MET IN ' :
+               board === 6 ? 'SCOOPS LANDED IN ' : board === 7 ? 'LOT TAGGED IN ' : 'CHOPPER DOWN IN ';
     you = verb + fmtMs(myMs) + ' · +' + missionPoints(myMs) + ' PTS';
     var best = board === 2 ? m2Best : board === 3 ? m3Best : board === 4 ? m4Best :
-               board === 5 ? m5Best : missionBest;
+               board === 5 ? m5Best : board === 6 ? m6Best : board === 7 ? m7Best : missionBest;
     if (best) you += ' · DEVICE BEST ' + fmtMs(best);
   } else {
     you = (missionBest ? 'RIBBON: ' + fmtMs(missionBest) : 'RIBBON: —') +
       ' · ' + (m2Best ? 'SNOW: ' + fmtMs(m2Best) : 'SNOW: —') +
       ' · ' + (m3Best ? 'DATA CENTER: ' + fmtMs(m3Best) : 'DATA CENTER: —') +
       ' · ' + (m4Best ? 'HORSEPOWER: ' + fmtMs(m4Best) : 'HORSEPOWER: —') +
-      ' · ' + (m5Best ? 'DEADLINE: ' + fmtMs(m5Best) : 'DEADLINE: —');
+      ' · ' + (m5Best ? 'DEADLINE: ' + fmtMs(m5Best) : 'DEADLINE: —') +
+      ' · ' + (m6Best ? 'MELT: ' + fmtMs(m6Best) : 'MELT: —') +
+      ' · ' + (m7Best ? 'TAILGATE: ' + fmtMs(m7Best) : 'TAILGATE: —');
   }
   document.getElementById('scoreYou').textContent = you;
-  ['scoreList', 'scoreList2', 'scoreList3', 'scoreList4', 'scoreList5'].forEach(function(id){
+  ['scoreList', 'scoreList2', 'scoreList3', 'scoreList4', 'scoreList5', 'scoreList6', 'scoreList7'].forEach(function(id){
     var list = document.getElementById(id);
     if (!list) return;
     list.textContent = '';
@@ -2826,6 +2833,8 @@ function renderScores(m){
   fill('scoreList3', m.m3 || []);
   fill('scoreList4', m.m4 || []);
   fill('scoreList5', m.m5 || []);
+  fill('scoreList6', m.m6 || []);
+  fill('scoreList7', m.m7 || []);
 }
 function updateMission(dt){
   var now = performance.now();
@@ -3999,10 +4008,324 @@ function updateMission5(dt){
   if (mission5.stage === 'fail'){ if (t > 5) m5Cleanup(); return; }
   if (mission5.stage === 'post'){ if (t > 22) m5Cleanup(); }
 }
+
+// ---------- MISSION 6: THE MELT (pink ring, W Main by the Distillery District) ----------
+// Ripped from the headlines: Crank & Boom is Lexington's shop in The64.com's
+// fan-voted America's Best Ice Cream bracket (opens July 16) — up against TWO
+// Louisville shops. The voters can't vote for what they haven't tasted, so
+// the sample cooler rides with you. The clock IS the melt; a crash sloshes
+// the cooler and melts it faster. Stops only bank from a car, like m5.
+var M6_TRIG = {x: -460, z: -14};   // W Main north sidewalk, at the stand
+var M6_CPS = [
+  {x: -200, z: 0,   name: 'RUPP ARENA - MAIN & BROADWAY'},
+  {x: 0,    z: 0,   name: 'CHEAPSIDE - THE JUDGES'},
+  {x: 100,  z: 200, name: 'LIME & HIGH'},
+  {x: 100,  z: 480, name: 'UK CAMPUS - THE STUDENT VOTE'},
+  {x: 400,  z: 400, name: 'EUCLID & WOODLAND - BLOCK PARTY'}
+];
+var M6_BUDGET = 240;   // total melt seconds on the cooler
+var M6_SLOSH = 20;     // each crash melts this many extra seconds
+var m6Best = 0;
+try { m6Best = parseInt(localStorage.getItem('lt_m6_best') || '0', 10) || 0; } catch (e){}
+var mission6 = {stage: 'idle', tStage: 0, t0: 0, ms: 0, cur: 0, slosh: 0,
+                prevSpd: 0, sloshAt: 0, capIdx: 0};
+var m6Rings = [], m6Trig = null, m6Cooler = null;
+(function(){
+  // the Crank & Boom stand — cream base, pink canopy, a scoop on the roof
+  var base = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.7, 1.6),
+    new THREE.MeshStandardMaterial({color: 0xfff1e4, roughness: 0.85}));
+  base.position.set(M6_TRIG.x, 0.85, -20); base.castShadow = true; scene.add(base);
+  var canopy = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.2, 2.6),
+    new THREE.MeshStandardMaterial({color: 0xff6fa5, roughness: 0.7}));
+  canopy.position.set(M6_TRIG.x, 2.75, -20); canopy.castShadow = true; scene.add(canopy);
+  var cone = new THREE.Mesh(new THREE.ConeGeometry(0.42, 1.1, 10),
+    new THREE.MeshStandardMaterial({color: 0xc8913f, roughness: 0.9}));
+  cone.rotation.x = Math.PI;
+  cone.position.set(M6_TRIG.x, 3.55, -20); scene.add(cone);
+  var scoop = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8),
+    new THREE.MeshStandardMaterial({color: 0xff9ec1, roughness: 0.8}));
+  scoop.position.set(M6_TRIG.x, 4.35, -20); scene.add(scoop);
+  colliders.push({x0: M6_TRIG.x - 1.9, x1: M6_TRIG.x + 1.9, z0: -21.3, z1: -18.7, h: 2.9});
+  labels.push({name: 'CRANK & BOOM', x: M6_TRIG.x, y: 7, z: -20});
+  labels.push({name: 'DISTILLERY DISTRICT', x: -520, y: 13, z: -60});
+  // the cooler rides on your back for the whole run
+  m6Cooler = new THREE.Group();
+  var tub = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.42, 0.34),
+    new THREE.MeshStandardMaterial({color: 0x2fa8bd, roughness: 0.8}));
+  var lid = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.1, 0.38),
+    new THREE.MeshStandardMaterial({color: 0xf2f7f7, roughness: 0.7}));
+  lid.position.y = 0.26;
+  m6Cooler.add(tub); m6Cooler.add(lid);
+  m6Cooler.position.set(0, 1.12, -0.34);
+  m6Cooler.visible = false;
+  player.av.g.add(m6Cooler);
+  m6Trig = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.06, 6, 24),
+    new THREE.MeshBasicMaterial({color: 0xff6fa5, transparent: true, opacity: 0.85}));
+  m6Trig.rotation.x = Math.PI / 2;
+  m6Trig.position.set(M6_TRIG.x, 0.9, M6_TRIG.z);
+  scene.add(m6Trig);
+  M6_CPS.forEach(function(cp){
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(4.5, 0.12, 6, 28),
+      new THREE.MeshBasicMaterial({color: 0xff6fa5, transparent: true, opacity: 0.7}));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(cp.x, 1.2, cp.z);
+    ring.visible = false;
+    scene.add(ring);
+    m6Rings.push(ring);
+  });
+})();
+function nearM6Trig(){
+  var dx = player.x - M6_TRIG.x, dz = player.z - M6_TRIG.z;
+  return dx * dx + dz * dz < 16;
+}
+function m6MeltSec(){
+  return (performance.now() - mission6.t0) / 1000 + mission6.slosh * M6_SLOSH;
+}
+var M6_SLOSH_LINES = [
+  'THAT WAS A CURB. THE BOURBON BALL FELT THAT.',
+  'IT IS SLOSHING. I CAN HEAR IT SLOSHING FROM HERE.',
+  'ROCKY ROAD IS A FLAVOR, NOT A DRIVING STYLE.'
+];
+function startMission6(){
+  mission6.stage = 'drive'; mission6.tStage = 0; mission6.capIdx = 0;
+  mission6.cur = 0; mission6.ms = 0; mission6.slosh = 0;
+  mission6.prevSpd = 0; mission6.sloshAt = 0;
+  mission6.t0 = performance.now();
+  if (m6Cooler) m6Cooler.visible = true;
+  caption('CRANK & BOOM', 'THE64 BRACKET OPENS JULY 16 AND THE VOTERS HAVEN\'T TASTED A SPOONFUL. THE COOLER RIDES WITH YOU - GRAB A CAR.', 5400);
+  addChatLine('* MISSION', 'THE MELT - five scoop stops before the cooler is soup', true);
+}
+function m6Cleanup(){
+  mission6.stage = 'idle';
+  if (m6Cooler) m6Cooler.visible = false;
+  for (var k = 0; k < m6Rings.length; k++) m6Rings[k].visible = false;
+}
+function updateMission6(dt){
+  if (m6Trig){
+    m6Trig.visible = allIdle();
+    if (m6Trig.visible) m6Trig.rotation.z += dt * 0.8;
+  }
+  if (mission6.stage === 'idle') return;
+  var now = performance.now();
+  mission6.tStage += dt;
+  var t = mission6.tStage;
+  if (mission6.stage === 'drive'){
+    for (var k = 0; k < m6Rings.length; k++){
+      var on = k === mission6.cur;
+      m6Rings[k].visible = on;
+      if (on) m6Rings[k].rotation.z += dt * 0.9;
+    }
+    if (t > 7 && mission6.capIdx === 0){ mission6.capIdx = 1; caption('CRANK & BOOM', 'LOUISVILLE HAS TWO SHOPS IN THIS BRACKET. LEXINGTON HAS US. NO PRESSURE.', 4600); }
+    // a collision chops car speed in a single frame (the 0.2x crunch in
+    // updateDrive); braking never does — that one-frame cliff IS the slosh
+    if (player.veh){
+      var as = Math.abs(player.veh.spd);
+      var drop = mission6.prevSpd - as;
+      if (drop > 4 && drop > mission6.prevSpd * 0.5 && t > mission6.sloshAt){
+        mission6.sloshAt = t + 1.2;
+        mission6.slosh++;
+        sndTone(140, 0.3, 0, 'sawtooth', 0.22);
+        caption('CRANK & BOOM', M6_SLOSH_LINES[(mission6.slosh - 1) % M6_SLOSH_LINES.length], 3600);
+      }
+      mission6.prevSpd = as;
+    } else mission6.prevSpd = 0;
+    if (m6MeltSec() > M6_BUDGET){
+      mission6.stage = 'fail'; mission6.tStage = 0;
+      for (var f = 0; f < m6Rings.length; f++) m6Rings[f].visible = false;
+      if (m6Cooler) m6Cooler.visible = false;
+      caption('CRANK & BOOM', 'IT\'S SOUP. YOU DELIVERED SOUP. THE BRACKET VOTES JULY 16 AND WE ARE BRINGING SOUP.', 5000);
+      return;
+    }
+    // bank the current stop ONLY while driving a car within ~7m
+    if (player.veh){
+      var cp = M6_CPS[mission6.cur];
+      if (Math.hypot(cp.x - player.x, cp.z - player.z) < 7){
+        mission6.cur++;
+        if (mission6.cur >= M6_CPS.length){
+          mission6.ms = (now - mission6.t0) + mission6.slosh * M6_SLOSH * 1000;
+          mission6.stage = 'won'; mission6.tStage = 0; mission6.capIdx = 0;
+          for (var w = 0; w < m6Rings.length; w++) m6Rings[w].visible = false;
+          if (m6Cooler) m6Cooler.visible = false;
+          sndWin(); sndApplause();
+          caption('CRANK & BOOM', 'FIVE STOPS AND STILL FROZEN. THE BRACKET IS OURS. TELL LOUISVILLE.', 4800);
+          try {
+            if (!m6Best || mission6.ms < m6Best){
+              m6Best = mission6.ms;
+              localStorage.setItem('lt_m6_best', String(Math.round(mission6.ms)));
+            }
+          } catch (e){}
+          if (online && ws && ws.readyState === 1)
+            ws.send(JSON.stringify({t: 'score', ms: Math.round(mission6.ms), m: 6}));
+        } else {
+          sndTone(880, 0.18, 0, 'square', 0.14);
+          caption('CRANK & BOOM', 'SCOOPS AWAY. NEXT: ' + M6_CPS[mission6.cur].name + '.', 3200);
+        }
+      }
+    }
+    return;
+  }
+  if (mission6.stage === 'won'){
+    if (t > 5.4 && mission6.capIdx === 0){
+      mission6.capIdx = 1;
+      caption('RADIO', 'NEWS 630 A LEXINGTON CREAMERY\'S TOURNAMENT SAMPLES CROSSED TOWN AT SPEED TODAY. WITNESSES DESCRIBE THE DRIVING AS QUOTE SOFT SERVE.', 5400);
+      showScores(mission6.ms, 6);
+      mission6.stage = 'post'; mission6.tStage = 0;
+    }
+    return;
+  }
+  if (mission6.stage === 'fail'){ if (t > 5) m6Cleanup(); return; }
+  if (mission6.stage === 'post'){ if (t > 22) m6Cleanup(); }
+}
+
+// ---------- MISSION 7: TAILGATE COMPLIANCE (blue ring, Kroger Field lots) ----------
+// Also ripped from the headlines: UK Athletics' new tailgating guidelines —
+// setup doesn't begin until August 8, every structure gets tagged with the
+// owner's contact info, and no deep ground stakes near tree roots. Eight
+// canopies just appeared in the Kroger Field lots. In July. Compliance is
+// done on foot, with a clipboard.
+var M7_TRIG = {x: -190, z: 542};
+var M7_TENTS = [   // stakes: deep-ground-stake offenders take a 2s pull
+  {x: -285, z: 485}, {x: -252, z: 522, stakes: 1}, {x: -205, z: 478},
+  {x: -150, z: 512}, {x: -98, z: 484, red: 1},
+  {x: -18, z: 452}, {x: 24, z: 507, stakes: 1}, {x: 48, z: 436}
+];
+var M7_BUDGET = 240;   // seconds to kickoff
+var m7Best = 0;
+try { m7Best = parseInt(localStorage.getItem('lt_m7_best') || '0', 10) || 0; } catch (e){}
+var mission7 = {stage: 'idle', tStage: 0, t0: 0, ms: 0, tagged: 0, capIdx: 0};
+var m7Tents = [], m7Trig = null;
+(function(){
+  m7Trig = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.06, 6, 24),
+    new THREE.MeshBasicMaterial({color: 0x2a6cff, transparent: true, opacity: 0.85}));
+  m7Trig.rotation.x = Math.PI / 2;
+  m7Trig.position.set(M7_TRIG.x, 0.9, M7_TRIG.z);
+  scene.add(m7Trig);
+  var legGeo = new THREE.BoxGeometry(0.12, 2.3, 0.12);
+  var legMat = new THREE.MeshStandardMaterial({color: 0x8a8f96, roughness: 0.8});
+  M7_TENTS.forEach(function(td){
+    var g = new THREE.Group();
+    var canopy = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.22, 3.2),
+      new THREE.MeshStandardMaterial({color: td.red ? 0xc41e3a : 0x0033a0, roughness: 0.75}));
+    canopy.position.y = 2.4; canopy.castShadow = true;
+    g.add(canopy);
+    [[-1.4, -1.4], [1.4, -1.4], [-1.4, 1.4], [1.4, 1.4]].forEach(function(c){
+      var leg = new THREE.Mesh(legGeo, legMat);
+      leg.position.set(c[0], 1.15, c[1]);
+      g.add(leg);
+    });
+    g.position.set(td.x, 0, td.z);
+    scene.add(g);
+    m7Tents.push({g: g, canopy: canopy, x: td.x, z: td.z,
+                  stakes: !!td.stakes, red: !!td.red, tagged: false, hold: 0});
+  });
+})();
+function nearM7Trig(){
+  var dx = player.x - M7_TRIG.x, dz = player.z - M7_TRIG.z;
+  return dx * dx + dz * dz < 16;
+}
+function m7NextTent(){
+  var best = null, bd = 1e12;
+  for (var k = 0; k < m7Tents.length; k++){
+    if (m7Tents[k].tagged) continue;
+    var dx = m7Tents[k].x - player.x, dz = m7Tents[k].z - player.z;
+    var d2 = dx * dx + dz * dz;
+    if (d2 < bd){ bd = d2; best = m7Tents[k]; }
+  }
+  return best;
+}
+var M7_TAG_LINES = [
+  'TAGGED. OWNER CONTACT INFO: APPLIED.',
+  'THIS ONE HAS A SMOKER AND A GENERATOR. AND NOW, A TAG.',
+  'TAGGED. THE CORNHOLE BOARDS ARE A SEPARATE FORM.',
+  'TAGGED. NICE CANOPY. SHAME ABOUT THE PAPERWORK.'
+];
+function startMission7(){
+  mission7.stage = 'tag'; mission7.tStage = 0; mission7.capIdx = 0;
+  mission7.tagged = 0; mission7.ms = 0;
+  mission7.t0 = performance.now();
+  for (var k = 0; k < m7Tents.length; k++){
+    var tn = m7Tents[k];
+    tn.tagged = false; tn.hold = 0;
+    tn.canopy.material.color.setHex(tn.red ? 0xc41e3a : 0x0033a0);
+  }
+  caption('UK COMPLIANCE', 'NEW TAILGATE GUIDELINES: EVERY STRUCTURE TAGGED WITH OWNER CONTACT INFO. THESE EIGHT CANOPIES HAVE NOTHING.', 5200);
+  addChatLine('* MISSION', 'TAILGATE COMPLIANCE - tag all 8 canopies before kickoff', true);
+}
+function m7Cleanup(){
+  mission7.stage = 'idle';
+}
+function updateMission7(dt){
+  if (m7Trig){
+    m7Trig.visible = allIdle();
+    if (m7Trig.visible) m7Trig.rotation.z += dt * 0.8;
+  }
+  if (mission7.stage === 'idle') return;
+  var now = performance.now();
+  mission7.tStage += dt;
+  var t = mission7.tStage;
+  if (mission7.stage === 'tag'){
+    if (t > 6.4 && mission7.capIdx === 0){ mission7.capIdx = 1; caption('UK COMPLIANCE', 'SETUP DOES NOT BEGIN UNTIL AUGUST 8. IT IS JULY. AND YET.', 4400); }
+    else if (t > 13 && mission7.capIdx === 1){ mission7.capIdx = 2; caption('UK COMPLIANCE', 'TWO OF THEM USED DEEP GROUND STAKES. NEAR TREE ROOTS. STAND THERE UNTIL THE STAKES COME OUT.', 5000); }
+    if ((now - mission7.t0) / 1000 > M7_BUDGET){
+      mission7.stage = 'fail'; mission7.tStage = 0;
+      caption('UK COMPLIANCE', 'KICKOFF. THE LOT IS A LAWLESS CANVAS CITY. WE GET THEM NEXT SEASON.', 4800);
+      return;
+    }
+    // tagging is on foot only — clipboards don't work from a car window.
+    // linger 0.5s to tag; deep-stake tents take a 2s pull
+    if (!player.veh && !isFrozen()){
+      for (var k = 0; k < m7Tents.length; k++){
+        var tn = m7Tents[k];
+        if (tn.tagged) continue;
+        var dx = tn.x - player.x, dz = tn.z - player.z;
+        if (dx * dx + dz * dz > 6.8){ tn.hold = 0; continue; }
+        tn.hold += dt;
+        if (tn.hold >= (tn.stakes ? 2.0 : 0.5)){
+          tn.tagged = true;
+          mission7.tagged++;
+          tn.canopy.material.color.setHex(0x1f8a4c);
+          sndTone(1180, 0.12, 0, 'square', 0.16);
+          if (mission7.tagged < m7Tents.length){
+            caption('UK COMPLIANCE', tn.stakes ? 'STAKES OUT. THE TREE ROOTS SEND THEIR REGARDS.' :
+              tn.red ? 'THIS ONE IS LOUISVILLE RED. TAG IT ANYWAY. THIS IS A JUDGMENT-FREE PARKING LOT.' :
+              M7_TAG_LINES[mission7.tagged % M7_TAG_LINES.length], 3400);
+          } else {
+            mission7.ms = now - mission7.t0;
+            mission7.stage = 'won'; mission7.tStage = 0; mission7.capIdx = 0;
+            sndWin(); sndApplause();
+            caption('UK COMPLIANCE', 'EIGHT FOR EIGHT. THE TAILGATE IS FULLY COMPLIANT. GO CATS.', 4600);
+            try {
+              if (!m7Best || mission7.ms < m7Best){
+                m7Best = mission7.ms;
+                localStorage.setItem('lt_m7_best', String(Math.round(mission7.ms)));
+              }
+            } catch (e){}
+            if (online && ws && ws.readyState === 1)
+              ws.send(JSON.stringify({t: 'score', ms: Math.round(mission7.ms), m: 7}));
+            return;
+          }
+        }
+      }
+    }
+    return;
+  }
+  if (mission7.stage === 'won'){
+    if (t > 5.4 && mission7.capIdx === 0){
+      mission7.capIdx = 1;
+      caption('RADIO', '98.5 THE CAT KROGER FIELD\'S LOTS ARE ONE HUNDRED PERCENT TAGGED AND COMPLIANT. AUGUST 8 CANNOT COME SOON ENOUGH.', 5000);
+      showScores(mission7.ms, 7);
+      mission7.stage = 'post'; mission7.tStage = 0;
+    }
+    return;
+  }
+  if (mission7.stage === 'fail'){ if (t > 5) m7Cleanup(); return; }
+  if (mission7.stage === 'post'){ if (t > 22) m7Cleanup(); }
+}
 function allIdle(){
   return mission.stage === 'idle' && mission2.stage === 'idle' &&
          mission3.stage === 'idle' && mission4.stage === 'idle' &&
-         mission5.stage === 'idle';
+         mission5.stage === 'idle' && mission6.stage === 'idle' &&
+         mission7.stage === 'idle';
 }
 // Everything mission-related on the overlay (start markers, target
 // brackets, edge arrow, timers, zone chips, the fight chopper tag) draws
@@ -4018,6 +4341,8 @@ labels.push({name: '★ MISSION: SNOW EMERGENCY', x: DOOR_P.x, y: 13, z: DOOR_P.
 labels.push({name: '★ MISSION: THE DATA CENTER', x: M3_TRIG.x, y: 9, z: M3_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: HORSEPOWER', x: M4_TRIG.x, y: 9, z: M4_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: DEADLINE', x: M5_TRIG.x, y: 9, z: M5_TRIG.z, col: MISSION_COL, mission: true});
+labels.push({name: '★ MISSION: THE MELT', x: M6_TRIG.x, y: 9, z: M6_TRIG.z, col: MISSION_COL, mission: true});
+labels.push({name: '★ MISSION: TAILGATE COMPLIANCE', x: M7_TRIG.x, y: 9, z: M7_TRIG.z, col: MISSION_COL, mission: true});
 // the gentle shove: when nothing else is going on, point at the next mission
 function nextMissionHint(){
   if (!heliUnlocked) return 'FIRST MISSION: THE RIBBON CUTTING — GOLD RING BY CITY HALL';
@@ -4025,6 +4350,8 @@ function nextMissionHint(){
   if (!m3Best) return 'NEXT MISSION: THE DATA CENTER — TEAL RING, PHOENIX PARK';
   if (!m4Best) return 'NEXT MISSION: HORSEPOWER — GREEN RING, THOROUGHBRED PARK';
   if (!m5Best) return 'NEXT MISSION: DEADLINE — GOLD RING, THE BLOCK NEWSROOM (MAIN ST)';
+  if (!m6Best) return 'NEXT MISSION: THE MELT — PINK RING, W MAIN AT THE DISTILLERY DISTRICT';
+  if (!m7Best) return 'NEXT MISSION: TAILGATE COMPLIANCE — BLUE RING, KROGER FIELD LOTS';
   return '';
 }
 
@@ -4040,6 +4367,8 @@ if (/debug=1/.test(hashStr)){
     m3: function(){ return mission3; },
     m4: function(){ return mission4; },
     m4h: function(){ return m4Horses; },
+    m6: function(){ return mission6; },
+    m7: function(){ return mission7; },
     veh: function(){ return !!player.veh; },
     m4horses: function(){ return m4Horses.map(function(h){ return {s: h.state, x: Math.round(h.g.position.x), z: Math.round(h.g.position.z)}; }); },
     photo: function(){ takePhoto(); },
@@ -4156,6 +4485,14 @@ function tryEnterExit(){
   }
   if (allIdle() && !player.veh && !isFrozen() && nearM5Trig()){
     startMission5();
+    return;
+  }
+  if (allIdle() && !player.veh && !isFrozen() && nearM6Trig()){
+    startMission6();
+    return;
+  }
+  if (allIdle() && !player.veh && !isFrozen() && nearM7Trig()){
+    startMission7();
     return;
   }
   if (!player.veh && !isFrozen()){
@@ -5279,6 +5616,15 @@ function missionTarget(){
     var cp5 = M5_CPS[mission5.cur];
     return {x: cp5.x, y: 3, z: cp5.z, label: 'CHECKPOINT ' + (mission5.cur + 1) + '/' + M5_CPS.length};
   }
+  if (mission6.stage === 'drive' && mission6.cur < M6_CPS.length){
+    var cp6 = M6_CPS[mission6.cur];
+    return {x: cp6.x, y: 3, z: cp6.z, label: 'SCOOP STOP ' + (mission6.cur + 1) + '/' + M6_CPS.length};
+  }
+  if (mission7.stage === 'tag'){
+    var tent = m7NextTent();
+    if (tent) return {x: tent.x, y: 3, z: tent.z,
+      label: (tent.stakes ? 'DEEP STAKES ' : 'UNTAGGED CANOPY ') + (mission7.tagged + 1) + '/' + m7Tents.length};
+  }
   if (mission3.stage === 'tail'){
     if (m3Car && m3Car.boarded && !m3Car.done)
       return {x: m3Car.g.position.x, y: 2.4, z: m3Car.g.position.z, label: 'GRAFT'};
@@ -5364,6 +5710,10 @@ function currentObjective(){
   if (!m4Best) return {x: M4_TRIG.x, y: 9, z: M4_TRIG.z, label: 'HORSEPOWER'};
   if (typeof m5Best !== 'undefined' && !m5Best && typeof M5_TRIG !== 'undefined')
     return {x: M5_TRIG.x, y: 9, z: M5_TRIG.z, label: 'DEADLINE'};
+  if (typeof m6Best !== 'undefined' && !m6Best && typeof M6_TRIG !== 'undefined')
+    return {x: M6_TRIG.x, y: 9, z: M6_TRIG.z, label: 'THE MELT'};
+  if (typeof m7Best !== 'undefined' && !m7Best && typeof M7_TRIG !== 'undefined')
+    return {x: M7_TRIG.x, y: 9, z: M7_TRIG.z, label: 'TAILGATE COMPLIANCE'};
   return null;
 }
 // F1: persistent gold diamond pointing at the current objective plus a
@@ -5848,6 +6198,8 @@ function frameStep(now){
   updateMission3(dt);
   updateMission4(dt);
   updateMission5(dt);
+  updateMission6(dt);
+  updateMission7(dt);
   updateRouteRibbon(dt);
   updateRockets(dt);
   updateDrops(dt);
@@ -5906,6 +6258,7 @@ function frameStep(now){
     else if (player.heli) hint = 'W/S A/D FLY · SPACE UP · SHIFT DOWN · HOLD F/CLICK — WATER CANNON · E — EXIT · HP ' + heli.hp + '/3';
     else if (player.veh && player.veh.plow) hint = 'BLADE: ' + (bladeDown ? 'DOWN' : 'UP') + ' · SPACE — RAISE/LOWER · CLEAR THE SNOWY STREETS · E — EXIT';
     else if (mission5.stage === 'driving') hint = 'DEADLINE · CP ' + (mission5.cur + 1) + '/' + M5_CPS.length + ' · ' + Math.max(0, Math.ceil(M5_BUDGET - (performance.now() - mission5.t0) / 1000)) + 's LEFT';
+    else if (mission6.stage === 'drive') hint = 'THE MELT · STOP ' + (mission6.cur + 1) + '/' + M6_CPS.length + ' · MELT ' + Math.min(99, Math.max(0, Math.round(m6MeltSec() / M6_BUDGET * 100))) + '% · CRASHES MELT IT FASTER';
     else if (player.veh) hint = 'E — EXIT · W/S DRIVE · A/D STEER · ' + Math.round(Math.abs(player.veh.spd) * 3.6) + ' KM/H';
     else if (mission2.stage === 'plow' && plowVeh) hint = 'GET TO THE PLOW — MAIN ST BY CITY HALL (E TO BOARD)';
     else if (mission3.stage === 'tail') hint = 'TAIL THE COUNCILMAN — STAY BACK, STAY CLOSE ENOUGH';
@@ -5915,12 +6268,15 @@ function frameStep(now){
     else if (mission3.stage === 'return') hint = 'BRING THE PHOTOS TO THE MAYOR — PHOENIX PARK';
     else if (mission4.stage === 'wrangle' && calmableHorse()) hint = 'E — TAKE THE LEAD ROPE';
     else if (mission4.stage === 'wrangle') hint = 'HORSES HOME: ' + mission4.penned + '/3 · SNEAK UP SLOW · GREEN RING AT ELMENDORF';
+    else if (mission7.stage === 'tag') hint = 'TAILGATE COMPLIANCE · TAGGED ' + mission7.tagged + '/' + m7Tents.length + ' · KICKOFF ' + Math.max(0, Math.ceil(M7_BUDGET - (performance.now() - mission7.t0) / 1000)) + 's · STAND BY A CANOPY TO TAG';
     else if (allIdle() && nearMissionTrig()) hint = 'E — START MISSION: THE RIBBON CUTTING';
     else if (heliUnlocked && allIdle() && nearDoor()) hint = 'E — CITY HALL: SEE THE MAYOR';
     else if (!heliUnlocked && nearDoor()) hint = 'CITY HALL IS LOCKED — BEAT "THE RIBBON CUTTING" FIRST';
     else if (allIdle() && nearM3Trig()) hint = 'E — START MISSION: THE DATA CENTER';
     else if (allIdle() && nearM4Trig()) hint = 'E — START MISSION: HORSEPOWER';
     else if (allIdle() && nearM5Trig()) hint = 'E — START MISSION: DEADLINE';
+    else if (allIdle() && nearM6Trig()) hint = 'E — START MISSION: THE MELT';
+    else if (allIdle() && nearM7Trig()) hint = 'E — START MISSION: TAILGATE COMPLIANCE';
     else if (canEnterHeli()) hint = 'E — FLY THE NEWS CHOPPER';
     else if (!heliUnlocked && canEnterHeliBase()) hint = 'LOCKED — BEAT "THE RIBBON CUTTING" AT CITY HALL TO FLY';
     else if (player.grounded && nearestVehicle()) hint = 'E — ENTER CAR';

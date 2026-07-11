@@ -114,7 +114,7 @@ Key models to keep straight:
   buffer). Bots are just locally-generated state packets, so multiplayer
   features must work through that one pipeline to work offline.
 - **Missions run entirely client-side**; only final times touch the server
-  (`{t:'score', ms, m}` → validated per board → `scores.json` `{m1..m4}`
+  (`{t:'score', ms, m}` → validated per board → `scores.json` `{m1..m7}`
   top-50 → `{t:'scores'}` top-10s + chat announcement). Mission 1
   ("THE RIBBON CUTTING") fights a local NPC chopper (`mh`), separate from
   the shared `heli`. Beating it sets `lt_heli_unlock` in localStorage,
