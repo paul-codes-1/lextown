@@ -423,3 +423,72 @@ observes.
       line, and the `#scoreList8` scores-modal block are all present.
 - [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
       pass and `npm test` (`node test/smoke.mjs`) is all green.
+
+## F8 — AIR MAIL (Mission 9: jetpack rooftop delivery run)
+
+Phase 2 F7. **Precondition:** m1–m8 beaten, every mission idle, `lt_m9_best`
+cleared. Extend the Setup fast-forward recipe with all eight prior bests (m1's
+"best" is the heli unlock):
+
+```js
+localStorage.setItem('lt_heli_unlock','1');
+['lt_m2_best','lt_m3_best','lt_m4_best','lt_m5_best','lt_m6_best','lt_m7_best','lt_m8_best']
+  .forEach(k => localStorage.setItem(k, '90000'));
+localStorage.removeItem('lt_m9_best');
+localStorage.removeItem('lt_m9_coached');
+location.reload();
+```
+
+Standing gate first (`node --check web/app.js && node --check server.js`, then
+`npm test`). Two tabs for the announce check — **Tab A** plays, **Tab B**
+observes. Tip: `#debug=1` + `__lt.tp(x,z)` to hop between rooftops while testing.
+
+- [ ] **Waypoint closes the chain.** With m8 beaten and m9 not, F1's gold marker
+      and route ribbon point to `M9_TRIG` (the violet ring downtown by spawn); the
+      `★ MISSION: AIR MAIL` label renders at the ring and hides during any mission.
+- [ ] **Start gate is `allIdle` + on-foot + not-riding.** On foot at the violet ring,
+      `E` starts it only when every mission is idle and you're not driving or riding
+      shotgun; the postmaster brief fires and the ~180 s countdown begins. Confirm the
+      negatives: `E` does nothing during another mission, while a passenger, or while
+      frozen.
+- [ ] **First ring is fresh-user reachable.** From a full tank at the start, air-ring
+      1 (`LOW HOP`, low and close) is clearable on a single first hold-Space hop.
+- [ ] **Pads bank + refuel; rings fly-through.** Landing on a lit rooftop pad banks the
+      stop and tops the tank (the stock 30/s ground regen); an air-ring banks by flying
+      your body through it. Only the current waypoint's violet mesh is lit; the next
+      lights on arrival. The HUD reads `AIR MAIL · STOP n/6 · FUEL m% · <s>s LEFT`.
+- [ ] **Fuel forces the pads.** You cannot reach the Big Blue roof (`h≈128`) from the
+      ground on one tank; refueling on the Central Bank Tower pad (`h≈88`) is required
+      to make the final hop. (Try skipping the tower pad — you run dry short of Big Blue.)
+- [ ] **Missed ring re-threads, no reset.** Overshoot an air-ring → it stays lit, loop
+      back through it, progress intact, no course reset.
+- [ ] **Fall = time cost, not reset.** Run the tank dry mid-air → you sink, the
+      `TANK IS DRY - GET DOWN AND IT REFILLS ON THE GROUND.` nudge fires once, fuel
+      regens on the ground, you relaunch, and your banked stops + current target
+      persist. No walk-back (you're mid-cluster). The nudge re-arms after you touch down.
+- [ ] **First-attempt coaching, once.** The first-ever attempt shows
+      `HOLD SPACE TO CLIMB, EASE OFF TO GLIDE. LAND ON A ROOF PAD TO TOP OFF THE TANK.`
+      and sets `lt_m9_coached`; later attempts show the postmaster flavor brief instead.
+- [ ] **Win → board + announce + device best.** Fly the whole route under 180 s → win;
+      the scores modal opens on the **m9** board (`#scoreList9`, `ROUTE FLOWN IN …`)
+      with your time, `lt_m9_best` updates locally, and Tab B's chat shows
+      `* MISSION  <name> flew the airmail route in <t>s`. Verify the time lands on the
+      m9 board, NOT the ribbon board (client sent numeric `m:9`).
+- [ ] **Local best gates the chain.** `lt_m9_best` is set; `m9Best` removes m9 from the
+      waypoint progression (the objective chain is now complete — no marker).
+- [ ] **Timer expiry = clean fail + instant retry.** Let the clock run out → fail
+      caption (`THE CLOCK BEAT YOU - THE TRUCK LEFT WITHOUT THE BAG.`), mission resets
+      to `idle`, no submit (Tab B chat unchanged, `#scoreList9` unchanged); `E` at the
+      ring restarts immediately where you stand (waypoint 1 relit, clock reset).
+- [ ] **No mission overlap.** During a run, `E` at other rings does nothing;
+      `allIdle()` includes `mission9`.
+- [ ] **Private-room run doesn't rank.** Play m9 in a `#room=` private room → the
+      mission plays and `lt_m9_best` still saves, but there's no global-board write and
+      no chat announce (inherits F4's score gate). In PUBLIC it ranks normally.
+- [ ] **Server plumbing complete.** `m9` is in `BOARDS`, the `scores` literal, the
+      score map, the `WIN` object (`[25000, 300000]`), and the announce map — a win
+      persists to `scores.json` under `m9` and survives a server restart.
+- [ ] **Surfaces updated together.** README mission list, the `#tut` MISSION 9 grid
+      line, and the `#scoreList9` scores-modal block are all present.
+- [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
+      pass and `npm test` (`node test/smoke.mjs`) is all green.

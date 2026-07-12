@@ -2855,11 +2855,11 @@ function showScores(myMs, board){
     var verb = board === 2 ? 'PLOWED IN ' : board === 3 ? 'STORY BROKEN IN ' :
                board === 4 ? 'HORSES HOME IN ' : board === 5 ? 'DEADLINE MET IN ' :
                board === 6 ? 'SCOOPS LANDED IN ' : board === 7 ? 'LOT TAGGED IN ' :
-               board === 8 ? 'FOALS PENNED IN ' : 'CHOPPER DOWN IN ';
+               board === 8 ? 'FOALS PENNED IN ' : board === 9 ? 'ROUTE FLOWN IN ' : 'CHOPPER DOWN IN ';
     you = verb + fmtMs(myMs) + ' · +' + missionPoints(myMs) + ' PTS';
     var best = board === 2 ? m2Best : board === 3 ? m3Best : board === 4 ? m4Best :
                board === 5 ? m5Best : board === 6 ? m6Best : board === 7 ? m7Best :
-               board === 8 ? m8Best : missionBest;
+               board === 8 ? m8Best : board === 9 ? m9Best : missionBest;
     if (best) you += ' · DEVICE BEST ' + fmtMs(best);
     if (roomCode) you += ' · PRIVATE ROOM · TIMES DON\'T RANK';
   } else {
@@ -2870,10 +2870,11 @@ function showScores(myMs, board){
       ' · ' + (m5Best ? 'DEADLINE: ' + fmtMs(m5Best) : 'DEADLINE: —') +
       ' · ' + (m6Best ? 'MELT: ' + fmtMs(m6Best) : 'MELT: —') +
       ' · ' + (m7Best ? 'TAILGATE: ' + fmtMs(m7Best) : 'TAILGATE: —') +
-      ' · ' + (m8Best ? 'PADDOCK: ' + fmtMs(m8Best) : 'PADDOCK: —');
+      ' · ' + (m8Best ? 'PADDOCK: ' + fmtMs(m8Best) : 'PADDOCK: —') +
+      ' · ' + (m9Best ? 'AIR MAIL: ' + fmtMs(m9Best) : 'AIR MAIL: —');
   }
   document.getElementById('scoreYou').textContent = you;
-  ['scoreList', 'scoreList2', 'scoreList3', 'scoreList4', 'scoreList5', 'scoreList6', 'scoreList7', 'scoreList8'].forEach(function(id){
+  ['scoreList', 'scoreList2', 'scoreList3', 'scoreList4', 'scoreList5', 'scoreList6', 'scoreList7', 'scoreList8', 'scoreList9'].forEach(function(id){
     var list = document.getElementById(id);
     if (!list) return;
     list.textContent = '';
@@ -2909,6 +2910,7 @@ function renderScores(m){
   fill('scoreList6', m.m6 || []);
   fill('scoreList7', m.m7 || []);
   fill('scoreList8', m.m8 || []);
+  fill('scoreList9', m.m9 || []);
 }
 function updateMission(dt){
   var now = performance.now();
@@ -4662,11 +4664,182 @@ function updateMission8(dt){
   if (mission8.stage === 'fail'){ if (t > 5) m8Cleanup(); return; }
   if (mission8.stage === 'post'){ if (t > 20) m8Cleanup(); }
 }
+// ---------- mission 9: AIR MAIL (jetpack rooftop delivery run) ----------
+// The street's a parking lot and the mail truck rolls at six, so the downtown
+// postmaster straps you into the jetpack to run the day's airmail rooftop to
+// rooftop. The course ALTERNATES violet air-rings (fly your body through) with
+// rooftop PADS (land to bank the stop AND refuel — fuel only fills on the
+// ground). It ESCALATES: a low hop, a low roof, a mid climb, the Central Bank
+// Tower (h88, the FORCED refuel — you cannot reach Big Blue's h128 roof from the
+// ground on one tank), then Big Blue itself. No engine change: air-rings are a
+// 3D proximity test, pads are "grounded on the roof at the pad point" over the
+// existing landable colliders. Fuel is UNTOUCHED — the stock 9/s burn + 30/s
+// ground regen ARE the difficulty. A dry tank or a fall is a time cost, never a
+// reset: banked stops persist and the current target stays lit; only the 180s
+// clock fails you. Flown on foot -> jetpack (mode 1, a foot sub-state).
+// Top-level vars declared before the labels.push block below (statement order).
+var M9_TRIG = {x: 14, z: -9.5};
+var M9_BUDGET = 180;
+var M9_RING_COL = 0x9d4edd;   // violet — distinct from teal/green/pink/blue/amber/gold
+// Ordered waypoints, alternating ring (fly-through) and pad (land+refuel),
+// climbing the real downtown tower cluster. y = ring altitude / pad roof-top.
+// Placed for a fuel rhythm where each leg is flyable on one tank and the
+// Central Bank pad is a forced refuel before the final hop up to Big Blue.
+var M9_WAY = [
+  {x: -16,  z: 4,   y: 16,     pad: false, r: 7.5, label: 'LOW HOP'},        // fresh-user gate: one hold-Space hop
+  {x: -50,  z: 42,  y: 12.35,  pad: true,  r: 13,  label: 'STOP 1'},         // big low roof (addTower -50,42,h12)
+  {x: -92,  z: 56,  y: 52,     pad: false, r: 8,   label: 'MID GATE'},       // climbing toward the towers
+  {x: -126, z: 72,  y: 88.35,  pad: true,  r: 11,  label: 'CENTRAL BANK'},   // addTower -126,72,h88 — forced refuel
+  {x: -126, z: 52,  y: 112,    pad: false, r: 8,   label: 'THE GAP'},        // between the towers, near ceiling
+  {x: -127, z: 32,  y: 128.35, pad: true,  r: 12,  label: 'BIG BLUE'}        // addTower -127,32,h128 — deliver, win
+];
+var m9Best = 0;
+try { m9Best = parseInt(localStorage.getItem('lt_m9_best') || '0', 10) || 0; } catch (e){}
+var mission9 = {stage: 'idle', tStage: 0, t0: 0, ms: 0, cur: 0, capIdx: 0, dry: false};
+var m9StartRing = null, m9Meshes = [];
+(function(){
+  m9StartRing = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.06, 6, 24),
+    new THREE.MeshBasicMaterial({color: M9_RING_COL, transparent: true, opacity: 0.85}));   // violet start ring
+  m9StartRing.rotation.x = Math.PI / 2;
+  m9StartRing.position.set(M9_TRIG.x, 0.9, M9_TRIG.z);
+  scene.add(m9StartRing);
+  M9_WAY.forEach(function(w){
+    var mesh;
+    if (w.pad){
+      // a flat landing hoop lying on the roof surface — "set down here"
+      mesh = new THREE.Mesh(new THREE.TorusGeometry(w.r * 0.62, 0.16, 8, 30),
+        new THREE.MeshBasicMaterial({color: M9_RING_COL, transparent: true, opacity: 0.72}));
+      mesh.rotation.x = Math.PI / 2;
+      mesh.position.set(w.x, w.y + 0.25, w.z);
+    } else {
+      // an air hoop you fly your body through. Detection is spherical, so the
+      // flat orientation is cosmetic — it matches every other mission ring.
+      mesh = new THREE.Mesh(new THREE.TorusGeometry(2.6, 0.16, 8, 28),
+        new THREE.MeshBasicMaterial({color: M9_RING_COL, transparent: true, opacity: 0.85}));
+      mesh.rotation.x = Math.PI / 2;
+      mesh.position.set(w.x, w.y, w.z);
+    }
+    mesh.visible = false;
+    scene.add(mesh);
+    m9Meshes.push(mesh);
+  });
+})();
+function nearM9Trig(){
+  var dx = player.x - M9_TRIG.x, dz = player.z - M9_TRIG.z;
+  return dx * dx + dz * dz < 20;
+}
+function startMission9(){
+  mission9.stage = 'flying'; mission9.tStage = 0; mission9.capIdx = 0;
+  mission9.cur = 0; mission9.ms = 0; mission9.dry = false;
+  mission9.t0 = performance.now();
+  // first-ever attempt leads with the hold-Space coaching; once coached,
+  // returning pilots get the postmaster's flavor brief. One caption() call (the
+  // m8 pattern). Fuel is NOT force-set — the start is on foot on the ground, so
+  // the stock 30/s ground regen tops the tank off in ~3s with zero fuel-model
+  // touch (per the F7 "fuel is untouched" non-goal).
+  var m9Coached = true;
+  try { m9Coached = localStorage.getItem('lt_m9_coached') === '1'; } catch (e){}
+  if (!m9Coached){
+    caption('THE POSTMASTER', 'HOLD SPACE TO CLIMB, EASE OFF TO GLIDE. LAND ON A ROOF PAD TO TOP OFF THE TANK.', 5200);
+    try { localStorage.setItem('lt_m9_coached', '1'); } catch (e){}
+  } else {
+    caption('THE POSTMASTER', 'STREET IS A PARKING LOT AND THE TRUCK ROLLS AT SIX. RUN THE MAIL ROOFTOP TO ROOFTOP - THE PADS ARE WHERE YOU CATCH YOUR BREATH, FUEL ONLY FILLS ON THE GROUND.', 6000);
+  }
+  addChatLine('* MISSION', 'AIR MAIL - fly the rooftop mail route, land on the pads to refuel', true);
+  mev(30);   // funnel: mission start
+}
+function m9Cleanup(){
+  mission9.stage = 'idle';
+  for (var i = 0; i < m9Meshes.length; i++) m9Meshes[i].visible = false;
+}
+function m9Fail(){
+  mission9.stage = 'fail'; mission9.tStage = 0;
+  caption('THE POSTMASTER', 'THE CLOCK BEAT YOU - THE TRUCK LEFT WITHOUT THE BAG.', 4600);
+  mev(33);   // funnel: fail (timeout)
+}
+function m9Reached(w){
+  // pad = grounded on the roof at the pad point (the y-guard rejects the street
+  // far below the same x,z); ring = body within the 3D catch radius (altitude
+  // included). No physics added — pure position tests over existing rooftops.
+  if (w.pad){
+    var pdx = player.x - w.x, pdz = player.z - w.z;
+    return player.grounded && (pdx * pdx + pdz * pdz) < w.r * w.r && player.y > w.y - 3;
+  }
+  var dx = player.x - w.x, dy = (player.y + 1) - w.y, dz = player.z - w.z;
+  return (dx * dx + dy * dy + dz * dz) < w.r * w.r;
+}
+function updateMission9(dt){
+  if (m9StartRing){
+    m9StartRing.visible = allIdle();
+    if (m9StartRing.visible) m9StartRing.rotation.z += dt * 0.8;
+  }
+  if (mission9.stage === 'idle') return;
+  var now = performance.now();
+  mission9.tStage += dt;
+  var t = mission9.tStage;
+  if (mission9.stage === 'flying'){
+    // only the current waypoint is lit; the next lights on arrival
+    for (var i = 0; i < m9Meshes.length; i++){
+      var lit = (i === mission9.cur);
+      m9Meshes[i].visible = lit;
+      if (lit) m9Meshes[i].rotation.z += dt * 1.1;
+    }
+    if ((now - mission9.t0) / 1000 > M9_BUDGET){ m9Fail(); return; }
+    // out-of-fuel nudge: contextual, once per dry-out (re-arms when you touch down)
+    if (player.grounded) mission9.dry = false;
+    else if (!mission9.dry && player.fuel < 0.6){
+      mission9.dry = true;
+      caption('THE POSTMASTER', 'TANK IS DRY - GET DOWN AND IT REFILLS ON THE GROUND.', 3600);
+      mev(31);   // funnel: dry tank mid-air
+    }
+    var w = M9_WAY[mission9.cur];
+    if (w && m9Reached(w)){
+      mission9.cur++;
+      mev(34);   // funnel: waypoint banked (per-leg)
+      if (w.pad){
+        sndTone(760, 0.22, 0, 'square', 0.14);
+        puff(w.x, w.y + 1.2, w.z, M9_RING_COL, 0.25, 1.4, 420, 0.5, 0.7);
+      } else {
+        sndTone(880, 0.14, 0, 'triangle', 0.12);
+      }
+      // progress captions on the two mid-route pads (rings just chime + advance)
+      if (mission9.cur === 2) caption('THE POSTMASTER', 'STOP 1 MADE - TANK TOPPED OFF.', 3200);
+      else if (mission9.cur === 4) caption('THE POSTMASTER', 'HALFWAY UP - KEEP CLIMBING TO BIG BLUE.', 3400);
+      if (mission9.cur >= M9_WAY.length){
+        mission9.ms = now - mission9.t0;
+        mission9.stage = 'won'; mission9.tStage = 0; mission9.capIdx = 0;
+        for (var j = 0; j < m9Meshes.length; j++) m9Meshes[j].visible = false;
+        sndWin(); sndApplause();
+        caption('THE POSTMASTER', 'WHOLE ROUTE FLOWN, CAUGHT THE TRUCK. THE ROOFTOP MAIL PILOTS WOULD BE PROUD.', 5200);
+        try {
+          if (!m9Best || mission9.ms < m9Best){
+            m9Best = mission9.ms;
+            localStorage.setItem('lt_m9_best', String(Math.round(mission9.ms)));
+          }
+        } catch (e){}
+        sendScore({t: 'score', ms: Math.round(mission9.ms), m: 9});   // NUMERIC 9 (not 'm9')
+        mev(32);   // funnel: mission win
+      }
+    }
+    return;
+  }
+  if (mission9.stage === 'won'){
+    if (t > 5 && mission9.capIdx === 0){
+      mission9.capIdx = 1;
+      showScores(mission9.ms, 9);
+      mission9.stage = 'post'; mission9.tStage = 0;
+    }
+    return;
+  }
+  if (mission9.stage === 'fail'){ if (t > 5) m9Cleanup(); return; }
+  if (mission9.stage === 'post'){ if (t > 20) m9Cleanup(); }
+}
 function allIdle(){
   return mission.stage === 'idle' && mission2.stage === 'idle' &&
          mission3.stage === 'idle' && mission4.stage === 'idle' &&
          mission5.stage === 'idle' && mission6.stage === 'idle' &&
-         mission7.stage === 'idle' && mission8.stage === 'idle';
+         mission7.stage === 'idle' && mission8.stage === 'idle' &&
+         mission9.stage === 'idle';
 }
 // Everything mission-related on the overlay (start markers, target
 // brackets, edge arrow, timers, zone chips, the fight chopper tag) draws
@@ -4685,6 +4858,7 @@ labels.push({name: '★ MISSION: DEADLINE', x: M5_TRIG.x, y: 9, z: M5_TRIG.z, co
 labels.push({name: '★ MISSION: THE MELT', x: M6_TRIG.x, y: 9, z: M6_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: TAILGATE COMPLIANCE', x: M7_TRIG.x, y: 9, z: M7_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: LOOSE IN THE PADDOCK', x: M8_TRIG.x, y: 9, z: M8_TRIG.z, col: MISSION_COL, mission: true});
+labels.push({name: '★ MISSION: AIR MAIL', x: M9_TRIG.x, y: 9, z: M9_TRIG.z, col: MISSION_COL, mission: true});
 // the gentle shove: when nothing else is going on, point at the next mission
 // bare next-unbeaten mission name, by the same best-gated chain ('' when all
 // beaten). Shared by the hint AND the F2 welcome-back so the two can't disagree.
@@ -4697,6 +4871,7 @@ function nextMissionName(){
   if (!m6Best) return 'THE MELT';
   if (!m7Best) return 'TAILGATE COMPLIANCE';
   if (!m8Best) return 'LOOSE IN THE PADDOCK';
+  if (!m9Best) return 'AIR MAIL';
   return '';
 }
 // each mission's on-screen where-to-go suffix (DOM-only text, em dashes kept)
@@ -4708,7 +4883,8 @@ var MISSION_HINT_SUFFIX = {
   'DEADLINE': 'GOLD RING, THE BLOCK NEWSROOM (MAIN ST)',
   'THE MELT': 'PINK RING, W MAIN AT THE DISTILLERY DISTRICT',
   'TAILGATE COMPLIANCE': 'BLUE RING, KROGER FIELD LOTS',
-  'LOOSE IN THE PADDOCK': 'AMBER RING AT ELMENDORF (NORTH, PAST NEW CIRCLE)'
+  'LOOSE IN THE PADDOCK': 'AMBER RING AT ELMENDORF (NORTH, PAST NEW CIRCLE)',
+  'AIR MAIL': 'VIOLET RING DOWNTOWN (JETPACK - HOLD SPACE)'
 };
 function nextMissionHint(){
   var nm = nextMissionName();
@@ -4866,6 +5042,10 @@ function tryEnterExit(){
   }
   if (allIdle() && !player.veh && !player.ride && !isFrozen() && nearM8Trig()){
     startMission8();
+    return;
+  }
+  if (allIdle() && !player.veh && !player.ride && !isFrozen() && nearM9Trig()){
+    startMission9();
     return;
   }
   if (!player.veh && !isFrozen()){
@@ -6239,6 +6419,10 @@ function missionTarget(){
     if (bf) return {x: bf.g.position.x, y: 2.4, z: bf.g.position.z, label: 'LOOSE FOAL'};
     if (mission8.penned < 3) return {x: M8_PEN.x, y: 3, z: M8_PEN.z, label: 'THE PEN'};
   }
+  if (mission9.stage === 'flying'){
+    var w9 = M9_WAY[mission9.cur];
+    if (w9) return {x: w9.x, y: w9.y, z: w9.z, label: (w9.pad ? 'LAND: ' : 'FLY: ') + w9.label};
+  }
   return null;
 }
 // A single reusable objective marker: on-screen it's a bracket (or a gold
@@ -6309,6 +6493,8 @@ function currentObjective(){
     return {x: M7_TRIG.x, y: 9, z: M7_TRIG.z, label: 'TAILGATE COMPLIANCE'};
   if (typeof m8Best !== 'undefined' && !m8Best && typeof M8_TRIG !== 'undefined')
     return {x: M8_TRIG.x, y: 9, z: M8_TRIG.z, label: 'LOOSE IN THE PADDOCK'};
+  if (typeof m9Best !== 'undefined' && !m9Best && typeof M9_TRIG !== 'undefined')
+    return {x: M9_TRIG.x, y: 9, z: M9_TRIG.z, label: 'AIR MAIL'};
   return null;
 }
 // F1: persistent gold diamond pointing at the current objective plus a
@@ -6798,6 +6984,7 @@ function frameStep(now){
   updateMission6(dt);
   updateMission7(dt);
   updateMission8(dt);
+  updateMission9(dt);
   updateRouteRibbon(dt);
   updateRockets(dt);
   updateDrops(dt);
@@ -6880,6 +7067,7 @@ function frameStep(now){
     else if (mission4.stage === 'wrangle') hint = 'HORSES HOME: ' + mission4.penned + '/3 · SNEAK UP SLOW · GREEN RING AT ELMENDORF';
     else if (mission7.stage === 'tag') hint = 'TAILGATE COMPLIANCE · TAGGED ' + mission7.tagged + '/' + m7Tents.length + ' · KICKOFF ' + Math.max(0, Math.ceil(M7_BUDGET - (performance.now() - mission7.t0) / 1000)) + 's · STAND BY A CANOPY TO TAG';
     else if (mission8.stage === 'wrangle') hint = 'LOOSE IN THE PADDOCK · PENNED ' + mission8.penned + '/3 · ' + Math.max(0, Math.ceil(M8_BUDGET - (performance.now() - mission8.t0) / 1000)) + 's · F/CLICK — DART A FOAL';
+    else if (mission9.stage === 'flying') hint = 'AIR MAIL · STOP ' + (mission9.cur + 1) + '/' + M9_WAY.length + ' · FUEL ' + Math.round(player.fuel) + '% · ' + Math.max(0, Math.ceil(M9_BUDGET - (performance.now() - mission9.t0) / 1000)) + 's LEFT';
     else if (allIdle() && nearMissionTrig()) hint = 'E — START MISSION: THE RIBBON CUTTING';
     else if (heliUnlocked && allIdle() && nearDoor()) hint = 'E — CITY HALL: SEE THE MAYOR';
     else if (!heliUnlocked && nearDoor()) hint = 'CITY HALL IS LOCKED — BEAT "THE RIBBON CUTTING" FIRST';
@@ -6889,6 +7077,7 @@ function frameStep(now){
     else if (allIdle() && nearM6Trig()) hint = 'E — START MISSION: THE MELT';
     else if (allIdle() && nearM7Trig()) hint = 'E — START MISSION: TAILGATE COMPLIANCE';
     else if (allIdle() && nearM8Trig()) hint = 'E — START MISSION: LOOSE IN THE PADDOCK';
+    else if (allIdle() && nearM9Trig()) hint = 'E — START MISSION: AIR MAIL';
     else if (canEnterHeli()) hint = 'E — FLY THE NEWS CHOPPER';
     else if (!heliUnlocked && canEnterHeliBase()) hint = 'LOCKED — BEAT "THE RIBBON CUTTING" AT CITY HALL TO FLY';
     else if (player.grounded && canRideShotgun()) hint = 'E — RIDE SHOTGUN';
