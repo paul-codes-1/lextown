@@ -36,31 +36,37 @@ THE BLOCK, 98.5 THE CAT, TRACKSIDE 1450) with per-station no-repeat rotations.
 You stayed past the first minute. This release is about who's in the city with
 you — and the city knowing you when you walk back in.
 
+**Status: built.** Every item below (plus Mission 8, pulled forward from NEXT)
+is complete on the `feature/next-wave` branch — specs in `PHASE2-SPEC.md`, the
+smoke suite grown 24 → 51 checks — awaiting merge + deploy.
+
 - **Ride shotgun.** Hop into a friend's car as a passenger — hand on the door,
   they drive, you watch downtown roll by with the radio on. The single
-  most-requested kind of "play together" moment. *(in build)*
-- **It remembers you.** Account-less persistence — your name and your mission
-  best-times follow you back without ever creating an account (privacy promise
-  intact).
+  most-requested kind of "play together" moment. *(built)*
+- **It remembers you.** Account-less persistence — your name, your look, and
+  your mission best-times follow you back without ever creating an account
+  (privacy promise intact). *(built)*
 - **Private worlds / rooms.** A shareable room code so you and your friends get
-  your own instance of Lexington instead of the public commons.
+  your own instance of Lexington instead of the public commons. *(built)*
 - **Weather beyond the storm.** Rain and fog rolling through on a real
-  schedule, to go with the snow emergency the plow mission already ships.
-- **HORSEPOWER, tuned.** With completion data in hand, adjust the spook radius
-  and run-speed threshold so it's hard, not impossible.
+  schedule — the same sky for everyone, no server required. *(built)*
+- **HORSEPOWER, tuned.** With completion data in hand (1 finisher in 138
+  players; 86s median session), every friction knob eased — plus a mission
+  funnel beacon so the next pass tunes on data. *(built)*
+- **Mission 8: LOOSE IN THE PADDOCK.** The freeze blaster finally gets a job —
+  settle three escaped foals at Elmendorf before the Keeneland sale. *(built)*
 
 ---
 
 ## NEXT — depth and reasons to return
 
-- **More missions.** An eighth job that finally leans on the under-used
-  systems — the jetpack, the freeze blaster, the horse farms past New Circle.
+- **Mission 9: AIR MAIL.** The jetpack's showcase — a rooftop ring-run over
+  the downtown skyline, fuel as the clock. *(specced in PHASE2-SPEC.md)*
+- **Ghost racers + photo mode.** Specced ahead in `PHASE3-SPEC.md` ("the
+  postcard release") — your best DEADLINE run as a translucent ghost, and
+  frame-it-letterbox-it-download-it postcards from LEXTOWN.
 - **Ride the bus.** A LexTran route through downtown you can actually board —
   the passenger seat tech, pointed at an NPC driver on a loop.
-- **Ghost racers.** Your best DEADLINE run replays as a translucent ghost;
-  beat yourself, then beat the board.
-- **Photo mode.** Frame it, letterbox it, download it — the cine camera
-  pointed at a still. Postcards from LEXTOWN.
 - **Daily challenge.** One rotating objective a day with its own board —
   a reason to check back in that isn't a friend.
 - **Scooter share.** Rentable kick-scooters scattered downtown — the missing
