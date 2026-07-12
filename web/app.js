@@ -4104,12 +4104,141 @@ function nearM5Trig(){
 function startMission5(){
   mission5.stage = 'driving'; mission5.tStage = 0; mission5.capIdx = 0;
   mission5.cur = 0; mission5.ms = 0; mission5.t0 = performance.now();
+  ghostRec = {samples: [], splits: []}; ghostDelta = null;   // always record (banks a new best)
+  loadGhost();   // load the best-run ghost for playback (if enabled + valid)
   caption('THE BLOCK', 'THE BLOCK NEEDS ART FOR THE SIX O CLOCK. GRAB A CAR AND GET ME THESE FIVE SHOTS.', 5200);
   addChatLine('* MISSION', 'DEADLINE - drive five downtown checkpoints before air', true);
 }
 function m5Cleanup(){
   mission5.stage = 'idle';
   for (var k = 0; k < m5Rings.length; k++) m5Rings[k].visible = false;
+  hideGhost(); ghost = null; ghostRec = null; ghostDelta = null;
+}
+// ---------- Ghost Racers (F1): race your best DEADLINE run ----------
+// A self-recorded replay that lives beside mission5 and NEVER enters `remotes`
+// (never taggable, never counted in peerCount, never relayed). Recording is
+// net-new: 10Hz {x,z,ry,m} samples in the driving branch (captures the on-foot
+// dash to the news car too). On a best-beating win the buffer is quantized +
+// base64'd to lt_m5_ghost with a CPS-hash+format header so a stale ghost is
+// ignored. Playback time-lerps against the live clock (shared t0). Local only:
+// nothing relays, the score submit is unchanged.
+var GHOST_FMT = 1;                 // packing format version
+var GHOST_TINT = 0xbfe8ff;         // cool cyan-white so it never reads as a real car
+var ghostEnabled = true;
+try { if (localStorage.getItem('lt_ghost') === '0') ghostEnabled = false; } catch (e){}
+var ghostSeen = false;
+try { ghostSeen = localStorage.getItem('lt_ghost_seen') === '1'; } catch (e){}
+var ghost = null;        // {samples:[{x,z,ry,m}], splits:[ms], dur} or null
+var ghostRec = null;     // in-run recording buffer {samples, splits} or null
+var ghostDelta = null;   // seconds vs BEST at the last banked checkpoint (<=0 ahead)
+var ghostPulseUntil = 0, ghostPulseAhead = false;
+var _ghostMeshes = null;
+// checkpoint fingerprint (+ format version): a checkpoint or format change
+// invalidates old ghosts so a ghost never plays against a course it didn't run
+function m5CpsHash(){
+  var s = GHOST_FMT + ':', h = 2166136261;
+  for (var k = 0; k < M5_CPS.length; k++) s += M5_CPS[k].x + ',' + M5_CPS[k].z + ';';
+  for (var i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = (h * 16777619) >>> 0; }
+  return h & 0xffff;
+}
+function qX(x){ var v = Math.round((x - X0) / (X1 - X0) * 65535); return v < 0 ? 0 : v > 65535 ? 65535 : v; }
+function uX(v){ return X0 + v / 65535 * (X1 - X0); }
+function qZ(z){ var v = Math.round((z - Z0) / (Z1 - Z0) * 65535); return v < 0 ? 0 : v > 65535 ? 65535 : v; }
+function uZ(v){ return Z0 + v / 65535 * (Z1 - Z0); }
+function qRy(ry){ var a = ((ry % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2); return Math.round(a / (Math.PI * 2) * 255) & 255; }
+function uRy(b){ return b / 255 * (Math.PI * 2); }
+function packGhost(rec){
+  var nsp = rec.splits.length, hash = m5CpsHash(), out = [];
+  out.push(GHOST_FMT & 255, (hash >> 8) & 255, hash & 255, nsp & 255);
+  for (var s = 0; s < nsp; s++){
+    var cs = Math.round(rec.splits[s] / 10); if (cs > 65535) cs = 65535; if (cs < 0) cs = 0;
+    out.push((cs >> 8) & 255, cs & 255);
+  }
+  for (var i = 0; i < rec.samples.length; i++){
+    var p = rec.samples[i], x = qX(p.x), z = qZ(p.z);
+    out.push((x >> 8) & 255, x & 255, (z >> 8) & 255, z & 255, qRy(p.ry), p.m & 255);
+  }
+  var str = '';
+  for (var b = 0; b < out.length; b++) str += String.fromCharCode(out[b]);
+  return btoa(str);
+}
+function unpackGhost(b64){
+  var str = atob(b64), len = str.length;
+  if (len < 4) return null;
+  if (str.charCodeAt(0) !== GHOST_FMT) return null;
+  if ((((str.charCodeAt(1) << 8) | str.charCodeAt(2)) & 0xffff) !== m5CpsHash()) return null;
+  var nsp = str.charCodeAt(3);
+  if (nsp !== M5_CPS.length) return null;
+  var off = 4, splits = [];
+  for (var s = 0; s < nsp; s++){ splits.push(((str.charCodeAt(off) << 8) | str.charCodeAt(off + 1)) * 10); off += 2; }
+  var rem = len - off;
+  if (rem <= 0 || rem % 6 !== 0) return null;
+  var n = rem / 6, samples = [];
+  for (var i = 0; i < n; i++){
+    var x = (str.charCodeAt(off) << 8) | str.charCodeAt(off + 1);
+    var z = (str.charCodeAt(off + 2) << 8) | str.charCodeAt(off + 3);
+    samples.push({x: uX(x), z: uZ(z), ry: uRy(str.charCodeAt(off + 4)), m: str.charCodeAt(off + 5)});
+    off += 6;
+  }
+  return {samples: samples, splits: splits};
+}
+// force a built mesh translucent + ghost-tinted, cloning every material so we
+// never mutate the SHARED cabMat/headMat/tailMat (that would ghost every car)
+function ghostMat(src){
+  var m = src.clone();
+  m.transparent = true; m.opacity = 0.35; m.depthWrite = false;
+  if (m.color) m.color.setHex(GHOST_TINT);
+  if (m.emissive) m.emissive.setHex(0x162e38);   // faint self-glow, kills the bright head/taillight
+  return m;
+}
+function ghostify(root){
+  root.traverse(function(o){
+    if (!o.material) return;
+    if (o.material.length){ for (var i = 0; i < o.material.length; i++) o.material[i] = ghostMat(o.material[i]); }
+    else o.material = ghostMat(o.material);
+  });
+}
+function ensureGhostMeshes(){
+  if (_ghostMeshes) return _ghostMeshes;
+  var car = buildRemoteCar(GHOST_TINT); ghostify(car); car.visible = false;
+  var av = makeAvatar(GHOST_TINT, GHOST_TINT); ghostify(av.g); av.g.visible = false;
+  _ghostMeshes = {car: car, av: av};
+  return _ghostMeshes;
+}
+function hideGhost(){ if (_ghostMeshes){ _ghostMeshes.car.visible = false; _ghostMeshes.av.g.visible = false; } }
+function loadGhost(){
+  ghost = null;
+  if (!ghostEnabled) return;
+  var raw = null;
+  try { raw = localStorage.getItem('lt_m5_ghost'); } catch (e){ return; }
+  if (!raw) return;
+  var data = null;
+  try { data = unpackGhost(raw); } catch (e){ data = null; }   // corrupt/stale -> ignored, no ghost
+  if (!data || data.samples.length < 2) return;
+  ghost = {samples: data.samples, splits: data.splits, dur: (data.samples.length - 1) * 0.1};
+  ensureGhostMeshes();
+  if (!ghostSeen){   // one-shot discovery; slight delay so it lands after the mission brief
+    ghostSeen = true;
+    try { localStorage.setItem('lt_ghost_seen', '1'); } catch (e){}
+    setTimeout(function(){ if (mission5.stage === 'driving') caption('DISPATCH', 'YOUR BEST RUN RIDES WITH YOU', 3600); }, 2500);
+  }
+}
+function updateGhost(){
+  if (mission5.stage !== 'driving' || !ghost || !ghostEnabled){ hideGhost(); return; }
+  var m = ensureGhostMeshes(), sm = ghost.samples;
+  var fi = ((performance.now() - mission5.t0) / 1000) / 0.1;
+  var i0 = Math.floor(fi), frac = fi - i0;
+  if (i0 >= sm.length - 1){ i0 = sm.length - 1; frac = 0; }   // slower than the ghost: it parks at the end
+  var a = sm[i0], b = sm[Math.min(i0 + 1, sm.length - 1)];
+  var gx = a.x + (b.x - a.x) * frac, gz = a.z + (b.z - a.z) * frac;
+  var gry = a.ry + angDelta(a.ry, b.ry) * frac;
+  if (a.m === 2){
+    m.car.visible = true; m.av.g.visible = false;
+    m.car.position.set(gx, groundY(gx, gz) + 0.15, gz); m.car.rotation.y = gry;
+  } else {
+    m.av.g.visible = true; m.car.visible = false;
+    m.av.g.position.set(gx, groundY(gx, gz), gz); m.av.g.rotation.y = gry;
+  }
 }
 function updateMission5(dt){
   if (m5Trig){
@@ -4120,7 +4249,15 @@ function updateMission5(dt){
   var now = performance.now();
   mission5.tStage += dt;
   var t = mission5.tStage;
+  updateGhost();   // play/park/hide the best-run replay (also hides it off the driving stages)
   if (mission5.stage === 'driving'){
+    // record the run at a steady 10Hz keyed on elapsed time (so sample i == i*0.1s
+    // even through a frame hitch); captures the on-foot dash + the drive
+    if (ghostRec){
+      var idx = Math.floor((now - mission5.t0) / 100);
+      while (ghostRec.samples.length <= idx && ghostRec.samples.length < 3000)
+        ghostRec.samples.push({x: player.x, z: player.z, ry: player.ry, m: player.veh ? 2 : 0});
+    }
     // only the current checkpoint ring is lit; it spins slowly
     for (var k = 0; k < m5Rings.length; k++){
       var on = k === mission5.cur;
@@ -4131,6 +4268,7 @@ function updateMission5(dt){
     if ((now - mission5.t0) / 1000 > M5_BUDGET){
       mission5.stage = 'fail'; mission5.tStage = 0;
       for (var f = 0; f < m5Rings.length; f++) m5Rings[f].visible = false;
+      ghostRec = null;   // discard the in-progress recording; the saved best ghost is untouched
       caption('THE BLOCK', 'AND WE ARE OUT OF TIME. DEAD AIR. THE WORST AIR.', 4600);
       return;
     }
@@ -4139,6 +4277,11 @@ function updateMission5(dt){
       var cp = M5_CPS[mission5.cur];
       if (Math.hypot(cp.x - player.x, cp.z - player.z) < 7){
         mission5.cur++;
+        if (ghostRec) ghostRec.splits.push(now - mission5.t0);   // this checkpoint's split time
+        if (ghost && ghostEnabled && ghost.splits.length >= mission5.cur){
+          ghostDelta = ((now - mission5.t0) - ghost.splits[mission5.cur - 1]) / 1000;   // <=0 = ahead of BEST
+          ghostPulseUntil = now + 1400; ghostPulseAhead = ghostDelta <= 0;
+        }
         if (mission5.cur >= M5_CPS.length){
           mission5.ms = now - mission5.t0;
           mission5.stage = 'won'; mission5.tStage = 0; mission5.capIdx = 0;
@@ -4149,8 +4292,11 @@ function updateMission5(dt){
             if (!m5Best || mission5.ms < m5Best){
               m5Best = mission5.ms;
               localStorage.setItem('lt_m5_best', String(Math.round(mission5.ms)));
+              // a best-beating win banks this run as the next ghost (non-improving win keeps the old one)
+              if (ghostRec && ghostRec.samples.length) localStorage.setItem('lt_m5_ghost', packGhost(ghostRec));
             }
           } catch (e){}
+          ghostRec = null;
           sendScore({t: 'score', ms: Math.round(mission5.ms), m: 5});
         } else {
           sndTone(880, 0.18, 0, 'square', 0.14);
@@ -6128,6 +6274,7 @@ var els = {
   bScores: document.getElementById('bScores'),
   scores: document.getElementById('scores'),
   bWx: document.getElementById('bWx'), wx: document.getElementById('wx'),
+  bGhost: document.getElementById('bGhost'),
   s1: document.getElementById('s1'), s60: document.getElementById('s60'), s300: document.getElementById('s300')
 };
 els.ncars.textContent = cars.length; els.npeds.textContent = peds.length;
@@ -6149,6 +6296,7 @@ function syncBtns(){
   els.bSnd.textContent = sndOn ? 'SND ON' : 'SND OFF';
   els.bRadio.classList.toggle('on', radio.st > 0);
   if (els.bWx) els.bWx.classList.toggle('on', wxEnabled);
+  if (els.bGhost) els.bGhost.classList.toggle('on', ghostEnabled);
   els.camlabel.textContent = mode === 'player'
     ? (camFP ? 'CAM-FP · ' : 'CAM-FOLLOW · ') + myName
     : 'CAM-ORBIT · ' + (autoCam ? 'AUTO' : 'MANUAL');
@@ -6169,6 +6317,13 @@ els.bRadio.onclick = cycleRadio;
 if (els.bWx) els.bWx.onclick = function(){   // WX tray toggle: off forces clear, persisted
   wxEnabled = !wxEnabled;
   try { localStorage.setItem('lt_wx', wxEnabled ? '1' : '0'); } catch (e){}
+  syncBtns();
+};
+if (els.bGhost) els.bGhost.onclick = function(){   // GHOST tray toggle: off hides the replay; recording still banks a best
+  ghostEnabled = !ghostEnabled;
+  try { localStorage.setItem('lt_ghost', ghostEnabled ? '1' : '0'); } catch (e){}
+  if (ghostEnabled && mission5.stage === 'driving' && !ghost) loadGhost();   // turned on mid-run: bring the ghost in
+  if (!ghostEnabled) hideGhost();
   syncBtns();
 };
 document.getElementById('radiochip').onclick = cycleRadio;
@@ -7054,7 +7209,12 @@ function frameStep(now){
     else if (missionFight()) hint = 'SHOOT DOWN THE CHOPPER · F/CLICK — FIRE · RMB — AIM · CHOPPER HP ' + mh.hp + '/3';
     else if (player.heli) hint = 'W/S A/D FLY · SPACE UP · SHIFT DOWN · HOLD F/CLICK — WATER CANNON · E — EXIT · HP ' + heli.hp + '/3';
     else if (player.veh && player.veh.plow) hint = 'BLADE: ' + (bladeDown ? 'DOWN' : 'UP') + ' · SPACE — RAISE/LOWER · CLEAR THE SNOWY STREETS · E — EXIT';
-    else if (mission5.stage === 'driving') hint = 'DEADLINE · CP ' + (mission5.cur + 1) + '/' + M5_CPS.length + ' · ' + Math.max(0, Math.ceil(M5_BUDGET - (performance.now() - mission5.t0) / 1000)) + 's LEFT';
+    else if (mission5.stage === 'driving'){
+      hint = 'DEADLINE · CP ' + (mission5.cur + 1) + '/' + M5_CPS.length + ' · ' + Math.max(0, Math.ceil(M5_BUDGET - (performance.now() - mission5.t0) / 1000)) + 's LEFT';
+      // split delta vs your best run (green/red is a whole-line pulse below - #hint
+      // is one color element, so the AHEAD/BEHIND word carries the sign unambiguously)
+      if (ghost && ghostEnabled && ghostDelta !== null) hint += ' · ' + (ghostDelta <= 0 ? 'AHEAD ' : 'BEHIND ') + Math.abs(ghostDelta).toFixed(1) + 's';
+    }
     else if (mission6.stage === 'drive') hint = 'THE MELT · STOP ' + (mission6.cur + 1) + '/' + M6_CPS.length + ' · MELT ' + Math.min(99, Math.max(0, Math.round(m6MeltSec() / M6_BUDGET * 100))) + '% · CRASHES MELT IT FASTER';
     else if (player.veh) hint = 'E — EXIT · W/S DRIVE · A/D STEER · ' + Math.round(Math.abs(player.veh.spd) * 3.6) + ' KM/H';
     else if (mission2.stage === 'plow' && plowVeh) hint = 'GET TO THE PLOW — MAIN ST BY CITY HALL (E TO BOARD)';
@@ -7107,6 +7267,9 @@ function frameStep(now){
   }
   els.hint.textContent = hint;
   els.hint.style.display = hint ? 'block' : 'none';
+  // ghost split pulse: flash the whole hint line green (ahead) / red (behind) for a
+  // beat at each checkpoint, reverting to the default color otherwise
+  els.hint.style.color = (mode === 'player' && performance.now() < ghostPulseUntil) ? (ghostPulseAhead ? '#5dffa0' : '#ff6a5a') : '';
 
   renderer.render(scene, camera);
   drawOverlay();

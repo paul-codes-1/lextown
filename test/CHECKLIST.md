@@ -492,3 +492,42 @@ observes. Tip: `#debug=1` + `__lt.tp(x,z)` to hop between rooftops while testing
       line, and the `#scoreList9` scores-modal block are all present.
 - [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
       pass and `npm test` (`node test/smoke.mjs`) is all green.
+
+## F9 — Ghost Racers (Phase 3 F1: DEADLINE replay)
+
+Precondition: m1–m4 beaten (DEADLINE startable), every mission idle. One tab is
+enough (the ghost is local). It is a **client-only** feature — no server surface,
+so the smoke suite count is unchanged (56/56).
+
+- [ ] **No best → no ghost; first ghost banks.** Clear `lt_m5_ghost`, run DEADLINE →
+      no ghost car, no AHEAD/BEHIND split. Win → `lt_m5_ghost` is now set (a base64
+      blob, ~10–15 KB).
+- [ ] **Ghost appears next run + discovery caption.** Start DEADLINE again → a
+      translucent cyan ghost peels off the line, and ~2.5 s in the one-shot
+      `YOUR BEST RUN RIDES WITH YOU` caption fires once (sets `lt_ghost_seen`, never
+      repeats this session or after reload).
+- [ ] **Whole-run fidelity.** The ghost runs **on foot** to the news car (translucent
+      avatar), then **drives** (translucent car), matching your recorded run — the
+      avatar/car switch follows the recorded per-sample mode.
+- [ ] **Time-aligned + split delta.** The ghost is where you were at the same elapsed
+      time; each checkpoint appends `AHEAD X.Xs` / `BEHIND X.Xs` to the DEADLINE hint
+      and the whole hint line pulses green (ahead) / red (behind) for a beat. *(Note:
+      `#hint` is a single-color element, so the color is a whole-line pulse and the
+      AHEAD/BEHIND word carries the sign — the honest read of the spec's "colored"
+      in this HUD; documented deviation.)*
+- [ ] **Beating your best replaces the ghost.** A faster win overwrites `lt_m5_ghost`;
+      the next run races the improved ghost. A **non-improving** win or a **fail**
+      leaves the saved ghost untouched (the in-run recording is discarded).
+- [ ] **Never taggable / counted.** The ghost is not in `remotes` — `peerCount` /
+      `NET · PEERS` is unaffected, darts pass through it, it never appears in any list.
+- [ ] **GHOST tray toggle + persistence.** SIM tray **GHOST** off → no ghost, no split;
+      persists across reload (`lt_ghost==='0'`); recording still banks a new best.
+      Toggle on mid-run → the ghost appears at the correct time-lerped pose.
+- [ ] **Stale / corrupt ghost ignored.** Hand-edit `lt_m5_ghost` to garbage (or change
+      `M5_CPS` so the CPS-hash mismatches) → it's ignored on load, the run plays
+      ghost-free, no console error. Shared car materials are **not** turned translucent
+      (the ghost clones its materials — real remote cars stay opaque).
+- [ ] **No multiplayer leakage.** In a second tab, the racer's ghost is invisible; no
+      new WS traffic from the ghost; the DEADLINE score submit / announce is unchanged.
+- [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
+      pass and `npm test` (`node test/smoke.mjs`) is all green (56/56).
