@@ -227,6 +227,8 @@ function isBanned(ip, name) {
 // slack). Mode is client-declared, so a cheater can claim the highest cap —
 // this bounds absurdity, not honesty. Without CAPS[5] the relay rewrites m:5→0,
 // so a remote scooter rider would render as a plain walker (no scooter mesh).
+// NB: state-packet m:5 (scooter locomotion) is unrelated to score m:5 (the
+// DEADLINE board) — different message types that happen to share a number.
 // `v` caps UPWARD speed only; falling is capped separately at terminal
 // velocity, otherwise legitimate falls past ~4m get rejected (rubber-band).
 const CAPS = { 0: { h: 18, v: 14 }, 1: { h: 20, v: 16 }, 2: { h: 38, v: 12 }, 3: { h: 42, v: 20 }, 4: { h: 38, v: 12 }, 5: { h: 13, v: 12 } };

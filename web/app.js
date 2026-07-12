@@ -3714,7 +3714,9 @@ function nearScooter(){
   return best;
 }
 function canMountScoot(){
-  // rideable mid-DAILY DASH run (like the bus) — legal locomotion during a dash
+  // rideable mid-DAILY DASH run (like the bus) — legal locomotion during a dash.
+  // Do NOT loosen this gate to other missions without work elsewhere: the ghost
+  // recorder samples only m 0/2 and DEADLINE's checkpoint banking assumes a car.
   return mode === 'player' && !player.veh && !player.heli && !player.ride && player.bus === null &&
     !player.scoot && !isFrozen() && player.grounded &&
     (allIdle() || missionD.stage === 'run') && nearScooter() !== null;
@@ -4434,7 +4436,8 @@ function updateHorse(h, dt, now){
   // spooks him, and he bolts a short 24-40m (F5: gentler after prod telemetry).
   g.position.y = groundY(g.position.x, g.position.z) + 0.05 + Math.sin(now * 0.002 + h.i) * 0.04;
   var pd = Math.hypot(player.x - g.position.x, player.z - g.position.z);
-  var rushing = (!player.veh && playerSpeed() > 12) || (player.veh && Math.abs(player.veh.spd) > 3);
+  var rushing = (!player.veh && playerSpeed() > 12) || (player.veh && Math.abs(player.veh.spd) > 3) ||
+                (player.scoot && Math.abs(player.scoot.spd) > 3);   // a scooter spooks like a car, not a walker
   if (pd < 10 && rushing){
     var ang = Math.atan2(g.position.x - player.x, g.position.z - player.z) + (Math.random() - 0.5) * 1.2;
     var dist = 24 + Math.random() * 16;
@@ -5220,7 +5223,8 @@ function updateFoal(f, dt, now){
   // loose: graze in place; bolt if rushed (F5-tuned spook: <10m, sprint 13.5 / car)
   g.position.y = groundY(g.position.x, g.position.z) + 0.05 + Math.sin(now * 0.002 + f.i) * 0.04;
   var pd = Math.hypot(player.x - g.position.x, player.z - g.position.z);
-  var rushing = (!player.veh && playerSpeed() > 12) || (player.veh && Math.abs(player.veh.spd) > 3);
+  var rushing = (!player.veh && playerSpeed() > 12) || (player.veh && Math.abs(player.veh.spd) > 3) ||
+                (player.scoot && Math.abs(player.scoot.spd) > 3);   // a scooter spooks like a car, not a walker
   if (pd < 10 && rushing){
     var ang = Math.atan2(g.position.x - player.x, g.position.z - player.z) + (Math.random() - 0.5) * 1.2;
     var dist = 24 + Math.random() * 16;
@@ -6256,7 +6260,12 @@ function handleNet(m){
   } else if (m.t === 'ride'){
     handleRideMsg(m);
   } else if (m.t === 'pushed'){
-    if (m.id === myId){   // caught in the water cannon jet
+    // the cannon only shoves players whose movement branch actually consumes
+    // kx/kz (on foot / jetpack). Vehicle/seat/scooter branches skip that block,
+    // so accumulating here would bank invisible impulse that bursts as a
+    // teleport the frame after dismount.
+    if (m.id === myId && !player.veh && !player.heli && !player.ride &&
+        player.bus === null && !player.scoot){
       player.kx += m.vx || 0; player.kz += m.vz || 0;
       if (m.vy){ player.vy = Math.max(player.vy, m.vy); player.grounded = false; }
     }
