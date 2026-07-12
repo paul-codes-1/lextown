@@ -64,6 +64,16 @@ reported in telemetry) · Android **haptics** on freezes, checkpoints, and
 wins · a **touch-first tutorial** and a one-shot landscape tip. Spec in
 `PHASE5-SPEC.md`.
 
+**Follow-ons since Phase 5:** every score-attack mission (m5-m9 + the daily)
+got a real briefing — the clock now HOLDS through an in-character setup and
+"CLOCK STARTED" stamps the timer, with quick one-beat re-briefs for returning
+players · **Mission 10: HIGH WATER** (ripped from the active July 2026 flood
+watch: public works straps the sandbags on your back — grab any car and hit
+five hazard-orange low spots before the water crests; hydroplaning costs 15
+seconds a splash), with its own rain-grey mission sky, an `m10` board (wire
+`m:11` — `m:10` stays the daily), and six new smoke checks (suite at 68).
+Spec in `PHASE2-SPEC.md` §F8.
+
 ---
 
 ## NEXT — depth and reasons to return

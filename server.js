@@ -165,17 +165,18 @@ process.on('unhandledRejection', (err) => {
 //   m7 = TAILGATE COMPLIANCE (fastest canopy tagging before kickoff)
 //   m8 = LOOSE IN THE PADDOCK (fastest foal roundup)
 //   m9 = AIR MAIL (fastest jetpack rooftop delivery run)
+//   m10 = HIGH WATER (fastest flood sandbag run)
 //   d  = DAILY DASH (m:10) — one rotating checkpoint route/day, resets at the
 //        EST day boundary; `dDay` stamps which dayIndex() the board holds.
 // Migration: an old plain-array scores.json becomes the m1 board.
 const SCORES_PATH = path.join(__dirname, 'scores.json');
-const BOARDS = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8', 'm9'];
+const BOARDS = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8', 'm9', 'm10'];
 // every board MUST be seeded here — on a fresh box (no scores.json) the catch
 // below leaves the literal as-is, and topScores() throws on a missing board.
 // DAILY DASH (m:10) is the `d` board: it lives OUTSIDE the BOARDS array (its
 // `dDay` companion is an int, not a leaderboard) so both are seeded + loaded
 // explicitly — the BOARDS.forEach loader won't touch them.
-let scores = { m1: [], m2: [], m3: [], m4: [], m5: [], m6: [], m7: [], m8: [], m9: [], d: [], dDay: 0 };
+let scores = { m1: [], m2: [], m3: [], m4: [], m5: [], m6: [], m7: [], m8: [], m9: [], m10: [], d: [], dDay: 0 };
 try {
   const parsed = JSON.parse(fs.readFileSync(SCORES_PATH, 'utf8'));
   if (Array.isArray(parsed)) scores.m1 = parsed;
@@ -206,7 +207,7 @@ function topScores() {
   const top = (b) => scores[b].slice(0, 10).map((s) => ({ n: s.n, ms: s.ms }));
   return { m1: top('m1'), m2: top('m2'), m3: top('m3'), m4: top('m4'),
            m5: top('m5'), m6: top('m6'), m7: top('m7'), m8: top('m8'), m9: top('m9'),
-           d: top('d'), dDay: scores.dDay };
+           m10: top('m10'), d: top('d'), dDay: scores.dDay };
 }
 
 // persistent ban list: [{ip, name}]
@@ -717,12 +718,12 @@ wss.on('connection', (ws, req) => {
       if (client.room !== PUBLIC) return;
       rollDaily();   // reset the daily board first if the EST day flipped
       // mission completion: plausible time window per board, 1 per 15s per client
-      const board = { 2: 'm2', 3: 'm3', 4: 'm4', 5: 'm5', 6: 'm6', 7: 'm7', 8: 'm8', 9: 'm9', 10: 'd' }[msg.m] || 'm1';
+      const board = { 2: 'm2', 3: 'm3', 4: 'm4', 5: 'm5', 6: 'm6', 7: 'm7', 8: 'm8', 9: 'm9', 10: 'd', 11: 'm10' }[msg.m] || 'm1';
       const WIN = { m1: [3000, 600000], m2: [20000, 900000],
                     m3: [20000, 900000], m4: [30000, 1500000],
                     m5: [30000, 480000], m6: [40000, 900000],
                     m7: [25000, 900000], m8: [15000, 300000],
-                    m9: [25000, 300000], d: [20000, 900000] }[board];
+                    m9: [25000, 300000], m10: [25000, 300000], d: [20000, 900000] }[board];
       if (!num(msg.ms, WIN[0], WIN[1])) return;
       if (client.lastScoreAt && now - client.lastScoreAt < 15000) return;
       client.lastScoreAt = now;
@@ -744,6 +745,7 @@ wss.on('connection', (ws, req) => {
                m7: `${n} tagged the whole tailgate in ${sec}s`,
                m8: `${n} settled the foals in ${sec}s`,
                m9: `${n} flew the airmail route in ${sec}s`,
+               m10: `${n} held back the flood in ${sec}s`,
                d: `${n} won the DAILY DASH in ${sec}s` }[board] }, null, client.room);
       ws.send(JSON.stringify(Object.assign({ t: 'scores' }, topScores())));
       return;
@@ -779,7 +781,8 @@ wss.on('connection', (ws, req) => {
     if (msg.t === 'mev') {
       // mission-funnel beacon, log-only (never broadcast, never persisted
       // beyond the JSONL logs). Enum space: 10-19 = m4 (10 start / 11 bolt /
-      // 12 win / 13 abandon), 20-29 = m8, 30-39 = m9 (reserved).
+      // 12 win / 13 abandon), 20-29 = m8, 30-39 = m9, 40-49 = daily dash,
+      // 50-59 = m10 HIGH WATER, 60-69 = bus (each range reserved).
       if (!Number.isInteger(msg.k) || msg.k < 0 || msg.k > 99) return;
       client.mevTimes = client.mevTimes.filter((t) => now - t < 1000);
       if (client.mevTimes.length >= 8) return;   // ~8/s cap

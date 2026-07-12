@@ -30,8 +30,9 @@ Ground rules that bind every feature (from CLAUDE.md, do not violate):
 | F4 Private Worlds / Rooms | `server.js` (room-scoped broadcast + per-room heli), `web/app.js`, `web/index.html`, `web/privacy.html`, `README.md` | Server dev + client dev (paired) |
 | F6 Mission 8: LOOSE IN THE PADDOCK | `web/app.js` (mission island), `server.js` (board), `web/index.html`, `README.md` | Mission dev |
 | F7 Mission 9: AIR MAIL | `web/app.js` (mission island), `server.js` (board), `web/index.html`, `README.md` | Mission dev |
+| F8 Mission 10: HIGH WATER | `web/app.js` (mission island), `server.js` (board), `web/index.html`, `README.md` | Mission dev |
 
-*(F5 is HORSEPOWER tuning — data-driven, tracked as a build task, no spec section here. F8+ appended below.)*
+*(F5 is HORSEPOWER tuning — data-driven, tracked as a build task, no spec section here. F9+ appended below.)*
 
 ---
 
@@ -1705,3 +1706,286 @@ Precondition: m1–m8 beaten, every mission idle (fast-forward the eight bests v
   from data.
 - **Statement order** — `M9_TRIG`, the waypoint arrays, and `mission9` declared
   before the label push and the ring-builder.
+
+---
+
+## F8 — Mission 10: "HIGH WATER" (flood sandbag run)
+
+**Why this mission.** It's ripped straight from *this week's* Lexington headlines,
+which is the whole LEXTOWN-mission-10 brief — and unlike a one-off gag it plugs
+into a system we're already building. It's a driving delivery run (reuses THE
+MELT's proven loop) with a civic-comedy voice that matches m5–m9, and it has
+direct synergy with the F3 weather system: a flood mission that darkens the sky
+and (once F3 ships) runs in real rain is the kind of cross-feature moment that
+makes the world feel authored.
+
+**Ripped from the headlines (real, verified via the Lexington Times feed,
+2026-07-12).** A **Flood Watch covered central/eastern Kentucky through Saturday**
+(WUKY, 2026-07-10) — i.e. right now. Three weeks earlier, **2.5–3 inches fell in
+under 90 minutes on June 22**, triggering multiple water rescues and road
+closures, and Mayor Gorton urged residents to **report flood damage to 311**
+(LFUCG / Mayor's Office, 2026-06-23). **Wolf Run** — the creek that historically
+floods out **Kilrush Drive** — and **Tates Creek Road** (a bridge closed by flood
+damage) are the real low-water names. HIGH WATER puts the player in the
+public-works sandbag truck against the rising creek. *(Runner-up headline, noted
+for the lead: the VP's golf visit gridlocking the city, 2026-07-12 — the funniest
+"today" hook, but naming a sitting official reads partisan for a real news org's
+game, so I chose the non-partisan flood story. Easy to swap if you'd rather.)*
+
+### The HORSEPOWER lesson, applied
+- **Target first-timer completion: 90–150 s.** In-mission budget (the water crests
+  = fail deadline): **~180 s**.
+- **Restart-friendly:** start ring beside the sandbag depot, downtown-reachable;
+  a fail is an instant `E`-to-retry, no walk-back.
+- **Failure is legible:** a clear "the water won" caption; the truck and drop rings
+  reset on retry.
+- **Forgiving core:** it's a *driving* delivery run — the skill is route + speed
+  management through standing water, not a punishing precision window.
+- **Ship the funnel telemetry** (start / each drop / hydroplane / win / fail) from
+  day one, like F5–F7.
+
+### The board (server plumbing) — FOUR names, do NOT conflate them
+This is a ratified contract (locked with backend-dev + test-engineer +
+frontend-dev-1). HIGH WATER carries **four identifiers**; the **wire number `11` is
+what the client passes almost everywhere**, and "10" appears in exactly one of them:
+- **Wire number = `11`.** Used in BOTH the score send `{t:'score', ms, m: 11}`
+  **and** the client `showScores(mission10.ms, 11)` call — `showScores`'s second arg
+  is the *wire number*, not a DOM id. (Wire `10` is already DAILY DASH → board `'d'`;
+  passing `10` to `showScores` would caption a HIGH WATER win as a Daily Dash time
+  with the daily best.)
+- **Server board key = `'m10'`.** The score-map entry is `11: 'm10'`; the key
+  everywhere server-side (`BOARDS`, `scores`, `WIN`, `topScores`, announce) is
+  `'m10'`.
+- **DOM list id = `scoreList10`** — the **only** place the number 10 appears in the
+  scoring path. The leaderboard `<ol>` is `#scoreList10`, filled by `renderScores`
+  via `fill('scoreList10', m.m10)`.
+- **localStorage = `lt_m10_best`** (and the `m10Best` var).
+
+So: **wire 11 (score send + `showScores` arg) → server key `m10` → DOM
+`scoreList10` → storage `lt_m10_best`.** The client verb/best switch keys on
+**`board === 11`** (`'LOW SPOTS HELD IN '`, `m10Best`) — never `10`.
+- **Score = elapsed time** to bag every low spot (lower is better).
+- **WIN plausibility window: `m10: [25000, 300000]` ms** — approved as-is. The 25 s
+  floor now assumes a **pre-positioned** player, because the clock starts at the GO
+  beat (see the brief pattern below), not at ring-touch; 5 min ceiling sits well
+  above the 180 s budget. Anti-cheat plausibility, distinct from the in-mission
+  budget.
+
+### User story
+As a player who's cleared the other jobs, the sky goes slate-grey, my marker points
+to an orange ring by the public-works yard, and a frazzled dispatcher hands me a
+sandbag truck — I race the rising creek to bag the low spots before Wolf Run takes
+Kilrush Drive, easing through the puddles so I don't spin out.
+
+### Premise & personality
+**HIGH WATER**: a flash-flood warning is up (the real July flood watch), Wolf Run is
+coming up fast, and Public Works needs the low spots sandbagged before the water
+crests. Civic-comedy voice matching m5–m9; captions via `capIdx` + `#caption` (no
+new audio, ASCII).
+
+**Intro follows the current brief pattern (landed on main, 3011d6c) — NOT the old
+`lt_m10_coached` flag.** On `E`, the mission enters **`stage:'brief'` with the clock
+HELD**; the timer's `t0` stamps only at the final DISPATCH **`CLOCK STARTED`** beat
+(GO), so the player is pre-positioned when timing begins. First-ever play gets the
+full multi-beat brief (flavor → coaching → GO); repeat plays get **one quick beat
+(~4.6 s)** then GO. Gated by `localStorage lt_m10_briefed` (set after the first full
+brief). The coaching + hydroplane warning fold **into** the full first-time brief:
+- **Full brief, first-ever play (multi-beat):**
+  1. *(flavor)* `PUBLIC WORKS - THREE INCHES IN NINETY MINUTES AND WOLF RUN IS
+     COMING UP FAST. LOAD THE SANDBAG TRUCK AND BAG THE LOW SPOTS BEFORE IT CRESTS.`
+  2. *(coaching, folded in)* `DRIVE INTO EACH ORANGE RING TO DROP THE BAGS - AND
+     EASE THROUGH STANDING WATER, HIT IT TOO FAST AND YOU HYDROPLANE.`
+  3. *(GO — DISPATCH `CLOCK STARTED`, stamps `t0`)* `GO - IT IS ALREADY RISING.`
+- **Quick brief, repeat play (~4.6 s, one beat then GO):** `PUBLIC WORKS - BAG THE
+  LOW SPOTS BEFORE WOLF RUN CRESTS. GO.`
+- **Progress:** `TWO SPOTS BAGGED - KEEP MOVING, IT IS STILL RISING.`
+- **Hydroplane nudge (in-action, contextual — stays as its own caption):** `WHOA -
+  THAT ONE COST YOU. EASE OFF IN THE WATER.`
+- **Win:** `EVERY LOW SPOT HELD. TELL THE MAYOR - AND TELL EVERYONE ELSE TO REPORT
+  DAMAGE TO 311.`
+- **Fail:** `WOLF RUN JUST TOOK KILRUSH. TOO SLOW - THE WATER WON.`
+- **Radio flavor (optional, needs an audio regen — not required to ship):** a NEWS
+  630 `news_wx` line — `Flood watch is up through the weekend; if you do not have to
+  be out in this, do not be.` (mirrors the real WUKY headline; ships whenever audio
+  is next baked).
+
+### Mechanic & structure
+Copy **THE MELT (m6)** — it's the driving-delivery mission with slosh/crash
+penalties, the closest analog:
+- **Drive the sandbag truck** (steal-or-provided at the depot by the start ring),
+  same car system as every driving mission.
+- **~5 drop rings at low-lying spots**, only the current one lit; the next lights on
+  arrival (m5/m6/m8 pattern). **Drive into the lit ring to drop the sandbags** (a
+  brief hold like m6's scoop stops). Name the spots after the real flood-prone
+  Lexington locations — **Wolf Run, Kilrush Drive, a downtown underpass, Tates Creek
+  low-water crossing, the Vine St dip** — placed on drivable low ground on the
+  current map (verify in playtest).
+- **The rising water is the ~180 s countdown.** Optional cheap visual: a translucent
+  blue-grey water plane creeps up at each un-bagged spot over the run (reuse the
+  translucent-plane pattern); the core is the timer.
+- **Hydroplane penalty:** standing-water zones (puddle decals near the low spots);
+  driving through them too fast spins/skids the truck + costs time — the same
+  crash/slosh-penalty logic as THE MELT. Managing speed through water **is** the
+  skill.
+- **On foot the rings don't count** (reinforces "this is a driving mission," like
+  DEADLINE).
+
+### Weather synergy
+- **The mission darkens the sky to storm** by reusing the existing **m2Sky-style
+  overcast blend** the snow emergency already runs (app.js:6233–6241) — rain-grey,
+  not snow-white — so HIGH WATER *looks* like a flood even if F3 (Weather) hasn't
+  shipped. Cheap: it's the storm-sky mechanic that already exists, minus the snow.
+- **If F3 is live**, pin its `RAIN` state on for the mission's duration so ambient
+  rain reinforces the flood — the cross-feature payoff. (F3's mission-precedence
+  rule already yields to mission storms; HIGH WATER simply *is* a rain mission.)
+
+### Discoverability
+- **Gold ★ label** `★ MISSION: HIGH WATER` at `M10_TRIG`.
+- **`nextMissionHint()`:** append `if (!m10Best) return 'NEXT MISSION: HIGH WATER -
+  ORANGE RING AT THE PUBLIC WORKS YARD (DRIVE)';` after the m9 branch.
+- **F1 waypoint** retargets to `M10_TRIG` once m9 is beaten.
+- **Ring color: `0xff6a00` (vivid hazard orange)** — the flood-warning color, and
+  deliberately distinct from m8's muted amber `0xc8792e` (as well as teal m3 / green
+  m4 / pink m6 / blue m7 / violet m9 / gold m1,m5). Start ring + drop rings both use
+  `0xff6a00`.
+- **Start gate includes `!player.ride`:** `allIdle() && !player.veh && !player.ride
+  && !isFrozen() && nearM10Trig()`. Start on foot at the depot, then drive.
+
+### Build checklist (follow MODDING.md §"(c) A new mission", lines 286–341)
+Same recipe; mission-10 specifics:
+1. **Island layout (statement order!):** declare `M10_TRIG`, `M10_SPOTS` (the
+   ordered drop list), `M10_BUDGET`, `m10Best` (from `lt_m10_best`), and `mission10`
+   (`{stage:'idle', tStage, t0, ms, cur:0, capIdx:0}` — `stage` runs
+   `idle→brief→hauling→…`) as top-level `var`s **before** the label push and the
+   ring-builder. Read `lt_m10_briefed` at declare time for the brief pattern.
+2. **Join `allIdle()`** (app.js:4339): add `&& mission10.stage === 'idle'`.
+3. **Gold ★ label** (above).
+4. **`nextMissionHint()` branch** (above).
+5. **`E` branch** with the `!player.ride` gate + a `nearM10Trig()` helper.
+6. **Per-frame `updateMission10(dt)`:** `idle → brief → hauling → won → post → idle`
+   / `hauling → fail → idle`. The **`brief`** stage holds the clock and plays the
+   brief beats (full first-ever, one quick ~4.6 s beat on repeat, gated by
+   `lt_m10_briefed`); **stamp `t0` only at the `CLOCK STARTED` GO beat**, then enter
+   `hauling`. Light only the current drop; advance `cur` on an in-car ring drop; win
+   when `cur` passes the last spot; countdown off `performance.now()` + `M10_BUDGET`
+   (measured from GO); HUD hint `HIGH WATER · BAGGED n/5 · <s>s LEFT`; the hydroplane
+   check reuses THE MELT's slosh-penalty logic. Reuse the m2Sky overcast blend for
+   the sky. Emit funnel telemetry (`mev`) in the **50–59** enum range (m8=20–29,
+   m9=30–39, daily=40–43 are reserved per the server comment).
+7. **Leaderboard UI:** on win call **`showScores(mission10.ms, 11)`** — the second
+   arg is the WIRE number (11), NOT the DOM id; passing `10` captions the win as a
+   Daily Dash time. Add the **`board === 11`** verb (`LOW SPOTS HELD IN `) and
+   **`board === 11 ? m10Best`** to the score modal. Add the `#scoreList10` `<ol>`
+   (+ `<h2>` + CSS) to `web/index.html` (frontend-dev-2's block), and give
+   `renderScores` a `fill('scoreList10', m.m10)` plus `'scoreList10'` in the
+   fetching-loop id array. (`scoreList10` is the only "10"; the `showScores` arg,
+   verb key, and best key are all `11`.)
+8. **Server board (server.js) — add ONLY `m10`** (m1–m9 already exist on main as of
+   3011d6c; do NOT re-add them). Six sites, all keyed `'m10'`: `BOARDS` (:172) → add
+   `'m10'`; the `scores` literal (:178) → `m10: []`; `topScores()` (:208) → include
+   `m10`; the board/score map (:720) → **`11: 'm10'`** (wire 11, because wire 10 is
+   DAILY DASH); the per-board `WIN` object (:724–725) → `m10: [25000, 300000]`; the
+   announce map (:745–746) → `m10: `${n} held back the flood in ${sec}s``.
+9. **README + tutorial:** HIGH WATER blurb + `#tut` grid line.
+
+> **The wire-number trap.** Send `{t:'score', ms, m: 11}` — the **number 11**, not
+> `10` and not `'m10'`. Wire 10 is already DAILY DASH (board `'d'`); the server maps
+> `{…, 11:'m10'}[msg.m] || 'm1'`, so a wrong wire number silently lands your times on
+> the ribbon (m1) or daily board.
+
+### Multiplayer behavior
+- **Entirely client-side**, like every mission. Drop rings, the water, and the
+  countdown are local; only the final `{t:'score', ms, m:11}` (wire 11 → board
+  `m10`) touches the server → validated against `WIN.m10` → `scores.json` →
+  `{t:'scores'}` + announce.
+- Others see you driving the truck via the existing `m:2` remote-car render; they
+  never see your rings or mission. **Offline/bots-only:** playable, submit no-ops
+  offline, local best saves. **Private rooms (F4):** plays; score doesn't rank in a
+  non-PUBLIC room; `lt_m10_best` still saves.
+
+### Edge cases
+- **Exits the truck mid-run:** timer keeps running (don't pause on foot); re-enter
+  any vehicle and continue — on-foot ring passes don't bag.
+- **Hydroplanes into a wall / other car:** the slosh penalty + normal collision
+  apply; no soft-lock; keep driving.
+- **Reaches a spot on foot:** nothing bags; only an in-car drop at the lit ring
+  counts.
+- **Weather already storming (F3 live):** HIGH WATER coexists — the mission owns the
+  sky for its duration (F3 yields to mission storms), so no double-blend fight.
+- **Concurrent-mission guard:** `allIdle()` must include `mission10`.
+- **Retry:** `E` at the ring re-inits (truck + rings + clock + sky), standing at the
+  depot — no walk-back.
+
+### Non-goals (F8)
+- **No new mechanic** — it's a driving delivery run over existing roads; the
+  hydroplane is THE MELT's penalty logic reused.
+- **No real rescue/injury depiction** — it's civic slapstick (sandbags vs. a rising
+  creek), not disaster tragedy; keep the tone light, like THE MELT.
+- **No partisan/real-person content** — the flood is the antagonist; no named
+  officials beyond the existing light "the Mayor" flavor.
+- **No new baked audio** to ship (captions carry it; the NEWS 630 line is optional).
+- **No map growth** — drop spots sit on existing drivable low ground.
+- **No co-op** — solo against the clock and the board.
+
+### Acceptance checklist — F8 Mission 10: HIGH WATER
+
+Precondition: m1–m9 beaten, every mission idle (fast-forward the nine bests, leave
+`lt_m10_best` cleared, reload). Standing gate first (`node --check` both files,
+`npm test`). Two tabs for the announce check.
+
+- [ ] **Waypoint + storm sky.** With m9 beaten and m10 not, F1's marker points to
+      `M10_TRIG`; the ★ HIGH WATER label renders at the orange ring. On start, the
+      sky darkens to storm-grey (m2Sky-style blend).
+- [ ] **Start gate is `allIdle` + on-foot + not-riding.** `E` at the depot ring
+      starts it only when every mission is idle and you're not in/​riding a car; the
+      Public Works brief fires and the ~180 s countdown begins.
+- [ ] **In-truck drops bank; on-foot doesn't.** Driving into a lit orange ring drops
+      the sandbags and lights the next; walking through it does nothing. HUD shows
+      `BAGGED n/5`.
+- [ ] **Hydroplane penalty.** Hitting a standing-water zone at speed spins/skids the
+      truck and costs time (THE MELT slosh logic); easing through is clean.
+- [ ] **Brief pattern (held clock).** First-ever play shows the full multi-beat
+      brief (flavor → coaching → GO) with the clock HELD; `t0` stamps only at the
+      `CLOCK STARTED` GO beat; `lt_m10_briefed` is set. A repeat play shows one quick
+      ~4.6 s beat then GO. The old `lt_m10_coached` flag is NOT used.
+- [ ] **Win → board + announce.** Bag all five under 180 s → win; scores modal opens
+      on the **m10** board (`#scoreList10`, `LOW SPOTS HELD IN …`) with your time,
+      other tab's chat shows `* MISSION  <name> held back the flood in <t>s`. The
+      client sends **wire `m:11`** → verify the time lands on the **m10** board (not
+      the ribbon or daily board).
+- [ ] **Local best persists.** `lt_m10_best` set; `m10Best` gates the waypoint chain.
+- [ ] **Timer expiry = clean fail + instant retry.** Clock runs out → `WOLF RUN JUST
+      TOOK KILRUSH` fail caption, reset to `idle`, no submit; `E` restarts at the
+      depot.
+- [ ] **Concurrent-mission exclusion.** During the run, `E` at other rings does
+      nothing; `allIdle()` includes `mission10`.
+- [ ] **Server plumbing complete.** `m10` added (only — m1–m9 already present) to
+      `BOARDS`, the `scores` literal, `topScores()`, the score map (`11:'m10'`), the
+      `WIN` object (`[25000, 300000]`), and the announce map — a win persists under
+      `m10` and survives a restart.
+- [ ] **Surfaces updated together.** README mission list + `#tut` grid line +
+      `#scoreList10` block all present.
+- [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
+      pass and `npm test` is all green.
+
+### Notes for the architect / mission dev (F8)
+- **Copy THE MELT (m6) end-to-end** — it's the driving delivery mission with the
+  slosh/crash penalty you're reusing for the hydroplane; swap ice-cream stops for
+  sandbag drops and the melt-timer for the water-crest clock.
+- **Reuse the m2Sky overcast blend** for the storm sky (app.js:6233–6241) — rain-grey
+  tint, no snow particles; if F3 Weather is live, pin its `RAIN` state for the
+  duration instead.
+- **Server: add ONLY `m10`** — m1–m9 already exist on main (3011d6c). Six sites, all
+  keyed `'m10'`: `BOARDS` (:172), the `scores` literal (:178), `topScores()` (:208),
+  the score map (:720) as **`11:'m10'`** (wire 11 — 10 is DAILY DASH), the `WIN`
+  object (:724–725), the announce map (:745–746). Do not re-add m8/m9.
+- **Keep the three identifiers straight: wire `11` → board `m10` → DOM
+  `scoreList10`.** The client sends `m:11`; everything server-side keys `'m10'`; the
+  leaderboard list id is `scoreList10`.
+- **Ship funnel telemetry** — `mev` enum in the **50–59** range
+  (start/per-drop/hydroplane/win/fail).
+- **Statement order** — `M10_TRIG`, `M10_SPOTS`, `mission10` declared before the
+  label push and the ring-builder.
+- **Real-place naming is the flavor** — label the drop spots after actual
+  flood-prone Lexington locations (Wolf Run, Kilrush, Tates Creek); it's what makes
+  a "ripped from the headlines" mission land.

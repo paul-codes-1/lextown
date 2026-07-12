@@ -2538,7 +2538,7 @@ function updateRadioChip(){
 // --- world/mission audio watcher, ticked from frame() ---
 var PARK_PTS = [[-171, 40], [122, 50], [250, 50], [350, 300], [150, -535], [150, -874]];
 var BELL_PT = {x: -46, z: -262};   // First Presbyterian tower
-var aw = {m1: '', m2: '', m3: '', m4: '', m5: '', m6: '', m7: '', m8: '', m9: '', mD: '', hFloor: -1, horse: [], acc: 0};
+var aw = {m1: '', m2: '', m3: '', m4: '', m5: '', m6: '', m7: '', m8: '', m9: '', m10: '', mD: '', hFloor: -1, horse: [], acc: 0};
 function stinger(stage, prev){
   if (stage === prev) return stage;
   if (prev !== ''){   // skip the very first observation (page load)
@@ -2566,6 +2566,7 @@ function updateAssetAudio(dt){
   aw.m7 = stinger(mission7.stage, aw.m7);
   aw.m8 = stinger(mission8.stage, aw.m8);
   aw.m9 = stinger(mission9.stage, aw.m9);
+  aw.m10 = stinger(mission10.stage, aw.m10);
   aw.mD = stinger(missionD.stage, aw.mD);
   // SNOW EMERGENCY: queue an EAS interrupt — it airs the moment the player
   // hops in the plow (the radio auto-starts and plays the queue first)
@@ -2880,11 +2881,13 @@ function showScores(myMs, board){
                board === 4 ? 'HORSES HOME IN ' : board === 5 ? 'DEADLINE MET IN ' :
                board === 6 ? 'SCOOPS LANDED IN ' : board === 7 ? 'LOT TAGGED IN ' :
                board === 8 ? 'FOALS PENNED IN ' : board === 9 ? 'ROUTE FLOWN IN ' :
+               board === 11 ? 'LOW SPOTS HELD IN ' :
                board === 10 ? 'THE DASH IN ' : 'CHOPPER DOWN IN ';
     you = verb + fmtMs(myMs) + ' · +' + missionPoints(myMs) + ' PTS';
     var best = board === 2 ? m2Best : board === 3 ? m3Best : board === 4 ? m4Best :
                board === 5 ? m5Best : board === 6 ? m6Best : board === 7 ? m7Best :
                board === 8 ? m8Best : board === 9 ? m9Best :
+               board === 11 ? m10Best :
                board === 10 ? (dailyBest ? dailyBest.ms : 0) : missionBest;
     if (best) you += ' · DEVICE BEST ' + fmtMs(best);
     if (roomCode) you += ' · PRIVATE ROOM · TIMES DON\'T RANK';
@@ -2897,11 +2900,12 @@ function showScores(myMs, board){
       ' · ' + (m6Best ? 'MELT: ' + fmtMs(m6Best) : 'MELT: —') +
       ' · ' + (m7Best ? 'TAILGATE: ' + fmtMs(m7Best) : 'TAILGATE: —') +
       ' · ' + (m8Best ? 'PADDOCK: ' + fmtMs(m8Best) : 'PADDOCK: —') +
-      ' · ' + (m9Best ? 'AIR MAIL: ' + fmtMs(m9Best) : 'AIR MAIL: —');
+      ' · ' + (m9Best ? 'AIR MAIL: ' + fmtMs(m9Best) : 'AIR MAIL: —') +
+      ' · ' + (m10Best ? 'HIGH WATER: ' + fmtMs(m10Best) : 'HIGH WATER: —');
   }
   document.getElementById('scoreYou').textContent = you;
   setDailyMeta();
-  ['scoreListD', 'scoreList', 'scoreList2', 'scoreList3', 'scoreList4', 'scoreList5', 'scoreList6', 'scoreList7', 'scoreList8', 'scoreList9'].forEach(function(id){
+  ['scoreListD', 'scoreList', 'scoreList2', 'scoreList3', 'scoreList4', 'scoreList5', 'scoreList6', 'scoreList7', 'scoreList8', 'scoreList9', 'scoreList10'].forEach(function(id){
     var list = document.getElementById(id);
     if (!list) return;
     list.textContent = '';
@@ -2939,6 +2943,7 @@ function renderScores(m){
   fill('scoreList7', m.m7 || []);
   fill('scoreList8', m.m8 || []);
   fill('scoreList9', m.m9 || []);
+  fill('scoreList10', m.m10 || []);
   setDailyMeta();   // refresh the countdown + device best when server times land
 }
 function updateMission(dt){
@@ -5529,6 +5534,211 @@ function updateMission9(dt){
   if (mission9.stage === 'post'){ if (t > 20) m9Cleanup(); }
 }
 
+// ---------- MISSION 10: HIGH WATER (flood sandbag run, orange rings) ----------
+// Ripped from this week's real headlines: a flash-flood watch is up, Wolf Run is
+// coming up fast, and Public Works needs the low spots sandbagged before the
+// creek crests. A DRIVING delivery run built on THE MELT (m6): drive the sandbag
+// truck into each lit orange ring to drop bags; a one-frame speed cliff (a crash)
+// is a HYDROPLANE that costs penalty seconds, so the skill is speed management.
+// The ~180s clock IS the rising water. Brief-stage pattern per 3011d6c: the clock
+// is HELD through the brief and t0 stamps only at the DISPATCH 'CLOCK STARTED' GO.
+// Top-level vars declared before the labels.push block below (statement order).
+// The board is FOUR names: wire 11 / server key m10 / DOM scoreList10 / lt_m10_*.
+var M10_TRIG = {x: -300, z: -14};   // Public Works yard, beside W Main (drive from here)
+var M10_BUDGET = 180;               // seconds before Wolf Run crests (the fail clock)
+var M10_HYDRO = 15;                 // penalty seconds per hydroplane (m6-proportional; the one value no doc pinned)
+var M10_RING_COL = 0xff6a00;        // vivid hazard orange - the flood-warning color, distinct from m8 amber
+// Five drop rings on real drivable downtown intersections, named for the real
+// flood-prone Lexington low spots. Only the current one is lit; the next lights
+// on arrival (m5/m6/m8 pattern). Coords verified against the EW/NS street tables.
+var M10_SPOTS = [
+  {x: -200, z: 200, name: 'WOLF RUN - BROADWAY & HIGH'},
+  {x: -200, z: 300, name: 'KILRUSH DRIVE - BROADWAY & MAXWELL'},
+  {x: 100,  z: 100, name: 'THE VINE ST DIP - LIMESTONE & VINE'},
+  {x: -100, z: 0,   name: 'THE DOWNTOWN UNDERPASS - MILL & MAIN'},
+  {x: 300,  z: 200, name: 'TATES CREEK CROSSING - ROSE & HIGH'}
+];
+var m10Best = 0;
+try { m10Best = parseInt(localStorage.getItem('lt_m10_best') || '0', 10) || 0; } catch (e){}
+var mission10 = {stage: 'idle', tStage: 0, t0: 0, ms: 0, cur: 0, hydro: 0,
+                 prevSpd: 0, sloshAt: 0, capIdx: 0};
+// storm sky: m10Sky ramps 0->1 while the mission runs (its OWN stages, no coupling
+// to the snow blend). _rainSkyC is rain-grey slate, blended in the env block below.
+// Both declared here (well above the env reads) - used-before-init is the crash
+// class this file has hit before.
+var m10Sky = 0;
+var _rainSkyC = new THREE.Color(0x6b7079);
+var m10Rings = [], m10Trig = null, m10Bags = null;
+(function(){
+  // the Public Works yard by the start ring - a sandbag pallet + an orange barrel
+  var pallet = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.7, 1.4),
+    new THREE.MeshStandardMaterial({color: 0xbfa06a, roughness: 0.95}));
+  pallet.position.set(M10_TRIG.x, 0.35, -22); pallet.castShadow = true; scene.add(pallet);
+  var bagTop = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.5, 1.2),
+    new THREE.MeshStandardMaterial({color: 0xa8895a, roughness: 0.95}));
+  bagTop.position.set(M10_TRIG.x, 0.95, -22); bagTop.castShadow = true; scene.add(bagTop);
+  var barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 1.1, 12),
+    new THREE.MeshStandardMaterial({color: M10_RING_COL, roughness: 0.7}));
+  barrel.position.set(M10_TRIG.x + 1.7, 0.55, -21.4); barrel.castShadow = true; scene.add(barrel);
+  colliders.push({x0: M10_TRIG.x - 1.4, x1: M10_TRIG.x + 1.4, z0: -22.8, z1: -21.2, h: 1.3});
+  labels.push({name: 'PUBLIC WORKS YARD', x: M10_TRIG.x, y: 5, z: -22});
+  // the sandbag payload rides on your back for the whole run (m6 cooler pattern)
+  m10Bags = new THREE.Group();
+  var stack1 = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.24, 0.34),
+    new THREE.MeshStandardMaterial({color: 0xbfa06a, roughness: 0.95}));
+  var stack2 = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.22, 0.3),
+    new THREE.MeshStandardMaterial({color: 0xa8895a, roughness: 0.95}));
+  stack2.position.y = 0.23;
+  m10Bags.add(stack1); m10Bags.add(stack2);
+  m10Bags.position.set(0, 1.12, -0.34);
+  m10Bags.visible = false;
+  player.av.g.add(m10Bags);
+  // start ring at the yard, orange
+  m10Trig = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.06, 6, 24),
+    new THREE.MeshBasicMaterial({color: M10_RING_COL, transparent: true, opacity: 0.85}));
+  m10Trig.rotation.x = Math.PI / 2;
+  m10Trig.position.set(M10_TRIG.x, 0.9, M10_TRIG.z);
+  scene.add(m10Trig);
+  M10_SPOTS.forEach(function(s){
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(4.5, 0.12, 6, 28),
+      new THREE.MeshBasicMaterial({color: M10_RING_COL, transparent: true, opacity: 0.7}));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(s.x, 1.2, s.z);
+    ring.visible = false;
+    scene.add(ring);
+    m10Rings.push(ring);
+  });
+})();
+function nearM10Trig(){
+  var dx = player.x - M10_TRIG.x, dz = player.z - M10_TRIG.z;
+  return dx * dx + dz * dz < 16;
+}
+function m10Sec(){
+  return (performance.now() - mission10.t0) / 1000 + mission10.hydro * M10_HYDRO;
+}
+// escalating dispatcher exasperation, rotated on repeated hydroplanes (m6 slosh-line
+// pattern). Variant 1 is the original single line. ASCII, PUBLIC WORKS voice.
+var M10_HYDRO_LINES = [
+  'WHOA - THAT ONE COST YOU. EASE OFF IN THE WATER.',
+  'THAT IS A CITY TRUCK, NOT A JET SKI. SLOW THROUGH THE PUDDLES.',
+  'EVERY SPINOUT IS SECONDS WE DO NOT HAVE. FEATHER IT THROUGH THE WATER.'
+];
+function startMission10(){
+  mission10.stage = 'brief'; mission10.tStage = 0; mission10.capIdx = 0;
+  mission10.cur = 0; mission10.ms = 0; mission10.hydro = 0;
+  mission10.prevSpd = 0; mission10.sloshAt = 0;
+  if (m10Bags) m10Bags.visible = true;   // sandbags handed over during the brief
+  mission10.quick = true;
+  try { mission10.quick = localStorage.getItem('lt_m10_briefed') === '1'; } catch (e){}
+  try { localStorage.setItem('lt_m10_briefed', '1'); } catch (e){}
+  caption('PUBLIC WORKS', mission10.quick
+    ? 'BAG THE LOW SPOTS BEFORE WOLF RUN CRESTS. GO.'
+    : 'THREE INCHES IN NINETY MINUTES AND WOLF RUN IS COMING UP FAST. LOAD THE SANDBAG TRUCK AND BAG THE LOW SPOTS BEFORE IT CRESTS.', 5000);
+  addChatLine('* MISSION', 'HIGH WATER - bag the low spots before Wolf Run crests', true);
+  mev(50);   // funnel: mission start
+}
+function m10Cleanup(){
+  mission10.stage = 'idle';
+  if (m10Bags) m10Bags.visible = false;
+  for (var k = 0; k < m10Rings.length; k++) m10Rings[k].visible = false;
+}
+function updateMission10(dt){
+  if (m10Trig){
+    m10Trig.visible = allIdle();
+    if (m10Trig.visible) m10Trig.rotation.z += dt * 0.8;
+  }
+  // storm sky eases on mission10's OWN stages; runs even while idle so the flood
+  // overcast fades back out after a win/fail (env block reads m10Sky each frame)
+  var storm = mission10.stage === 'brief' || mission10.stage === 'hauling';
+  m10Sky += ((storm ? 1 : 0) - m10Sky) * Math.min(1, dt * (storm ? 0.5 : 0.35));
+  if (mission10.stage === 'idle') return;
+  var now = performance.now();
+  mission10.tStage += dt;
+  var t = mission10.tStage;
+  if (mission10.stage === 'brief'){
+    // the 180s clock is HELD through the brief - t0 stamps at GO. Ring passes now
+    // are inert (banking gates on 'hauling'); the truck is just staged.
+    if (!mission10.quick){
+      if (t > 5.4 && mission10.capIdx === 0){ mission10.capIdx = 1; caption('PUBLIC WORKS', 'GRAB ANY CAR - IT IS YOUR SANDBAG TRUCK. DRIVE INTO EACH ORANGE RING TO DROP THE BAGS, AND EASE THROUGH STANDING WATER OR YOU HYDROPLANE.', 5200); }
+    }
+    if (t > (mission10.quick ? 4.6 : 11.2)){
+      mission10.stage = 'hauling'; mission10.tStage = 0; mission10.capIdx = 0;
+      mission10.t0 = performance.now();
+      caption('DISPATCH', 'CLOCK STARTED. FIVE LOW SPOTS, THREE MINUTES. GO - IT IS ALREADY RISING.', 4400);
+    }
+    return;
+  }
+  if (mission10.stage === 'hauling'){
+    for (var k = 0; k < m10Rings.length; k++){
+      var on = k === mission10.cur;
+      m10Rings[k].visible = on;
+      if (on) m10Rings[k].rotation.z += dt * 0.9;
+    }
+    // hydroplane = THE MELT's one-frame speed cliff (the 0.2x crunch in updateDrive)
+    // verbatim: a crash chops car speed in a single frame; braking never does.
+    if (player.veh){
+      var as = Math.abs(player.veh.spd);
+      var drop = mission10.prevSpd - as;
+      if (drop > 4 && drop > mission10.prevSpd * 0.5 && t > mission10.sloshAt){
+        mission10.sloshAt = t + 1.2;
+        mission10.hydro++;
+        sndTone(140, 0.3, 0, 'sawtooth', 0.22);
+        mev(52);   // funnel: hydroplane
+        caption('PUBLIC WORKS', M10_HYDRO_LINES[(mission10.hydro - 1) % M10_HYDRO_LINES.length], 3600);
+      }
+      mission10.prevSpd = as;
+    } else mission10.prevSpd = 0;
+    if (m10Sec() > M10_BUDGET){
+      mission10.stage = 'fail'; mission10.tStage = 0;
+      for (var f = 0; f < m10Rings.length; f++) m10Rings[f].visible = false;
+      if (m10Bags) m10Bags.visible = false;
+      mev(54);   // funnel: fail (the water won)
+      caption('PUBLIC WORKS', 'WOLF RUN JUST TOOK KILRUSH. TOO SLOW - THE WATER WON.', 5000);
+      return;
+    }
+    // bank the current spot ONLY while driving a car within ~7m (on foot never counts)
+    if (player.veh){
+      var s = M10_SPOTS[mission10.cur];
+      if (Math.hypot(s.x - player.x, s.z - player.z) < 7){
+        mission10.cur++;
+        mev(51);   // funnel: a low spot bagged
+        if (mission10.cur >= M10_SPOTS.length){
+          mission10.ms = (now - mission10.t0) + mission10.hydro * M10_HYDRO * 1000;
+          mission10.stage = 'won'; mission10.tStage = 0; mission10.capIdx = 0;
+          for (var w = 0; w < m10Rings.length; w++) m10Rings[w].visible = false;
+          if (m10Bags) m10Bags.visible = false;
+          sndWin(); sndApplause();
+          caption('PUBLIC WORKS', 'EVERY LOW SPOT HELD. TELL THE MAYOR - AND TELL EVERYONE ELSE TO REPORT DAMAGE TO 311.', 5200);
+          try {
+            if (!m10Best || mission10.ms < m10Best){
+              m10Best = mission10.ms;
+              localStorage.setItem('lt_m10_best', String(Math.round(mission10.ms)));
+            }
+          } catch (e){}
+          sendScore({t: 'score', ms: Math.round(mission10.ms), m: 11});   // WIRE 11 (board m10) - never 10
+          mev(53);   // funnel: mission win
+        } else {
+          sndTone(880, 0.18, 0, 'square', 0.14);
+          if (mission10.cur === 2) caption('PUBLIC WORKS', 'TWO SPOTS BAGGED - KEEP MOVING, IT IS STILL RISING.', 3400);
+          else caption('PUBLIC WORKS', 'SPOT HELD. NEXT: ' + M10_SPOTS[mission10.cur].name + '.', 3000);
+        }
+      }
+    }
+    return;
+  }
+  if (mission10.stage === 'won'){
+    if (t > 5.4 && mission10.capIdx === 0){
+      mission10.capIdx = 1;
+      caption('RADIO', 'NEWS 630 THE FLOOD WATCH IS UP THROUGH THE WEEKEND. IF YOU DO NOT HAVE TO BE OUT IN THIS, DO NOT BE.', 5200);
+      showScores(mission10.ms, 11);   // WIRE 11 - passing 10 would caption a Daily Dash time
+      mission10.stage = 'post'; mission10.tStage = 0;
+    }
+    return;
+  }
+  if (mission10.stage === 'fail'){ if (t > 5) m10Cleanup(); return; }
+  if (mission10.stage === 'post'){ if (t > 22) m10Cleanup(); }
+}
+
 // ---------- DAILY DASH (mission D): one rotating checkpoint route per day ----
 // A daily challenge with its own global board: five checkpoints drawn
 // deterministically from a twelve-landmark pool by the EST day seed, so every
@@ -5736,7 +5946,7 @@ function allIdle(){
          mission3.stage === 'idle' && mission4.stage === 'idle' &&
          mission5.stage === 'idle' && mission6.stage === 'idle' &&
          mission7.stage === 'idle' && mission8.stage === 'idle' &&
-         mission9.stage === 'idle' && missionD.stage === 'idle';
+         mission9.stage === 'idle' && mission10.stage === 'idle' && missionD.stage === 'idle';
 }
 // Everything mission-related on the overlay (start markers, target
 // brackets, edge arrow, timers, zone chips, the fight chopper tag) draws
@@ -5756,6 +5966,7 @@ labels.push({name: '★ MISSION: THE MELT', x: M6_TRIG.x, y: 9, z: M6_TRIG.z, co
 labels.push({name: '★ MISSION: TAILGATE COMPLIANCE', x: M7_TRIG.x, y: 9, z: M7_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: LOOSE IN THE PADDOCK', x: M8_TRIG.x, y: 9, z: M8_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: AIR MAIL', x: M9_TRIG.x, y: 9, z: M9_TRIG.z, col: MISSION_COL, mission: true});
+labels.push({name: '★ MISSION: HIGH WATER', x: M10_TRIG.x, y: 9, z: M10_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ DAILY: THE DASH', x: MD_TRIG.x, y: 9, z: MD_TRIG.z, col: MISSION_COL, mission: true});
 // the gentle shove: when nothing else is going on, point at the next mission
 // bare next-unbeaten mission name, by the same best-gated chain ('' when all
@@ -5770,7 +5981,8 @@ function nextMissionName(){
   if (!m7Best) return 'TAILGATE COMPLIANCE';
   if (!m8Best) return 'LOOSE IN THE PADDOCK';
   if (!m9Best) return 'AIR MAIL';
-  // all nine beaten: point at today's DAILY DASH until it's run today
+  if (!m10Best) return 'HIGH WATER';
+  // all ten beaten: point at today's DAILY DASH until it's run today
   if (!dailyBest || dailyBest.day !== dayIndex()) return 'THE DASH';
   return '';
 }
@@ -5785,6 +5997,7 @@ var MISSION_HINT_SUFFIX = {
   'TAILGATE COMPLIANCE': 'BLUE RING, KROGER FIELD LOTS',
   'LOOSE IN THE PADDOCK': 'AMBER RING AT ELMENDORF (NORTH, PAST NEW CIRCLE)',
   'AIR MAIL': 'VIOLET RING DOWNTOWN (JETPACK - HOLD SPACE)',
+  'HIGH WATER': 'ORANGE RING AT THE PUBLIC WORKS YARD (DRIVE)',
   'THE DASH': 'GOLD RING AT THE COURTHOUSE — NEW ROUTE DAILY'
 };
 function nextMissionHint(){
@@ -5809,6 +6022,7 @@ if (/debug=1/.test(hashStr)){
     m4h: function(){ return m4Horses; },
     m6: function(){ return mission6; },
     m7: function(){ return mission7; },
+    m10: function(){ return mission10; },
     veh: function(){ return !!player.veh; },
     m4horses: function(){ return m4Horses.map(function(h){ return {s: h.state, x: Math.round(h.g.position.x), z: Math.round(h.g.position.z)}; }); },
     photo: function(){ takePhoto(); },
@@ -5954,6 +6168,10 @@ function tryEnterExit(){
   }
   if (allIdle() && !player.veh && !player.ride && player.bus === null && !player.scoot && !isFrozen() && nearM9Trig()){
     startMission9();
+    return;
+  }
+  if (allIdle() && !player.veh && !player.ride && player.bus === null && !player.scoot && !isFrozen() && nearM10Trig()){
+    startMission10();
     return;
   }
   if (allIdle() && !player.veh && !player.ride && player.bus === null && !player.scoot && !isFrozen() && nearMDTrig()){
@@ -6617,7 +6835,7 @@ function eActionLabel(){
   if (allIdle() && !isFrozen() &&
       (nearMissionTrig() || (heliUnlocked && nearDoor()) || nearM3Trig() ||
        nearM4Trig() || nearM5Trig() || nearM6Trig() || nearM7Trig() ||
-       nearM8Trig() || nearM9Trig() || nearMDTrig())) return 'START';
+       nearM8Trig() || nearM9Trig() || nearM10Trig() || nearMDTrig())) return 'START';
   if (!isFrozen() && calmableHorse()) return 'CALM';
   if (canEnterHeli()) return 'FLY';
   if (canBoardBus()) return 'BOARD';
@@ -7560,6 +7778,10 @@ function missionTarget(){
     var cp6 = M6_CPS[mission6.cur];
     return {x: cp6.x, y: 3, z: cp6.z, label: 'SCOOP STOP ' + (mission6.cur + 1) + '/' + M6_CPS.length};
   }
+  if (mission10.stage === 'hauling' && mission10.cur < M10_SPOTS.length){
+    var s10 = M10_SPOTS[mission10.cur];
+    return {x: s10.x, y: 3, z: s10.z, label: 'LOW SPOT ' + (mission10.cur + 1) + '/' + M10_SPOTS.length};
+  }
   if (mission7.stage === 'tag'){
     var tent = m7NextTent();
     if (tent) return {x: tent.x, y: 3, z: tent.z,
@@ -7676,6 +7898,8 @@ function currentObjective(){
     return {x: M8_TRIG.x, y: 9, z: M8_TRIG.z, label: 'LOOSE IN THE PADDOCK'};
   if (typeof m9Best !== 'undefined' && !m9Best && typeof M9_TRIG !== 'undefined')
     return {x: M9_TRIG.x, y: 9, z: M9_TRIG.z, label: 'AIR MAIL'};
+  if (typeof m10Best !== 'undefined' && !m10Best && typeof M10_TRIG !== 'undefined')
+    return {x: M10_TRIG.x, y: 9, z: M10_TRIG.z, label: 'HIGH WATER'};
   if (typeof missionD !== 'undefined' && (!dailyBest || dailyBest.day !== dayIndex()))
     return {x: MD_TRIG.x, y: 9, z: MD_TRIG.z, label: 'THE DASH'};
   return null;
@@ -8184,6 +8408,7 @@ function frameStep(now){
   updateMission7(dt);
   updateMission8(dt);
   updateMission9(dt);
+  updateMission10(dt);
   updateMissionD(dt);
   updateRouteRibbon(dt);
   updateRockets(dt);
@@ -8211,6 +8436,12 @@ function frameStep(now){
     env.sun *= 1 - 0.75 * m2Sky;
     env.hemi = env.hemi * (1 - m2Sky) + 0.55 * m2Sky;
   }
+  if (m10Sky > 0.01){   // HIGH WATER: rain-grey flood overcast (mission storm, snow-free)
+    skyC.lerp(_rainSkyC, m10Sky);
+    fogC.lerp(_rainSkyC, m10Sky);
+    env.sun *= 1 - 0.6 * m10Sky;
+    env.hemi = env.hemi * (1 - m10Sky) + 0.5 * m10Sky;
+  }
   if (wxGrey > 0.01){   // ambient weather blend (idle whenever the storm is up)
     // scaled by (1 - m2Sky) so the mission storm's sky WINS during the ~15s
     // overlap while weather eases out — multiplying both cuts over-darkens
@@ -8222,7 +8453,7 @@ function frameStep(now){
   }
   renderer.setClearColor(skyC);
   scene.fog.color.copy(fogC);
-  scene.fog.density = Math.min(0.003, 0.0007 + env.night * 0.00045 + m2Sky * 0.0012 + wxFog * 0.0016);
+  scene.fog.density = Math.min(0.003, 0.0007 + env.night * 0.00045 + m2Sky * 0.0012 + m10Sky * 0.0012 + wxFog * 0.0016);
   hemi.color.copy(skyC); hemi.intensity = env.hemi;
   var sa = (simH - 6) / 12 * Math.PI;
   sun.position.set(-Math.cos(sa) * 600, Math.max(30, Math.sin(sa) * 500), 220);
@@ -8265,6 +8496,7 @@ function frameStep(now){
       if (ghost && ghostEnabled && ghostDelta !== null) hint += ' · ' + (ghostDelta <= 0 ? 'AHEAD ' : 'BEHIND ') + Math.abs(ghostDelta).toFixed(1) + 's';
     }
     else if (mission6.stage === 'drive') hint = 'THE MELT · STOP ' + (mission6.cur + 1) + '/' + M6_CPS.length + ' · MELT ' + Math.min(99, Math.max(0, Math.round(m6MeltSec() / M6_BUDGET * 100))) + '% · CRASHES MELT IT FASTER';
+    else if (mission10.stage === 'hauling') hint = 'HIGH WATER · BAGGED ' + mission10.cur + '/' + M10_SPOTS.length + ' · ' + Math.max(0, Math.ceil(M10_BUDGET - m10Sec())) + 's LEFT · EASE THROUGH THE WATER';
     else if (missionD.stage === 'run') hint = 'DAILY DASH · CHECKPOINT ' + (missionD.cur + 1) + '/' + MD_N + ' · NEXT: ' + MD_CPS[missionD.cur].name + ' · ' + ((performance.now() - missionD.t0) / 1000).toFixed(1) + 's · ANY WHEELS';
     else if (player.veh) hint = 'E — EXIT · W/S DRIVE · A/D STEER · ' + Math.round(Math.abs(player.veh.spd) * 3.6) + ' KM/H';
     else if (mission2.stage === 'plow' && plowVeh) hint = 'GET TO THE PLOW — MAIN ST BY CITY HALL (E TO BOARD)';
@@ -8288,6 +8520,7 @@ function frameStep(now){
     else if (allIdle() && nearM7Trig()) hint = 'E — START MISSION: TAILGATE COMPLIANCE';
     else if (allIdle() && nearM8Trig()) hint = 'E — START MISSION: LOOSE IN THE PADDOCK';
     else if (allIdle() && nearM9Trig()) hint = 'E — START MISSION: AIR MAIL';
+    else if (allIdle() && nearM10Trig()) hint = 'E — START MISSION: HIGH WATER';
     else if (allIdle() && nearMDTrig()) hint = 'E — START THE DAILY DASH';
     else if (canEnterHeli()) hint = 'E — FLY THE NEWS CHOPPER';
     else if (!heliUnlocked && canEnterHeliBase()) hint = 'LOCKED — BEAT "THE RIBBON CUTTING" AT CITY HALL TO FLY';
