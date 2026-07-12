@@ -14,7 +14,9 @@
 // exercises "Private Worlds / Rooms" — ?room=<code> partitioning: presence /
 // chat / leave isolation, welcome.peers filtering, per-room heli independence,
 // the private-room score gate, sanitization equivalence, and NPC-forced-PUBLIC
-// (see runRoomAssertions).
+// (see runRoomAssertions). A final pass exercises the fire-and-forget "mev"
+// telemetry beacon — validated, rate-limited, log-only, never broadcast (see
+// runMevAssertions).
 // PASS/FAIL per check; exits non-zero if any check fails. Uses only `ws`
 // (already a dependency) + node builtins. Re-runnable.
 //
@@ -444,6 +446,62 @@ async function runRoomAssertions() {
   B_.ws.close(); C_.ws.close(); HA.ws.close();
 }
 
+// --- mev beacon: fire-and-forget telemetry ping (task #44) -------------------
+// {t:'mev', k:<int 0-99>} is validated + rate-limited (8/s) and logged server-
+// side ONLY — no broadcast, no reply, and invalid/over-limit k is silently
+// ignored. Since there's nothing to observe on success, every check verifies by
+// ABSENCE (a second client sees no traffic) plus LIVENESS (the sender can still
+// chat and receive relays afterward — proving the server didn't crash and the
+// sender wasn't disconnected). A crash (process.exit on uncaughtException) or a
+// dropped connection would make the follow-up chat relay fail.
+async function runMevAssertions() {
+  const want = async (c, pred, opts) => {
+    try { return await expect(c, pred, { timeout: 1500, ...(opts || {}) }); }
+    catch { return null; }
+  };
+  const MA = connect(); await opened(MA); const MAID = (await expect(MA, (m) => m.t === 'welcome')).id;
+  const MB = connect(); await opened(MB); await expect(MB, (m) => m.t === 'welcome');
+  // MA fixes a spawn so it's a fully in-world player; not required for the mev
+  // path but keeps the sender realistic.
+  send(MA, { t: 'state', n: 'MEVMAN', c: 0x3a76c4, m: 0, p: 0, x: 14, y: 1, z: -9.5, ry: 0 });
+  await sleep(140);
+
+  // M1: one valid beacon → no broadcast to the second client, sender still live.
+  const m1mark = MB.msgs.length;
+  send(MA, { t: 'mev', k: 10 });
+  await sleep(300);
+  const m1quiet = MB.msgs.slice(m1mark).length === 0;
+  check('M1a. valid mev beacon produces no broadcast to a second client', m1quiet, 'got=' + JSON.stringify(MB.msgs.slice(m1mark)));
+  send(MA, { t: 'chat', msg: 'still here' });
+  const m1chat = await want(MB, (m) => m.t === 'chat' && m.id === MAID && m.msg === 'still here');
+  check('M1b. sender still relays after mev (not disconnected, server up)', !!m1chat, JSON.stringify(m1chat));
+
+  // M2: burst 12 beacons in <1s (over the 8/s cap) → no crash/leak; relay works.
+  const m2mark = MB.msgs.length;
+  for (let i = 0; i < 12; i++) send(MA, { t: 'mev', k: 11 });
+  await sleep(300);
+  const m2quiet = MB.msgs.slice(m2mark).length === 0;
+  send(MA, { t: 'chat', msg: 'post-burst' });
+  const m2chat = await want(MB, (m) => m.t === 'chat' && m.id === MAID && m.msg === 'post-burst');
+  check('M2. mev rate-limit burst does not crash or leak; relay still works', m2quiet && !!m2chat,
+    `quiet=${m2quiet} chat=${JSON.stringify(m2chat)}`);
+
+  // M3: malformed beacons (bad type, out-of-range, negative, missing k) ignored.
+  const m3mark = MB.msgs.length;
+  send(MA, { t: 'mev', k: 'x' });
+  send(MA, { t: 'mev', k: 999 });
+  send(MA, { t: 'mev', k: -1 });
+  send(MA, { t: 'mev' });
+  await sleep(300);
+  const m3quiet = MB.msgs.slice(m3mark).length === 0;
+  send(MA, { t: 'chat', msg: 'post-malformed' });
+  const m3chat = await want(MB, (m) => m.t === 'chat' && m.id === MAID && m.msg === 'post-malformed');
+  check('M3. malformed mev is silently ignored; no crash, relay still works', m3quiet && !!m3chat,
+    `quiet=${m3quiet} chat=${JSON.stringify(m3chat)}`);
+
+  MA.ws.close(); MB.ws.close();
+}
+
 async function main() {
   // snapshot the real scores.json (gitignored) so the m5 submit can't clobber it
   let scoresBackup = null, scoresExisted = false;
@@ -455,6 +513,7 @@ async function main() {
     await runAssertions();
     await runRideAssertions();
     await runRoomAssertions();
+    await runMevAssertions();
   } catch (e) {
     check('harness ran to completion', false, String((e && e.stack) || e));
   } finally {

@@ -2815,6 +2815,12 @@ function submitScore(ms){
   } catch (e){}
   sendScore({t: 'score', ms: Math.round(ms)});
 }
+// mission-funnel telemetry (F5): fire-and-forget event beacons keyed by number
+// (enum space 10-19 = mission 4). Not routed through sendScore - mev is fine
+// from any room; the server logs which room it came from.
+function mev(k){
+  if (online && ws && ws.readyState === 1) ws.send(JSON.stringify({t: 'mev', k: k}));
+}
 function fmtMs(ms){ return (ms / 1000).toFixed(1) + 's'; }
 function missionPoints(ms){ return Math.max(100, 1000 - Math.round(ms / 100)); }
 function showScores(myMs, board){
@@ -3815,6 +3821,7 @@ function makeLiveHorse(col){
 function startMission4(){
   mission4.stage = 'brief'; mission4.tStage = 0; mission4.capIdx = 0;
   mission4.t0 = 0; mission4.penned = 0; mission4.capAt = 0;
+  mev(10);   // funnel: mission start
   var trainer = spawnNpc(245, 68, 0x4a7a52, Math.PI, 0.95);
   m4Npcs.push(trainer);
   // First-ever attempt leads with the spook rule (the likeliest reason m4
@@ -3831,6 +3838,10 @@ function startMission4(){
   addChatLine('* MISSION', 'HORSEPOWER - bring the loose horses home', true);
 }
 function m4Cleanup(){
+  // funnel: incomplete attempt. Cleanup is only ever reached from 'fail' (the
+  // 900s timeout) or 'post' (after a win); gating on non-won/post + penned<3
+  // captures the timeout-abandon and excludes the natural post-win path.
+  if ((mission4.stage === 'brief' || mission4.stage === 'wrangle' || mission4.stage === 'fail') && mission4.penned < 3) mev(13);
   mission4.stage = 'idle';
   m4Npcs.forEach(function(g){ scene.remove(g); });
   m4Npcs.length = 0;
@@ -3853,7 +3864,7 @@ function calmableHorse(){
     var h = m4Horses[k];
     if (h.state !== 'wild') continue;
     var d = Math.hypot(h.g.position.x - player.x, h.g.position.z - player.z);
-    if (d < 5.5) return h;
+    if (d < 8) return h;   // F5: wider grab radius (was 5.5)
   }
   return null;
 }
@@ -3910,7 +3921,7 @@ function updateHorse(h, dt, now){
     var d = Math.hypot(player.x - g.position.x, player.z - g.position.z);
     if (d > 3){
       var p = {x: g.position.x, z: g.position.z};
-      var step = Math.min(d - 2.8, 7 * dt);
+      var step = Math.min(d - 2.8, 11 * dt);   // F5: follow keeps pace with a jog (was 7)
       p.x += (player.x - g.position.x) / d * step;
       p.z += (player.z - g.position.z) / d * step;
       collide(p, 0.8, 0);
@@ -3934,15 +3945,16 @@ function updateHorse(h, dt, now){
     if (h.boltT > 2.3){ h.state = 'wild'; }
     return;
   }
-  // wild: graze in place, bolt if rushed. Walking (7.5 m/s) is fine —
-  // only a shift-sprint (13.5), jetpack, or a moving car spooks him.
+  // wild: graze in place, bolt only if genuinely rushed. Walking (7.5) and a
+  // jog stay safe; a shift-sprint (13.5), jetpack, or a moving car within 10m
+  // spooks him, and he bolts a short 24-40m (F5: gentler after prod telemetry).
   g.position.y = groundY(g.position.x, g.position.z) + 0.05 + Math.sin(now * 0.002 + h.i) * 0.04;
   var pd = Math.hypot(player.x - g.position.x, player.z - g.position.z);
-  var rushing = (!player.veh && playerSpeed() > 9) || (player.veh && Math.abs(player.veh.spd) > 3);
-  if (pd < 13 && rushing){
+  var rushing = (!player.veh && playerSpeed() > 12) || (player.veh && Math.abs(player.veh.spd) > 3);
+  if (pd < 10 && rushing){
     var ang = Math.atan2(g.position.x - player.x, g.position.z - player.z) + (Math.random() - 0.5) * 1.2;
-    var dist = 42 + Math.random() * 22;
-    h.state = 'bolt'; h.boltT = 0;
+    var dist = 24 + Math.random() * 16;
+    h.state = 'bolt'; h.boltT = 0; mev(11);   // spook beacon
     h.bx0 = g.position.x; h.bz0 = g.position.z;
     h.bx1 = Math.max(X0 + 20, Math.min(X1 - 20, g.position.x + Math.sin(ang) * dist));
     h.bz1 = Math.max(Z0 + 20, Math.min(Z1 - 20, g.position.z + Math.cos(ang) * dist));
@@ -4004,6 +4016,7 @@ function updateMission4(dt){
         }
       } catch (e){}
       sendScore({t: 'score', ms: Math.round(mission4.ms), m: 4});
+      mev(12);   // funnel: mission win
     }
     return;
   }

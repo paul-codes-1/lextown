@@ -434,7 +434,7 @@ wss.on('connection', (ws, req) => {
     admin: false,
     stateTimes: [],       // sliding window for packet-rate limiting
     lastM: 0,             // last accepted mode (for mode-switch slack)
-    rocketTimes: [], sprayTimes: [], pushTimes: [], rideTimes: [], seatAt: 0, lastRhit: 0,
+    rocketTimes: [], sprayTimes: [], pushTimes: [], rideTimes: [], mevTimes: [], seatAt: 0, lastRhit: 0,
     chatTokens: 3, chatAt: Date.now(),
     strikes: 0,
     joinedAt: Date.now(), chatCount: 0, shotCount: 0, tagCount: 0, errCount: 0,
@@ -738,6 +738,18 @@ wss.on('connection', (ws, req) => {
           coarse: msg.coarse ? 1 : 0, dpr: num(msg.dpr, 0, 10) ? msg.dpr : null,
           peers: num(msg.peers, 0, 1000) ? msg.peers : null });
       }
+      return;
+    }
+
+    if (msg.t === 'mev') {
+      // mission-funnel beacon, log-only (never broadcast, never persisted
+      // beyond the JSONL logs). Enum space: 10-19 = m4 (10 start / 11 bolt /
+      // 12 win / 13 abandon), 20-29 = m8, 30-39 = m9 (reserved).
+      if (!Number.isInteger(msg.k) || msg.k < 0 || msg.k > 99) return;
+      client.mevTimes = client.mevTimes.filter((t) => now - t < 1000);
+      if (client.mevTimes.length >= 8) return;   // ~8/s cap
+      client.mevTimes.push(now);
+      logEvent('mev', { id, k: msg.k, room: client.room });
       return;
     }
 
