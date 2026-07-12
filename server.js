@@ -157,7 +157,9 @@ process.on('unhandledRejection', (err) => {
 // Migration: an old plain-array scores.json becomes the m1 board.
 const SCORES_PATH = path.join(__dirname, 'scores.json');
 const BOARDS = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7'];
-let scores = { m1: [], m2: [], m3: [], m4: [], m5: [] };
+// every board MUST be seeded here — on a fresh box (no scores.json) the catch
+// below leaves the literal as-is, and topScores() throws on a missing board
+let scores = { m1: [], m2: [], m3: [], m4: [], m5: [], m6: [], m7: [] };
 try {
   const parsed = JSON.parse(fs.readFileSync(SCORES_PATH, 'utf8'));
   if (Array.isArray(parsed)) scores.m1 = parsed;
