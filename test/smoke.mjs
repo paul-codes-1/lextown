@@ -502,6 +502,80 @@ async function runMevAssertions() {
   MA.ws.close(); MB.ws.close();
 }
 
+// --- m8 leaderboard: the "settled the foals" board (task #49) -----------------
+// Verifies the new board wired through the score handler end-to-end. Each score
+// costs the submitter a 15s cooldown, so every submission uses its own client.
+// Distinctive names + distinct ms values make each entry identifiable in the
+// top-10 {t:'scores'} snapshot. Notable JS trap under test (B3): the board map
+// { ..., 8:'m8' }[msg.m] is an object lookup, so BOTH numeric 8 and the string
+// '8' coerce to the same key and land on m8 — while the string 'm8' would MISS
+// the map and fall through to 'm1'. B3a guards that numeric m:8 doesn't leak to
+// the ribbon board; B3b documents (soft) where the string '8' actually lands.
+async function runM8Assertions() {
+  const want = async (c, pred, opts) => {
+    try { return await expect(c, pred, { timeout: 1500, ...(opts || {}) }); }
+    catch { return null; }
+  };
+  const named = async (query, name) => {   // fresh client with a fixed name + spawn
+    const c = connect(query); await opened(c); await expect(c, (m) => m.t === 'welcome');
+    send(c, { t: 'state', n: name, c: 0x3a76c4, m: 0, p: 0, x: 14, y: 1, z: -9.5, ry: 0 });
+    await sleep(140);
+    return c;
+  };
+  const OBS = connect(); await opened(OBS); await expect(OBS, (m) => m.t === 'welcome');
+
+  // B1: valid PUBLIC m8 score -> lands on .m8 in the reply + fires the announce.
+  const S1 = await named('', 'FOALGUY');
+  const obsB1 = OBS.msgs.length;
+  send(S1, { t: 'score', m: 8, ms: 120000 });
+  const rep1 = await want(S1, (m) => m.t === 'scores');
+  const ann1 = await want(OBS, (m) => m.t === 'chat' && m.n === '* MISSION', { from: obsB1 });
+  const b1m8 = !!(rep1 && (rep1.m8 || []).some((e) => e.n === 'FOALGUY' && e.ms === 120000));
+  const b1announce = !!(ann1 && /foal/i.test(ann1.msg || ''));
+  check('B1a. valid m8 score lands on the m8 board (topScores includes m8)', b1m8, 'm8=' + JSON.stringify(rep1 && rep1.m8));
+  check('B1b. m8 score fires the mission announce to a second client (matches "foal")', b1announce, 'announce=' + JSON.stringify(ann1));
+
+  // B3a: numeric m:8 must NOT leak onto the m1 ribbon board (reuse S1's reply).
+  const b3aLeak = !!(rep1 && (rep1.m1 || []).some((e) => e.n === 'FOALGUY' && e.ms === 120000));
+  check('B3a. numeric m:8 does NOT leak onto the m1 ribbon board', !b3aLeak, 'm1=' + JSON.stringify(rep1 && rep1.m1));
+
+  // B2: below-floor m8 score (5s < 15s floor) -> no reply, no announce, no entry.
+  const S2 = await named('', 'LOWBALL');
+  const obsB2 = OBS.msgs.length, s2mark = S2.msgs.length;
+  send(S2, { t: 'score', m: 8, ms: 5000 });
+  await sleep(400);
+  const s2reply = S2.msgs.slice(s2mark).some((m) => m.t === 'scores');
+  const s2announce = OBS.msgs.slice(obsB2).some((m) => m.t === 'chat' && m.n === '* MISSION');
+  send(OBS, { t: 'scores' });
+  const req2 = await want(OBS, (m) => m.t === 'scores');
+  const s2onBoard = !!(req2 && (req2.m8 || []).some((e) => e.ms === 5000));
+  check('B2. below-floor m8 score rejected (no reply, no announce, no board entry)',
+    !s2reply && !s2announce && !s2onBoard, `reply=${s2reply} announce=${s2announce} onBoard=${s2onBoard}`);
+
+  // B3b (soft): string m:'8' coerces to the m8 key in JS object lookup, so it
+  // should land on m8 too. Document the real behavior; don't fail the suite.
+  const S3 = await named('', 'STRINGY');
+  const s3mark = S3.msgs.length;
+  send(S3, { t: 'score', m: '8', ms: 130000 });
+  const rep3 = await want(S3, (m) => m.t === 'scores', { from: s3mark });
+  const s3OnM8 = !!(rep3 && (rep3.m8 || []).some((e) => e.ms === 130000));
+  const s3OnM1 = !!(rep3 && (rep3.m1 || []).some((e) => e.ms === 130000));
+  softCheck("B3b. string m:'8' coerces onto the m8 board (JS object-key coercion)", s3OnM8,
+    `gotReply=${!!rep3} onM8=${s3OnM8} onM1=${s3OnM1}`);
+
+  // B4: an m8 score from a private room is dropped (F4 gate composes with m8).
+  const S4 = await named('?room=DERBY', 'DERBYFOAL');
+  const obsB4 = OBS.msgs.length, s4mark = S4.msgs.length;
+  send(S4, { t: 'score', m: 8, ms: 125000 });
+  await sleep(400);
+  const s4reply = S4.msgs.slice(s4mark).some((m) => m.t === 'scores');
+  const s4announce = OBS.msgs.slice(obsB4).some((m) => m.t === 'chat' && m.n === '* MISSION');
+  check('B4. m8 score from a private room is dropped (no reply, no announce)', !s4reply && !s4announce,
+    `reply=${s4reply} announce=${s4announce}`);
+
+  S1.ws.close(); S2.ws.close(); S3.ws.close(); S4.ws.close(); OBS.ws.close();
+}
+
 async function main() {
   // snapshot the real scores.json (gitignored) so the m5 submit can't clobber it
   let scoresBackup = null, scoresExisted = false;
@@ -514,6 +588,7 @@ async function main() {
     await runRideAssertions();
     await runRoomAssertions();
     await runMevAssertions();
+    await runM8Assertions();
   } catch (e) {
     check('harness ran to completion', false, String((e && e.stack) || e));
   } finally {

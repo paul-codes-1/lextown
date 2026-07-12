@@ -163,12 +163,13 @@ process.on('unhandledRejection', (err) => {
 //   m5 = DEADLINE (fastest checkpoint drive race)
 //   m6 = THE MELT (fastest ice-cream delivery, slosh penalties included)
 //   m7 = TAILGATE COMPLIANCE (fastest canopy tagging before kickoff)
+//   m8 = LOOSE IN THE PADDOCK (fastest foal roundup)
 // Migration: an old plain-array scores.json becomes the m1 board.
 const SCORES_PATH = path.join(__dirname, 'scores.json');
-const BOARDS = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7'];
+const BOARDS = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8'];
 // every board MUST be seeded here — on a fresh box (no scores.json) the catch
 // below leaves the literal as-is, and topScores() throws on a missing board
-let scores = { m1: [], m2: [], m3: [], m4: [], m5: [], m6: [], m7: [] };
+let scores = { m1: [], m2: [], m3: [], m4: [], m5: [], m6: [], m7: [], m8: [] };
 try {
   const parsed = JSON.parse(fs.readFileSync(SCORES_PATH, 'utf8'));
   if (Array.isArray(parsed)) scores.m1 = parsed;
@@ -181,7 +182,7 @@ function saveScores() {
 function topScores() {
   const top = (b) => scores[b].slice(0, 10).map((s) => ({ n: s.n, ms: s.ms }));
   return { m1: top('m1'), m2: top('m2'), m3: top('m3'), m4: top('m4'),
-           m5: top('m5'), m6: top('m6'), m7: top('m7') };
+           m5: top('m5'), m6: top('m6'), m7: top('m7'), m8: top('m8') };
 }
 
 // persistent ban list: [{ip, name}]
@@ -687,11 +688,11 @@ wss.on('connection', (ws, req) => {
       // client-side; the client also suppresses the submit (defense-in-depth).
       if (client.room !== PUBLIC) return;
       // mission completion: plausible time window per board, 1 per 15s per client
-      const board = { 2: 'm2', 3: 'm3', 4: 'm4', 5: 'm5', 6: 'm6', 7: 'm7' }[msg.m] || 'm1';
+      const board = { 2: 'm2', 3: 'm3', 4: 'm4', 5: 'm5', 6: 'm6', 7: 'm7', 8: 'm8' }[msg.m] || 'm1';
       const WIN = { m1: [3000, 600000], m2: [20000, 900000],
                     m3: [20000, 900000], m4: [30000, 1500000],
                     m5: [30000, 480000], m6: [40000, 900000],
-                    m7: [25000, 900000] }[board];
+                    m7: [25000, 900000], m8: [15000, 300000] }[board];
       if (!num(msg.ms, WIN[0], WIN[1])) return;
       if (client.lastScoreAt && now - client.lastScoreAt < 15000) return;
       client.lastScoreAt = now;
@@ -710,7 +711,8 @@ wss.on('connection', (ws, req) => {
                m4: `${n} got the horses home in ${sec}s`,
                m5: `${n} beat the deadline in ${sec}s`,
                m6: `${n} delivered the scoops still frozen in ${sec}s`,
-               m7: `${n} tagged the whole tailgate in ${sec}s` }[board] }, null, client.room);
+               m7: `${n} tagged the whole tailgate in ${sec}s`,
+               m8: `${n} settled the foals in ${sec}s` }[board] }, null, client.room);
       ws.send(JSON.stringify(Object.assign({ t: 'scores' }, topScores())));
       return;
     }

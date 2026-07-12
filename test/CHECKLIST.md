@@ -349,3 +349,77 @@ ADMIN_TOKEN=qa-admin NPC_TOKEN=qa-npc PORT=8080 node server.js
       localStorage key (the room rides the URL hash); no new persisted server data.
 - [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
       pass and `npm test` (`node test/smoke.mjs`) is all green.
+
+---
+
+## F7 — LOOSE IN THE PADDOCK (Mission 8: freeze blaster at the horse farms)
+
+Phase 2 F6. **Precondition:** m1–m7 beaten, every mission idle, `lt_m8_best`
+cleared. Extend the Setup fast-forward recipe with the remaining bests (m1's
+"best" is the heli unlock):
+
+```js
+localStorage.setItem('lt_heli_unlock','1');
+['lt_m2_best','lt_m3_best','lt_m4_best','lt_m5_best','lt_m6_best','lt_m7_best']
+  .forEach(k => localStorage.setItem(k, '90000'));
+localStorage.removeItem('lt_m8_best');
+localStorage.removeItem('lt_m8_coached');
+location.reload();
+```
+
+Standing gate first (`node --check web/app.js && node --check server.js`, then
+`npm test`). Two tabs for the PvP / announce checks — **Tab A** plays, **Tab B**
+observes.
+
+- [ ] **Waypoint carries you north.** With m7 beaten and m8 not, F1's gold marker
+      and route ribbon point to `M8_TRIG` in the Elmendorf paddocks (north, past New
+      Circle); the `★ MISSION: LOOSE IN THE PADDOCK` label renders at the amber ring
+      and hides during any active mission.
+- [ ] **Start gate is `allIdle` + on-foot + not-riding.** On foot at the amber ring,
+      `E` starts it only when every mission is idle and you're not driving or riding
+      shotgun; the foreman brief fires and the ~180 s countdown begins. Confirm the
+      negatives: `E` does nothing during another mission, while a passenger, or while
+      frozen.
+- [ ] **Dart settles a foal.** Draw the blaster (`G`), fire (`F`/click) at a loose
+      foal → it shimmers ice-blue, calms, and trots into the central pen; the HUD
+      hint ticks `PENNED 1/3`. On foot only (the blaster holsters in a car).
+- [ ] **Start issues the blaster WITHOUT a PvP opt-in (two tabs).** Firing the first
+      mission dart does NOT draw Tab A into PvP: in Tab B, confirm A is not a
+      freezable target during the wrangle and can't be frozen mid-mission (contrast
+      with normal freeze-tag, where the first `G`/`F` opts you in).
+- [ ] **Foals bolt on the spook rule.** Rushing within a foal's spook radius makes
+      it break and run (the m4 mechanic), so you lead darts on moving targets from a
+      few meters out.
+- [ ] **Re-thaw if not penned in time.** A foal darted far from the pen whose ~8 s
+      calm lapses before it pens re-bolts and can be re-darted — no stuck-"calm"
+      soft-lock. A foal darted near the pen reaches it and pens on the first dart.
+- [ ] **First-attempt coaching, once.** The first-ever attempt shows
+      `AIM AHEAD OF A MOVING FOAL - THE DART TAKES A BEAT TO GET THERE.` and sets
+      `lt_m8_coached`; it does not repeat on later attempts.
+- [ ] **Win → board + announce + device best.** Pen all three under 180 s → win; the
+      scores modal opens on the **m8** board (`#scoreList8`, `FOALS PENNED IN …`)
+      with your time, `lt_m8_best` updates locally, and Tab B's chat shows
+      `* MISSION  <name> settled the foals in <t>s`. Verify the time lands on the m8
+      board, NOT the ribbon board (client sent numeric `m:8`).
+- [ ] **Local best gates the chain.** `lt_m8_best` is set; `m8Best` removes m8 from
+      the waypoint progression (the objective chain is now complete — no marker).
+- [ ] **Timer expiry = clean fail + instant retry.** Let the clock run out → fail
+      caption (`THEY BOLTED FOR PARIS PIKE. RESET AND TRY AGAIN.`), mission resets to
+      `idle`, no submit (Tab B chat unchanged, `#scoreList8` unchanged); `E` at the
+      ring restarts immediately where you stand (foals respawn).
+- [ ] **No mission overlap.** During a wrangle, `E` at other rings does nothing;
+      `allIdle()` includes `mission8`.
+- [ ] **Blaster restored to its PvP state after cleanup.** On win or fail, the
+      blaster returns to whatever PvP state it had before the mission — a player who
+      was never opted in is still un-taggable afterward (the mission didn't silently
+      leave them opted in).
+- [ ] **Private-room run doesn't rank.** Play m8 in a `#room=` private room → the
+      mission plays and `lt_m8_best` still saves, but there's no global-board write
+      and no chat announce (inherits F4's score gate). In PUBLIC it ranks normally.
+- [ ] **Server plumbing complete.** `m8` is in `BOARDS`, the `scores` literal, the
+      score map, the `WIN` object (`[15000, 300000]`), and the announce map — a win
+      persists to `scores.json` under `m8` and survives a server restart.
+- [ ] **Surfaces updated together.** README mission list, the `#tut` MISSION 8 grid
+      line, and the `#scoreList8` scores-modal block are all present.
+- [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
+      pass and `npm test` (`node test/smoke.mjs`) is all green.

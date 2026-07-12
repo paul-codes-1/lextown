@@ -1651,6 +1651,7 @@ function spawnDart(ox, oy, oz, dx, dy, dz, mine){
 }
 function setPvp(on){
   if (on && player.ride) return;   // a passenger is never a valid tag target
+  if (on && blasterMissionActive()) return;   // mission darts never opt you in
   if (player.pvp === on) return;
   player.pvp = on;
   player.av.gun.visible = on;
@@ -1659,7 +1660,9 @@ function setPvp(on){
 var _aim = new THREE.Vector3();
 function fireDart(){
   if (mode !== 'player' || player.veh || player.ride || isFrozen()) return;
-  if (!player.pvp){ setPvp(true); return; }   // first press draws = opts in
+  // first press draws = opts in — EXCEPT during a blaster mission, where the
+  // dart is a tool and firing it must not make you a freeze-tag target
+  if (!player.pvp && !blasterMissionActive()){ setPvp(true); return; }
   var now = performance.now();
   if (now - lastFire < 450) return;
   lastFire = now;
@@ -1677,7 +1680,10 @@ function fireDart(){
   }
   spawnDart(ox, oy, oz, _aim.x, _aim.y, _aim.z, true);
   sndPew();
-  if (online && ws && ws.readyState === 1)
+  // only opted-in shots relay — the server drops pvp=0 shots anyway, and
+  // mission darts (fired un-opted via the blasterMissionActive fall-through)
+  // are purely local
+  if (online && ws && ws.readyState === 1 && player.pvp)
     ws.send(JSON.stringify({t: 'shot',
       ox: +ox.toFixed(1), oy: +oy.toFixed(1), oz: +oz.toFixed(1),
       dx: +_aim.x.toFixed(3), dy: +_aim.y.toFixed(3), dz: +_aim.z.toFixed(3)}));
@@ -1705,6 +1711,21 @@ function updateDarts(dt){
     var surface = p.y < 0.05 || pointInBuilding(p.x, p.y, p.z);
     if (surface) puff(p.x, Math.max(0.2, p.y), p.z, 0x9adfff, 0.14, 1.1, 240, 0.6, 0.7);
     var dead = now - d.born > 2000 || surface;
+    // mission 8: my darts settle loose foals (client-local — other players'
+    // darts are cosmetic and never touch my foals)
+    if (!dead && d.mine && mission8.stage === 'wrangle'){
+      for (var fi = 0; fi < m8Foals.length; fi++){
+        var f = m8Foals[fi];
+        if (f.state !== 'loose' && f.state !== 'bolt') continue;
+        var fp = f.g.position;
+        var fdx = p.x - fp.x, fdy = p.y - (fp.y + 0.9), fdz = p.z - fp.z;
+        if (fdx * fdx + fdz * fdz < 6.25 && fdy * fdy < 4){
+          dead = true;
+          settleFoal(f);
+          break;
+        }
+      }
+    }
     if (!dead && d.mine){
       for (var id in remotes){
         var r = remotes[id];
@@ -2833,10 +2854,12 @@ function showScores(myMs, board){
   if (myMs){
     var verb = board === 2 ? 'PLOWED IN ' : board === 3 ? 'STORY BROKEN IN ' :
                board === 4 ? 'HORSES HOME IN ' : board === 5 ? 'DEADLINE MET IN ' :
-               board === 6 ? 'SCOOPS LANDED IN ' : board === 7 ? 'LOT TAGGED IN ' : 'CHOPPER DOWN IN ';
+               board === 6 ? 'SCOOPS LANDED IN ' : board === 7 ? 'LOT TAGGED IN ' :
+               board === 8 ? 'FOALS PENNED IN ' : 'CHOPPER DOWN IN ';
     you = verb + fmtMs(myMs) + ' · +' + missionPoints(myMs) + ' PTS';
     var best = board === 2 ? m2Best : board === 3 ? m3Best : board === 4 ? m4Best :
-               board === 5 ? m5Best : board === 6 ? m6Best : board === 7 ? m7Best : missionBest;
+               board === 5 ? m5Best : board === 6 ? m6Best : board === 7 ? m7Best :
+               board === 8 ? m8Best : missionBest;
     if (best) you += ' · DEVICE BEST ' + fmtMs(best);
     if (roomCode) you += ' · PRIVATE ROOM · TIMES DON\'T RANK';
   } else {
@@ -2846,10 +2869,11 @@ function showScores(myMs, board){
       ' · ' + (m4Best ? 'HORSEPOWER: ' + fmtMs(m4Best) : 'HORSEPOWER: —') +
       ' · ' + (m5Best ? 'DEADLINE: ' + fmtMs(m5Best) : 'DEADLINE: —') +
       ' · ' + (m6Best ? 'MELT: ' + fmtMs(m6Best) : 'MELT: —') +
-      ' · ' + (m7Best ? 'TAILGATE: ' + fmtMs(m7Best) : 'TAILGATE: —');
+      ' · ' + (m7Best ? 'TAILGATE: ' + fmtMs(m7Best) : 'TAILGATE: —') +
+      ' · ' + (m8Best ? 'PADDOCK: ' + fmtMs(m8Best) : 'PADDOCK: —');
   }
   document.getElementById('scoreYou').textContent = you;
-  ['scoreList', 'scoreList2', 'scoreList3', 'scoreList4', 'scoreList5', 'scoreList6', 'scoreList7'].forEach(function(id){
+  ['scoreList', 'scoreList2', 'scoreList3', 'scoreList4', 'scoreList5', 'scoreList6', 'scoreList7', 'scoreList8'].forEach(function(id){
     var list = document.getElementById(id);
     if (!list) return;
     list.textContent = '';
@@ -2884,6 +2908,7 @@ function renderScores(m){
   fill('scoreList5', m.m5 || []);
   fill('scoreList6', m.m6 || []);
   fill('scoreList7', m.m7 || []);
+  fill('scoreList8', m.m8 || []);
 }
 function updateMission(dt){
   var now = performance.now();
@@ -4456,11 +4481,192 @@ function updateMission7(dt){
   if (mission7.stage === 'fail'){ if (t > 5) m7Cleanup(); return; }
   if (mission7.stage === 'post'){ if (t > 22) m7Cleanup(); }
 }
+// ---------- mission 8: LOOSE IN THE PADDOCK (freeze blaster + horse farms) ----------
+// The night before the Keeneland yearling sale, three foals jumped the rail at
+// Elmendorf. Settle each with a calming dart (the freeze blaster gets a job) and
+// it trots itself to the central pen. Amber ring INSIDE the paddock = instant
+// retry (the HORSEPOWER lesson). 180s budget, target 90-150s. On foot only.
+// Top-level vars declared before the labels.push block below (statement order).
+var M8_TRIG = {x: -430, z: -1300};
+var M8_PEN = {x: -410, z: -1360};
+var M8_BUDGET = 180;
+var M8_SPOTS = [{x: -470, z: -1330}, {x: -390, z: -1440}, {x: -430, z: -1380}];
+var m8Best = 0;
+try { m8Best = parseInt(localStorage.getItem('lt_m8_best') || '0', 10) || 0; } catch (e){}
+var mission8 = {stage: 'idle', tStage: 0, t0: 0, ms: 0, penned: 0, capIdx: 0};
+var m8Foals = [], m8Ring = null, m8PenRing = null;
+(function(){
+  m8Ring = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.06, 6, 24),
+    new THREE.MeshBasicMaterial({color: 0xc8792e, transparent: true, opacity: 0.85}));   // amber (bay coat)
+  m8Ring.rotation.x = Math.PI / 2;
+  m8Ring.position.set(M8_TRIG.x, 0.9, M8_TRIG.z);
+  scene.add(m8Ring);
+  m8PenRing = new THREE.Mesh(new THREE.TorusGeometry(3, 0.12, 6, 28),
+    new THREE.MeshBasicMaterial({color: 0xc8792e, transparent: true, opacity: 0.7}));
+  m8PenRing.rotation.x = Math.PI / 2;
+  m8PenRing.position.set(M8_PEN.x, 0.9, M8_PEN.z);
+  m8PenRing.visible = false;
+  scene.add(m8PenRing);
+})();
+function nearM8Trig(){
+  var dx = player.x - M8_TRIG.x, dz = player.z - M8_TRIG.z;
+  return dx * dx + dz * dz < 16;
+}
+function blasterMissionActive(){ return mission8.stage === 'wrangle'; }   // darts settle foals, no PvP opt-in
+// a foal: makeLiveHorse scaled down, with the coat material exposed for the
+// ice-blue settle shimmer.
+function makeFoal(col){
+  var g = new THREE.Group();
+  var coat = new THREE.MeshStandardMaterial({color: col, roughness: 0.85});
+  var body = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.15, 1.05), coat);
+  body.position.y = 1.85; body.castShadow = true; g.add(body);
+  var neck = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.65, 0.55), coat);
+  neck.position.set(1.75, 2.5, 0); neck.rotation.z = 0.7; g.add(neck);
+  var head = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.42, 0.48), coat);
+  head.position.set(2.3, 3.0, 0); g.add(head);
+  var tail = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.85, 0.16), coat);
+  tail.position.set(-1.7, 1.45, 0); tail.rotation.z = 0.3; g.add(tail);
+  for (var l = 0; l < 4; l++){
+    var leg = new THREE.Mesh(new THREE.BoxGeometry(0.26, 1.35, 0.24), coat);
+    leg.position.set(l < 2 ? 1.15 : -1.15, 0.68, l % 2 ? 0.32 : -0.32);
+    g.add(leg);
+  }
+  g.scale.setScalar(0.7);
+  scene.add(g);
+  return {g: g, coat: coat};
+}
+function startMission8(){
+  mission8.stage = 'wrangle'; mission8.tStage = 0; mission8.capIdx = 0;
+  mission8.penned = 0; mission8.ms = 0;
+  mission8.t0 = performance.now();
+  M8_SPOTS.forEach(function(s, i){
+    var f = makeFoal([0x6e4a2e, 0x8a5a34, 0x4a3320][i % 3]);
+    f.g.position.set(s.x, groundY(s.x, s.z) + 0.05, s.z);
+    f.g.rotation.y = Math.random() * Math.PI * 2;
+    f.state = 'loose'; f.i = i; f.name = ''; f.boltT = 0; f.calmAt = 0;
+    m8Foals.push(f);
+  });
+  if (m8PenRing) m8PenRing.visible = true;
+  player.av.gun.visible = true;   // issue the blaster WITHOUT opting into PvP
+  // first-ever attempt leads with the lead-the-target coaching; once coached,
+  // returning players get the flavor brief. One caption() call only.
+  var m8Coached = true;
+  try { m8Coached = localStorage.getItem('lt_m8_coached') === '1'; } catch (e){}
+  if (!m8Coached){
+    caption('THE FOREMAN', 'AIM AHEAD OF A MOVING FOAL - THE DART TAKES A BEAT TO GET THERE.', 4200);
+    try { localStorage.setItem('lt_m8_coached', '1'); } catch (e){}
+  } else {
+    caption('THE FOREMAN', 'THREE FOALS JUMPED THE RAIL BEFORE THE SALE. SETTLE THEM WITH THE DART AND THEY WALK THEMSELVES TO THE PEN.', 5200);
+  }
+  addChatLine('* MISSION', 'LOOSE IN THE PADDOCK - settle 3 foals with the dart', true);
+  mev(20);   // funnel: mission start
+}
+function m8Cleanup(){
+  mission8.stage = 'idle';
+  m8Foals.forEach(function(f){ scene.remove(f.g); });
+  m8Foals.length = 0;
+  if (m8PenRing) m8PenRing.visible = false;
+  player.av.gun.visible = player.pvp;   // holster unless the player opted into PvP separately
+}
+function m8Fail(){
+  mission8.stage = 'fail'; mission8.tStage = 0;
+  caption('THE FOREMAN', 'THEY BOLTED FOR PARIS PIKE. RESET AND TRY AGAIN.', 4200);
+  mev(23);   // funnel: fail/abandon (timeout)
+}
+function settleFoal(f){   // a mine dart struck a loose foal
+  f.state = 'calm'; f.calmAt = performance.now();
+  f.coat.emissive.setHex(0x9adfff);
+  f.coat.emissiveIntensity = 0.35;
+  puff(f.g.position.x, f.g.position.y + 1, f.g.position.z, 0x9adfff, 0.2, 1.3, 360, 0.4, 0.7);
+  sndTone(720, 0.18, 0, 'triangle', 0.14);   // soft settle chime
+}
+function penFoal(f){
+  f.state = 'penned';
+  f.coat.emissiveIntensity = 0;
+  mission8.penned++;
+  sndTone(880, 0.25, 0, 'square', 0.14);
+  if (mission8.penned === 1){ mev(21); caption('THE FOREMAN', 'ONE SETTLED - TWO STILL OUT.', 3400); }
+  else if (mission8.penned === 2) caption('THE FOREMAN', 'TWO PENNED - ONE MORE.', 3400);
+}
+function updateFoal(f, dt, now){
+  var g = f.g;
+  if (f.state === 'penned') return;
+  if (f.state === 'calm'){
+    f.coat.emissiveIntensity = 0.35 + Math.sin(now * 0.02) * 0.15;   // ice shimmer
+    if (now - f.calmAt > 8000){ f.state = 'loose'; f.coat.emissiveIntensity = 0; return; }   // calm lapsed: re-bolt
+    if (npcWalk(g, M8_PEN.x + f.i * 3, M8_PEN.z + f.i * 3, 9, dt)) penFoal(f);
+    return;
+  }
+  if (f.state === 'bolt'){
+    f.boltT += dt;
+    var e = Math.min(1, f.boltT / 2.2); e = e * (2 - e);   // ease-out
+    var p2 = {x: f.bx0 + (f.bx1 - f.bx0) * e, z: f.bz0 + (f.bz1 - f.bz0) * e};
+    collide(p2, 0.8, 0);
+    g.position.x = p2.x; g.position.z = p2.z;
+    g.position.y = groundY(p2.x, p2.z) + 0.05 + Math.abs(Math.sin(now * 0.016)) * 0.5;
+    g.rotation.y = Math.atan2(f.bx1 - f.bx0, f.bz1 - f.bz0);
+    if (f.boltT > 2.3){ f.state = 'loose'; }   // still dartable once it settles down
+    return;
+  }
+  // loose: graze in place; bolt if rushed (F5-tuned spook: <10m, sprint 13.5 / car)
+  g.position.y = groundY(g.position.x, g.position.z) + 0.05 + Math.sin(now * 0.002 + f.i) * 0.04;
+  var pd = Math.hypot(player.x - g.position.x, player.z - g.position.z);
+  var rushing = (!player.veh && playerSpeed() > 12) || (player.veh && Math.abs(player.veh.spd) > 3);
+  if (pd < 10 && rushing){
+    var ang = Math.atan2(g.position.x - player.x, g.position.z - player.z) + (Math.random() - 0.5) * 1.2;
+    var dist = 24 + Math.random() * 16;
+    f.state = 'bolt'; f.boltT = 0;
+    f.bx0 = g.position.x; f.bz0 = g.position.z;
+    f.bx1 = Math.max(X0 + 20, Math.min(X1 - 20, g.position.x + Math.sin(ang) * dist));
+    f.bz1 = Math.max(Z0 + 20, Math.min(Z1 - 20, g.position.z + Math.cos(ang) * dist));
+  }
+}
+function updateMission8(dt){
+  if (m8Ring){
+    m8Ring.visible = allIdle();
+    if (m8Ring.visible) m8Ring.rotation.z += dt * 0.8;
+  }
+  if (m8PenRing && m8PenRing.visible) m8PenRing.rotation.z += dt * 0.7;
+  if (mission8.stage === 'idle') return;
+  trackPlayerSpeed(dt);
+  var now = performance.now();
+  mission8.tStage += dt;
+  var t = mission8.tStage;
+  m8Foals.forEach(function(f){ updateFoal(f, dt, now); });
+  if (mission8.stage === 'wrangle'){
+    if ((now - mission8.t0) / 1000 > M8_BUDGET){ m8Fail(); return; }
+    if (mission8.penned >= 3){
+      mission8.ms = now - mission8.t0;
+      mission8.stage = 'won'; mission8.tStage = 0; mission8.capIdx = 0;
+      sndWin(); sndApplause();
+      caption('THE FOREMAN', 'THAT IS ALL THREE, HOME BEFORE THE INSPECTORS. GOOD HANDS.', 4600);
+      try {
+        if (!m8Best || mission8.ms < m8Best){
+          m8Best = mission8.ms;
+          localStorage.setItem('lt_m8_best', String(Math.round(mission8.ms)));
+        }
+      } catch (e){}
+      sendScore({t: 'score', ms: Math.round(mission8.ms), m: 8});   // NUMERIC 8
+      mev(22);   // funnel: mission win
+    }
+    return;
+  }
+  if (mission8.stage === 'won'){
+    if (t > 5 && mission8.capIdx === 0){
+      mission8.capIdx = 1;
+      showScores(mission8.ms, 8);
+      mission8.stage = 'post'; mission8.tStage = 0;
+    }
+    return;
+  }
+  if (mission8.stage === 'fail'){ if (t > 5) m8Cleanup(); return; }
+  if (mission8.stage === 'post'){ if (t > 20) m8Cleanup(); }
+}
 function allIdle(){
   return mission.stage === 'idle' && mission2.stage === 'idle' &&
          mission3.stage === 'idle' && mission4.stage === 'idle' &&
          mission5.stage === 'idle' && mission6.stage === 'idle' &&
-         mission7.stage === 'idle';
+         mission7.stage === 'idle' && mission8.stage === 'idle';
 }
 // Everything mission-related on the overlay (start markers, target
 // brackets, edge arrow, timers, zone chips, the fight chopper tag) draws
@@ -4478,6 +4684,7 @@ labels.push({name: '★ MISSION: HORSEPOWER', x: M4_TRIG.x, y: 9, z: M4_TRIG.z, 
 labels.push({name: '★ MISSION: DEADLINE', x: M5_TRIG.x, y: 9, z: M5_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: THE MELT', x: M6_TRIG.x, y: 9, z: M6_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: TAILGATE COMPLIANCE', x: M7_TRIG.x, y: 9, z: M7_TRIG.z, col: MISSION_COL, mission: true});
+labels.push({name: '★ MISSION: LOOSE IN THE PADDOCK', x: M8_TRIG.x, y: 9, z: M8_TRIG.z, col: MISSION_COL, mission: true});
 // the gentle shove: when nothing else is going on, point at the next mission
 // bare next-unbeaten mission name, by the same best-gated chain ('' when all
 // beaten). Shared by the hint AND the F2 welcome-back so the two can't disagree.
@@ -4489,6 +4696,7 @@ function nextMissionName(){
   if (!m5Best) return 'DEADLINE';
   if (!m6Best) return 'THE MELT';
   if (!m7Best) return 'TAILGATE COMPLIANCE';
+  if (!m8Best) return 'LOOSE IN THE PADDOCK';
   return '';
 }
 // each mission's on-screen where-to-go suffix (DOM-only text, em dashes kept)
@@ -4499,7 +4707,8 @@ var MISSION_HINT_SUFFIX = {
   'HORSEPOWER': 'GREEN RING, THOROUGHBRED PARK',
   'DEADLINE': 'GOLD RING, THE BLOCK NEWSROOM (MAIN ST)',
   'THE MELT': 'PINK RING, W MAIN AT THE DISTILLERY DISTRICT',
-  'TAILGATE COMPLIANCE': 'BLUE RING, KROGER FIELD LOTS'
+  'TAILGATE COMPLIANCE': 'BLUE RING, KROGER FIELD LOTS',
+  'LOOSE IN THE PADDOCK': 'AMBER RING AT ELMENDORF (NORTH, PAST NEW CIRCLE)'
 };
 function nextMissionHint(){
   var nm = nextMissionName();
@@ -4653,6 +4862,10 @@ function tryEnterExit(){
   }
   if (allIdle() && !player.veh && !isFrozen() && nearM7Trig()){
     startMission7();
+    return;
+  }
+  if (allIdle() && !player.veh && !player.ride && !isFrozen() && nearM8Trig()){
+    startMission8();
     return;
   }
   if (!player.veh && !isFrozen()){
@@ -6012,6 +6225,20 @@ function missionTarget(){
     }
     if (best) return {x: best.g.position.x, y: 3, z: best.g.position.z, label: best.name};
   }
+  if (mission8.stage === 'wrangle'){
+    // nearest foal that still needs a dart; if the stragglers are all calm
+    // (walking themselves in), point at the pen instead
+    var bf = null, bfd = 1e12;
+    for (var q = 0; q < m8Foals.length; q++){
+      var fq = m8Foals[q];
+      if (fq.state !== 'loose' && fq.state !== 'bolt') continue;
+      var fdx = fq.g.position.x - player.x, fdz = fq.g.position.z - player.z;
+      var fd2 = fdx * fdx + fdz * fdz;
+      if (fd2 < bfd){ bfd = fd2; bf = fq; }
+    }
+    if (bf) return {x: bf.g.position.x, y: 2.4, z: bf.g.position.z, label: 'LOOSE FOAL'};
+    if (mission8.penned < 3) return {x: M8_PEN.x, y: 3, z: M8_PEN.z, label: 'THE PEN'};
+  }
   return null;
 }
 // A single reusable objective marker: on-screen it's a bracket (or a gold
@@ -6080,6 +6307,8 @@ function currentObjective(){
     return {x: M6_TRIG.x, y: 9, z: M6_TRIG.z, label: 'THE MELT'};
   if (typeof m7Best !== 'undefined' && !m7Best && typeof M7_TRIG !== 'undefined')
     return {x: M7_TRIG.x, y: 9, z: M7_TRIG.z, label: 'TAILGATE COMPLIANCE'};
+  if (typeof m8Best !== 'undefined' && !m8Best && typeof M8_TRIG !== 'undefined')
+    return {x: M8_TRIG.x, y: 9, z: M8_TRIG.z, label: 'LOOSE IN THE PADDOCK'};
   return null;
 }
 // F1: persistent gold diamond pointing at the current objective plus a
@@ -6568,6 +6797,7 @@ function frameStep(now){
   updateMission5(dt);
   updateMission6(dt);
   updateMission7(dt);
+  updateMission8(dt);
   updateRouteRibbon(dt);
   updateRockets(dt);
   updateDrops(dt);
@@ -6649,6 +6879,7 @@ function frameStep(now){
     else if (mission4.stage === 'wrangle' && calmableHorse()) hint = 'E — TAKE THE LEAD ROPE';
     else if (mission4.stage === 'wrangle') hint = 'HORSES HOME: ' + mission4.penned + '/3 · SNEAK UP SLOW · GREEN RING AT ELMENDORF';
     else if (mission7.stage === 'tag') hint = 'TAILGATE COMPLIANCE · TAGGED ' + mission7.tagged + '/' + m7Tents.length + ' · KICKOFF ' + Math.max(0, Math.ceil(M7_BUDGET - (performance.now() - mission7.t0) / 1000)) + 's · STAND BY A CANOPY TO TAG';
+    else if (mission8.stage === 'wrangle') hint = 'LOOSE IN THE PADDOCK · PENNED ' + mission8.penned + '/3 · ' + Math.max(0, Math.ceil(M8_BUDGET - (performance.now() - mission8.t0) / 1000)) + 's · F/CLICK — DART A FOAL';
     else if (allIdle() && nearMissionTrig()) hint = 'E — START MISSION: THE RIBBON CUTTING';
     else if (heliUnlocked && allIdle() && nearDoor()) hint = 'E — CITY HALL: SEE THE MAYOR';
     else if (!heliUnlocked && nearDoor()) hint = 'CITY HALL IS LOCKED — BEAT "THE RIBBON CUTTING" FIRST';
@@ -6657,6 +6888,7 @@ function frameStep(now){
     else if (allIdle() && nearM5Trig()) hint = 'E — START MISSION: DEADLINE';
     else if (allIdle() && nearM6Trig()) hint = 'E — START MISSION: THE MELT';
     else if (allIdle() && nearM7Trig()) hint = 'E — START MISSION: TAILGATE COMPLIANCE';
+    else if (allIdle() && nearM8Trig()) hint = 'E — START MISSION: LOOSE IN THE PADDOCK';
     else if (canEnterHeli()) hint = 'E — FLY THE NEWS CHOPPER';
     else if (!heliUnlocked && canEnterHeliBase()) hint = 'LOCKED — BEAT "THE RIBBON CUTTING" AT CITY HALL TO FLY';
     else if (player.grounded && canRideShotgun()) hint = 'E — RIDE SHOTGUN';
