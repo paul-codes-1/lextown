@@ -120,6 +120,15 @@
   #tray[hidden]{display:none}
   .trayrow{display:flex;gap:6px}
   #mainrow{display:flex;gap:6px}
+  #photobar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;
+            display:flex;gap:8px;align-items:center;pointer-events:auto;
+            background:rgba(6,13,17,.82);border:1px solid var(--teal);border-radius:12px;padding:8px 12px}
+  #photobar[hidden]{display:none}
+  #photobar .shutter{width:44px;height:44px;border-radius:50%;border:3px solid #fff;
+            background:rgba(255,255,255,.14);cursor:pointer;padding:0}
+  #photobar .shutter:active{background:rgba(255,255,255,.55)}
+  #photostatus{color:#9adfd2;font:11px ui-monospace,Menlo,Consolas,monospace;
+            letter-spacing:.08em;min-width:130px;text-align:center}
   #touchbtns{display:none;gap:6px}
   @media (pointer:coarse){#touchbtns{display:flex}}
   .tbtn{background:var(--ink);border:1px solid var(--line);color:#9adfd2;
@@ -235,6 +244,7 @@
         <button class="tbtn on" id="bWaypt">WAYPT</button>
         <button class="tbtn on" id="bWx">WX</button>
         <button class="tbtn on" id="bGhost">GHOST</button>
+        <button class="tbtn" id="bPhoto">PHOTO</button>
         <button class="tbtn" id="bPause">||</button>
       </div>
       <div class="trayrow">
@@ -259,6 +269,14 @@
       <button class="tbtn" id="bMenu">SIM ▾</button>
     </div>
   </div>
+</div>
+<div id="photobar" hidden>
+  <button class="shutter" id="bShutter" title="Take a photo (Enter)"></button>
+  <button class="tbtn" id="bPBars" title="Letterbox bars">BARS</button>
+  <button class="tbtn" id="bPTags" title="Name tags in the shot">TAGS</button>
+  <button class="tbtn" id="bPPause" title="Pause / resume the city">PAUSE</button>
+  <button class="tbtn" id="bPExit" title="Leave Photo Mode (Esc)">EXIT</button>
+  <span id="photostatus">PHOTO MODE</span>
 </div>
 <div id="scores" hidden>
   <div class="tut-panel" style="max-width:440px">
@@ -381,6 +399,7 @@
     <div class="tut-grid">
       <b><kbd>Enter</kbd></b><span>chat with everyone here (be decent — it's public)</span>
       <b><kbd>V</kbd></b><span>drone camera (<kbd>C</kbd> there toggles the auto-tour) · <kbd>P</kbd> pause the city</span>
+      <b>PHOTO</b><span><b>Photo Mode</b> in the SIM menu — pose with the drone camera, letterbox the frame, and download a clean postcard (<kbd>Enter</kbd> is the shutter on desktop)</span>
       <b><kbd>B</kbd> <kbd>L</kbd></b><span>player detection boxes · landmark labels (also in the SIM menu)</span>
       <b><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></b><span>day-cycle speed (1× / 60× / 300×)</span>
       <b>Gold marker</b><span>always points to your next mission — toggle in the SIM menu (WAYPT)</span>

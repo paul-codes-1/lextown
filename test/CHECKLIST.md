@@ -531,3 +531,38 @@ so the smoke suite count is unchanged (56/56).
       new WS traffic from the ghost; the DEADLINE score submit / announce is unchanged.
 - [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
       pass and `npm test` (`node test/smoke.mjs`) is all green (56/56).
+
+## F10 — Photo Mode (Phase 3 F2: pose, letterbox, download a postcard)
+
+Phase 3 F2. **No server surface** — Photo Mode is a purely local camera+capture
+state, so the smoke suite is unchanged (56/56). One tab is enough. Standing gate
+first (`node --check web/app.js && node --check server.js`, then `npm test`).
+
+- [ ] **Enter from the tray.** SIM menu (`SIM ▾`) → `PHOTO` (beside `GHOST`) switches
+      to the drone rig, pauses the sim, hides the whole DOM HUD + the `#fx` layer, and
+      shows the letterbox bars + the bottom-center photo bar (shutter/BARS/TAGS/PAUSE/EXIT).
+- [ ] **Pose freely.** `WASD` / drag / wheel pan, orbit, and zoom the camera exactly as
+      in drone mode; the frame is chrome-free behind the two bars.
+- [ ] **Shutter downloads a clean JPEG.** The on-screen shutter (and `Enter` on desktop)
+      downloads `lextown-<timestamp>.jpg` — the 3D frame + letterbox bars + a small
+      low-opacity `LEXTOWN` corner stamp bottom-right, no HUD, name tags off by default.
+      A brief white flash confirms the grab and is **not** baked into the saved image.
+- [ ] **No `preserveDrawingBuffer`.** The renderer is created without it (`grep
+      preserveDrawingBuffer web/app.js` is empty); capture still works via the
+      grab-next-frame flag read right after `renderer.render`, and the common-path FPS is
+      unchanged (the flag is false except on an actual shutter press).
+- [ ] **BARS / TAGS / PAUSE toggles.** BARS off = full frame (no bars in preview or shot);
+      TAGS on = other players' name tags appear in the shot; PAUSE resumes/freezes traffic
+      in the live preview and the capture. Toggles change only the composite/preview, never
+      game state.
+- [ ] **Exit restores state.** `EXIT` (or `Esc`) brings back the HUD + `#fx`, un-pauses
+      **only if Photo Mode paused it** (enter with the sim already paused via `P`, then
+      exit → still paused), and returns to the camera mode you came from (enter from
+      first-person → exit returns to player mode).
+- [ ] **Mobile fallback.** On a browser without programmatic download (mobile Safari),
+      the shutter opens the image in a new tab for long-press-save; no crash. `toBlob`
+      returning null shows a one-line "couldn't save that shot" in the photo bar.
+- [ ] **Nothing leaves the device.** No network request accompanies a capture (check the
+      Network tab) — the only output is the saved file.
+- [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
+      pass and `npm test` (`node test/smoke.mjs`) is all green (56/56, no server change).

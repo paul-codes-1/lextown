@@ -5924,6 +5924,14 @@ if (CINE){
   var _fxEl = document.getElementById('fx');
   if (_fxEl) _fxEl.style.display = 'none';
 }
+// Photo Mode (F2): a transient LOCAL camera+capture state, composed from parts
+// that already exist — the drone rig (posing), the sim pause (a clean frame),
+// cineLetterbox (bars), and the CINE chrome-hide (HUD off). The only net-new
+// piece is the capture: a grab-next-frame flag read right AFTER renderer.render
+// so we never pay the global preserveDrawingBuffer GPU cost. Declared up here so
+// the keydown handler, drawOverlay, and the frame-end capture can all read it.
+var photo = {active: false, bars: true, tags: false, pausedByUs: false, priorMode: null, flashUntil: 0};
+var captureNext = false;
 function cineEase(f, kind){
   if (f <= 0) return 0;
   if (f >= 1) return 1;
@@ -6184,6 +6192,10 @@ window.addEventListener('keydown', function(e){
     if (e.key === 'Enter' || e.key === 'Escape') tutClose();
     return;
   }
+  if (photo.active){   // Enter = desktop shutter, Esc = leave Photo Mode (chat is hidden here)
+    if (e.key === 'Enter'){ e.preventDefault(); photoShutter(); return; }
+    if (e.key === 'Escape'){ e.preventDefault(); exitPhoto(); return; }
+  }
   if (els.scores && !els.scores.hidden &&
       (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ' || e.key.toLowerCase() === 'e')){
     els.scores.hidden = true;
@@ -6328,6 +6340,117 @@ if (els.bGhost) els.bGhost.onclick = function(){   // GHOST tray toggle: off hid
 };
 document.getElementById('radiochip').onclick = cycleRadio;
 els.bScores.onclick = function(){ showScores(0); };
+
+// ---------- Photo Mode wiring (F2) ----------
+var bPhotoEl = document.getElementById('bPhoto');
+var photobarEl = document.getElementById('photobar');
+var photoStatusEl = document.getElementById('photostatus');
+function photoSay(msg){ if (photoStatusEl) photoStatusEl.textContent = msg; }
+function syncPhotoBtns(){
+  var pp = document.getElementById('bPPause'); if (pp) pp.classList.toggle('on', paused);
+  var pb = document.getElementById('bPBars'); if (pb) pb.classList.toggle('on', photo.bars);
+  var pt = document.getElementById('bPTags'); if (pt) pt.classList.toggle('on', photo.tags);
+}
+function enterPhoto(){
+  if (photo.active) return;
+  photo.priorMode = mode;
+  if (mode !== 'drone') toggleMode();              // free-flying rig for posing
+  photo.pausedByUs = false;
+  if (!paused){ togglePause(); photo.pausedByUs = true; }   // freeze traffic/peds for a clean frame
+  photo.active = true; photo.flashUntil = 0;
+  var hudEl = document.getElementById('hud'); if (hudEl) hudEl.style.display = 'none';
+  var fxEl = document.getElementById('fx'); if (fxEl) fxEl.style.display = 'none';
+  if (photobarEl) photobarEl.hidden = false;
+  photoSay('PHOTO MODE - pose & shoot');
+  syncPhotoBtns();
+}
+function exitPhoto(){
+  if (!photo.active) return;
+  photo.active = false;
+  if (photobarEl) photobarEl.hidden = true;
+  var hudEl = document.getElementById('hud'); if (hudEl) hudEl.style.display = '';
+  var fxEl = document.getElementById('fx'); if (fxEl) fxEl.style.display = '';
+  if (photo.pausedByUs && paused) togglePause();   // un-pause ONLY what Photo Mode itself paused
+  photo.pausedByUs = false;
+  if (photo.priorMode === 'player' && mode !== 'player') toggleMode();   // restore the camera we came from
+  photo.priorMode = null;
+}
+function photoShutter(){ captureNext = true; }     // honored right after renderer.render (grab-next-frame)
+// name tags on the composite (TAGS on): a compact reuse of the drawOverlay tag
+// draw — project each remote's head and label it. Offline bots ride `remotes` too.
+function drawPhotoTags(){
+  camera.getWorldPosition(camPos);
+  ov.font = '9.5px ui-monospace, Menlo, Consolas, monospace';
+  for (var id in remotes){
+    var r = remotes[id];
+    var pos = r.m === 2 && r.carG ? r.carG.position : r.av.g.position;
+    var p = project(pos.x, pos.y + 2.9, pos.z);
+    if (!p) continue;
+    var nm = r.name || '';
+    var tw = ov.measureText(nm).width;
+    chip(p[0] - tw / 2, p[1], nm, '#ffd28a');
+  }
+}
+function photoTs(){
+  var d = new Date();
+  function p2(n){ return ('0' + n).slice(-2); }
+  return d.getFullYear() + p2(d.getMonth() + 1) + p2(d.getDate()) + '-' +
+         p2(d.getHours()) + p2(d.getMinutes()) + p2(d.getSeconds());
+}
+function photoStamp(cx, W, H){   // low-opacity LEXTOWN wordmark, bottom-right — the watermark that points home
+  var fs = Math.max(12, Math.round(H * 0.026)), pad = Math.round(fs * 0.8);
+  cx.save();
+  cx.font = '700 ' + fs + 'px ui-monospace, Menlo, Consolas, monospace';
+  cx.textAlign = 'right'; cx.textBaseline = 'alphabetic';
+  cx.globalAlpha = 0.5; cx.fillStyle = '#04120f';
+  cx.fillText('LEXTOWN', W - pad + 1, H - pad + 1);   // shadow for contrast on light frames
+  cx.globalAlpha = 0.82; cx.fillStyle = '#e9fff9';
+  cx.fillText('LEXTOWN', W - pad, H - pad);
+  cx.restore();
+}
+function photoDownload(blob){
+  var url = URL.createObjectURL(blob);
+  var name = 'lextown-' + photoTs() + '.jpg';
+  var a = document.createElement('a');
+  // mobile Safari can't fire a programmatic download -> open the blob so the user long-press-saves
+  var noDl = (typeof a.download === 'undefined');
+  var iOS = /iP(hone|ad|od)/.test(navigator.platform || '') || /(iPhone|iPad|iPod)/.test(navigator.userAgent || '') ||
+            (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
+  if (noDl || iOS){
+    window.open(url, '_blank');
+    photoSay('long-press the image to save');
+  } else {
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    photoSay('saved ' + name);
+  }
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 20000);
+}
+function photoCapture(){   // runs right after renderer.render + drawOverlay — the WebGL buffer is still valid
+  try {
+    var W = glCanvas.width, H = glCanvas.height;
+    var c = document.createElement('canvas'); c.width = W; c.height = H;
+    var cx = c.getContext('2d');
+    cx.drawImage(glCanvas, 0, 0, W, H);          // the 3D frame
+    cx.drawImage(ovCanvas, 0, 0, W, H);          // bars + optional tags (drawn this frame by drawOverlay)
+    photoStamp(cx, W, H);
+    photo.flashUntil = performance.now() + 140;  // shutter cue — set AFTER the grab so it's never in the shot
+    if (!c.toBlob){ photoSay("couldn't save that shot"); return; }
+    c.toBlob(function(blob){
+      if (!blob){ photoSay("couldn't save that shot"); return; }
+      photoDownload(blob);
+    }, 'image/jpeg', 0.92);
+  } catch (e){ photoSay("couldn't save that shot"); }
+}
+if (bPhotoEl) bPhotoEl.onclick = enterPhoto;
+(function(){
+  var b;
+  b = document.getElementById('bShutter'); if (b) b.onclick = photoShutter;
+  b = document.getElementById('bPExit'); if (b) b.onclick = exitPhoto;
+  b = document.getElementById('bPPause'); if (b) b.onclick = function(){ togglePause(); syncPhotoBtns(); };
+  b = document.getElementById('bPBars'); if (b) b.onclick = function(){ photo.bars = !photo.bars; syncPhotoBtns(); };
+  b = document.getElementById('bPTags'); if (b) b.onclick = function(){ photo.tags = !photo.tags; syncPhotoBtns(); };
+})();
 document.getElementById('scoreClose').onclick = function(){ els.scores.hidden = true; };
 els.scores.addEventListener('pointerdown', function(e){ if (e.target === els.scores) els.scores.hidden = true; });
 els.bFire.addEventListener('pointerdown', function(){
@@ -6698,6 +6821,17 @@ var camPos = new THREE.Vector3();
 function drawOverlay(){
   ov.clearRect(0, 0, vw, vh);
   if (CINE){ if (cine.bars) cineLetterbox(); return; }   // trailer: nothing but the 3D world (+ optional bars)
+  if (photo.active){   // Photo Mode: bars + optional tags, no HUD chrome (mirrors the CINE strip)
+    if (photo.bars) cineLetterbox();
+    if (photo.tags) drawPhotoTags();
+    if (performance.now() < photo.flashUntil){   // shutter flash — set post-capture, so never baked into the shot
+      ov.save();
+      ov.globalAlpha = Math.max(0, Math.min(1, (photo.flashUntil - performance.now()) / 140));
+      ov.fillStyle = '#fff'; ov.fillRect(0, 0, vw, vh);
+      ov.restore();
+    }
+    return;
+  }
   camera.getWorldPosition(camPos);
   var k;
   if (stick.active){   // touch joystick
@@ -7273,6 +7407,7 @@ function frameStep(now){
 
   renderer.render(scene, camera);
   drawOverlay();
+  if (captureNext){ captureNext = false; photoCapture(); }   // grab-next-frame: buffer still valid here
 }
 requestAnimationFrame(frame);
 })();

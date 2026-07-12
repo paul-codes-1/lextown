@@ -66,6 +66,7 @@ No server? Opening `web/index.html` directly (or hosting `web/` statically) runs
 | `Enter` | Chat (Esc to cancel; messages appear in the log and as a bubble over your head) |
 | `V` | Toggle player / drone camera (drone mode has an auto-tour: `C`) |
 | `P` | Pause the city sim |
+| **PHOTO** (SIM menu) | Photo Mode — pose with the drone camera, letterbox the frame, and download a clean postcard `lextown-<timestamp>.jpg` (name tags off by default; `Enter` is the desktop shutter) |
 | `R` | Cycle the car radio (in a vehicle): BIG BLUE RADIO 100.1 → NEWS 630 THE BLOCK → 98.5 THE CAT → TRACKSIDE 1450 → off (or tap the on-screen dial) |
 | `B` / `L` | Toggle player detection boxes / landmark labels |
 | `1` `2` `3` | Time speed 1× / 60× / 300× |
