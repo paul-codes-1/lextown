@@ -2844,6 +2844,22 @@ function mev(k){
 }
 function fmtMs(ms){ return (ms / 1000).toFixed(1) + 's'; }
 function missionPoints(ms){ return Math.max(100, 1000 - Math.round(ms / 100)); }
+// DAILY DASH modal meta: 'NEW ROUTE IN xH yM' countdown to the next EST day
+// boundary (same anchor as dayIndex()) + this device's best time for today.
+// Computed locally so it shows offline too; dayIndex/dailyBest live on the
+// missionD island and resolve at call time (runtime), well after load.
+function dailyCountdown(){
+  var next = (dayIndex() + 1) * 86400e3 + 5 * 3600e3;   // ms at the next EST midnight boundary
+  var rem = Math.max(0, next - Date.now());
+  var h = Math.floor(rem / 3600e3), mn = Math.floor((rem % 3600e3) / 60e3);
+  return 'NEW ROUTE IN ' + h + 'H ' + mn + 'M';
+}
+function setDailyMeta(){
+  var el = document.getElementById('scoreDailyMeta');
+  if (!el) return;
+  var best = (dailyBest && dailyBest.day === dayIndex()) ? 'YOUR BEST TODAY ' + fmtMs(dailyBest.ms) : 'NO RUN TODAY YET';
+  el.textContent = dailyCountdown() + ' · ' + best;
+}
 function showScores(myMs, board){
   var sEl = document.getElementById('scores');
   if (!sEl) return;
@@ -2855,11 +2871,13 @@ function showScores(myMs, board){
     var verb = board === 2 ? 'PLOWED IN ' : board === 3 ? 'STORY BROKEN IN ' :
                board === 4 ? 'HORSES HOME IN ' : board === 5 ? 'DEADLINE MET IN ' :
                board === 6 ? 'SCOOPS LANDED IN ' : board === 7 ? 'LOT TAGGED IN ' :
-               board === 8 ? 'FOALS PENNED IN ' : board === 9 ? 'ROUTE FLOWN IN ' : 'CHOPPER DOWN IN ';
+               board === 8 ? 'FOALS PENNED IN ' : board === 9 ? 'ROUTE FLOWN IN ' :
+               board === 10 ? 'THE DASH IN ' : 'CHOPPER DOWN IN ';
     you = verb + fmtMs(myMs) + ' · +' + missionPoints(myMs) + ' PTS';
     var best = board === 2 ? m2Best : board === 3 ? m3Best : board === 4 ? m4Best :
                board === 5 ? m5Best : board === 6 ? m6Best : board === 7 ? m7Best :
-               board === 8 ? m8Best : board === 9 ? m9Best : missionBest;
+               board === 8 ? m8Best : board === 9 ? m9Best :
+               board === 10 ? (dailyBest ? dailyBest.ms : 0) : missionBest;
     if (best) you += ' · DEVICE BEST ' + fmtMs(best);
     if (roomCode) you += ' · PRIVATE ROOM · TIMES DON\'T RANK';
   } else {
@@ -2874,7 +2892,8 @@ function showScores(myMs, board){
       ' · ' + (m9Best ? 'AIR MAIL: ' + fmtMs(m9Best) : 'AIR MAIL: —');
   }
   document.getElementById('scoreYou').textContent = you;
-  ['scoreList', 'scoreList2', 'scoreList3', 'scoreList4', 'scoreList5', 'scoreList6', 'scoreList7', 'scoreList8', 'scoreList9'].forEach(function(id){
+  setDailyMeta();
+  ['scoreListD', 'scoreList', 'scoreList2', 'scoreList3', 'scoreList4', 'scoreList5', 'scoreList6', 'scoreList7', 'scoreList8', 'scoreList9'].forEach(function(id){
     var list = document.getElementById(id);
     if (!list) return;
     list.textContent = '';
@@ -2902,6 +2921,7 @@ function renderScores(m){
       list.appendChild(li);
     });
   }
+  fill('scoreListD', m.d || []);
   fill('scoreList', m.m1 || m.top || []);
   fill('scoreList2', m.m2 || []);
   fill('scoreList3', m.m3 || []);
@@ -2911,6 +2931,7 @@ function renderScores(m){
   fill('scoreList7', m.m7 || []);
   fill('scoreList8', m.m8 || []);
   fill('scoreList9', m.m9 || []);
+  setDailyMeta();   // refresh the countdown + device best when server times land
 }
 function updateMission(dt){
   var now = performance.now();
@@ -3530,8 +3551,9 @@ function busBoardStop(){   // stopIdx you may board right now (doors open, withi
   return (dx * dx + dz * dz <= 36) ? bs.stopIdx : -1;
 }
 function canBoardBus(){
+  // the bus is legal locomotion during a DAILY DASH run, so allow boarding then too
   return mode === 'player' && !player.veh && !player.heli && !player.ride && player.bus === null &&
-    !isFrozen() && player.grounded && allIdle() && busBoardStop() >= 0;
+    !isFrozen() && player.grounded && (allIdle() || missionD.stage === 'run') && busBoardStop() >= 0;
 }
 function boardBus(){
   if (busBoardStop() < 0) return;
@@ -3564,7 +3586,7 @@ function leaveBus(){
 }
 function busWaitHint(){   // 'BUS IN m:ss — NAME' when idling on foot within 25m of a stop
   if (mode !== 'player' || player.veh || player.heli || player.ride || player.bus !== null) return '';
-  if (isFrozen() || !allIdle()) return '';
+  if (isFrozen() || !(allIdle() || missionD.stage === 'run')) return '';
   var best = -1, bd = 625, i;   // 25m squared
   for (i = 0; i < BUS_STOPS.length; i++){
     var s = BUS_STOPS[i];
@@ -5248,12 +5270,155 @@ function updateMission9(dt){
   if (mission9.stage === 'fail'){ if (t > 5) m9Cleanup(); return; }
   if (mission9.stage === 'post'){ if (t > 20) m9Cleanup(); }
 }
+
+// ---------- DAILY DASH (mission D): one rotating checkpoint route per day ----
+// A daily challenge with its own global board: five checkpoints drawn
+// deterministically from a twelve-landmark pool by the EST day seed, so every
+// player worldwide runs the SAME course each day and it resets at the EST
+// midnight boundary. dayIndex() is byte-identical to the server's copy — any
+// drift would split-brain the reset. ANY locomotion is allowed once running
+// (foot, car, jetpack, bus); only the finish time touches the server, as a
+// numeric {t:'score', m:10}. Declared here — before the labels.push block and
+// allIdle() below read MD_TRIG / missionD — because statement order matters.
+function dayIndex(){ return Math.floor((Date.now() - 5 * 3600e3) / 86400e3); }
+var MD_TRIG = {x: 44, z: -22};        // Cheapside courthouse plaza, off Main — clear of M9(14,-9.5) + M5(60,14)
+var MD_N = 5;                          // checkpoints in a day's route
+var MD_MAX = 900;                      // seconds; past this a run can't rank (== server ceiling) so we abandon it
+// twelve real Lexington landmarks spread across the whole map (coords harvested
+// from existing labels), so a day's five span downtown to the horse farms
+var MD_POOL = [
+  {x: 250,  z: 50,    name: 'THOROUGHBRED PARK'},
+  {x: -370, z: 100,   name: 'RUPP ARENA'},
+  {x: -85,  z: 96,    name: 'TRANSIT CENTER'},
+  {x: 122,  z: 50,    name: 'PHOENIX PARK'},
+  {x: -171, z: 40,    name: 'TRIANGLE PARK'},
+  {x: 200,  z: 600,   name: 'UK CAMPUS'},
+  {x: -190, z: 660,   name: 'KROGER FIELD'},
+  {x: 500,  z: 428,   name: 'CHEVY CHASE'},
+  {x: 350,  z: 300,   name: 'WOODLAND PARK'},
+  {x: -520, z: -60,   name: 'DISTILLERY DISTRICT'},
+  {x: 150,  z: -535,  name: 'DUNCAN PARK'},
+  {x: -360, z: -1200, name: 'ELMENDORF FARM'}
+];
+// deterministic daily route: seeded Fisher-Yates over the pool with dayIndex()-
+// derived wxRand draws, first MD_N in order. Same day => same five for everyone.
+function mdRoute(){
+  var pool = MD_POOL.slice(), seed = dayIndex() * 40503, i, j, tmp;
+  for (i = pool.length - 1; i > 0; i--){
+    j = Math.floor(wxRand(seed + i) * (i + 1));
+    tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+  }
+  return pool.slice(0, MD_N);
+}
+var MD_CPS = mdRoute();
+// device best for TODAY only ({day, ms}); a stale (yesterday) best reads as null
+var dailyBest = null;
+try {
+  var _db = JSON.parse(localStorage.getItem('lt_dailyBest') || 'null');
+  if (_db && _db.day === dayIndex() && typeof _db.ms === 'number') dailyBest = _db;
+} catch (e){}
+var missionD = {stage: 'idle', tStage: 0, t0: 0, ms: 0, cur: 0, capIdx: 0};
+var mdRings = [], mdTrig = null;
+(function(){
+  mdTrig = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.06, 6, 24),
+    new THREE.MeshBasicMaterial({color: 0xffd400, transparent: true, opacity: 0.85}));
+  mdTrig.rotation.x = Math.PI / 2;
+  mdTrig.position.set(MD_TRIG.x, 0.9, MD_TRIG.z);
+  scene.add(mdTrig);
+  for (var k = 0; k < MD_N; k++){
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(4.5, 0.12, 6, 28),
+      new THREE.MeshBasicMaterial({color: 0xffd400, transparent: true, opacity: 0.7}));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(MD_CPS[k].x, 1.2, MD_CPS[k].z);
+    ring.visible = false;
+    scene.add(ring);
+    mdRings.push(ring);
+  }
+})();
+function nearMDTrig(){
+  var dx = player.x - MD_TRIG.x, dz = player.z - MD_TRIG.z;
+  return dx * dx + dz * dz < 16;
+}
+function startMissionD(){
+  MD_CPS = mdRoute();   // recompute in case the EST day rolled while the tab stayed open
+  for (var k = 0; k < MD_N; k++) mdRings[k].position.set(MD_CPS[k].x, 1.2, MD_CPS[k].z);
+  missionD.stage = 'run'; missionD.tStage = 0; missionD.capIdx = 0;
+  missionD.cur = 0; missionD.ms = 0; missionD.t0 = performance.now();
+  caption('THE DASH', 'TODAY\'S DAILY DASH - FIVE CHECKPOINTS, ANY WHEELS. FIRST: ' + MD_CPS[0].name + '.', 5200);
+  addChatLine('* DAILY', 'THE DASH - five checkpoints, new route daily', true);
+  mev(40);
+}
+function mdCleanup(){
+  missionD.stage = 'idle';
+  for (var k = 0; k < mdRings.length; k++) mdRings[k].visible = false;
+}
+function updateMissionD(dt){
+  if (mdTrig){
+    mdTrig.visible = allIdle();
+    if (mdTrig.visible) mdTrig.rotation.z += dt * 0.8;
+  }
+  if (missionD.stage === 'idle') return;
+  var now = performance.now();
+  missionD.tStage += dt;
+  var t = missionD.tStage;
+  if (missionD.stage === 'run'){
+    // only the current checkpoint ring is lit; it spins slowly
+    for (var k = 0; k < mdRings.length; k++){
+      var on = k === missionD.cur;
+      mdRings[k].visible = on;
+      if (on) mdRings[k].rotation.z += dt * 0.9;
+    }
+    // a run that can no longer rank (past the server ceiling) is abandoned, not
+    // left as a zombie that would submit an out-of-window time
+    if ((now - missionD.t0) / 1000 > MD_MAX){
+      caption('THE DASH', 'TOO LONG ON THE CLOCK - RUN ABANDONED. TRY AGAIN AT THE COURTHOUSE.', 4200);
+      mev(43);
+      mdCleanup();
+      return;
+    }
+    // bank the current checkpoint on ANY locomotion (foot / car / jetpack / bus),
+    // horizontal distance only so a low chopper pass or a drive-through both count
+    var cp = MD_CPS[missionD.cur];
+    if (Math.hypot(cp.x - player.x, cp.z - player.z) < 8){
+      missionD.cur++;
+      mev(41);
+      if (missionD.cur >= MD_CPS.length){
+        missionD.ms = now - missionD.t0;
+        missionD.stage = 'won'; missionD.tStage = 0; missionD.capIdx = 0;
+        for (var w = 0; w < mdRings.length; w++) mdRings[w].visible = false;
+        sndWin(); sndApplause();
+        caption('THE DASH', 'THAT IS THE DASH. TODAY\'S ROUTE, DONE.', 4600);
+        try {
+          if (!dailyBest || missionD.ms < dailyBest.ms){
+            dailyBest = {day: dayIndex(), ms: Math.round(missionD.ms)};
+            localStorage.setItem('lt_dailyBest', JSON.stringify(dailyBest));
+          }
+        } catch (e){}
+        sendScore({t: 'score', ms: Math.round(missionD.ms), m: 10});   // numeric 10 — never a string
+        mev(42);
+      } else {
+        sndTone(880, 0.18, 0, 'square', 0.14);
+        caption('THE DASH', 'CHECKPOINT ' + missionD.cur + '/' + MD_N + '. NEXT: ' + MD_CPS[missionD.cur].name + '.', 3200);
+      }
+    }
+    return;
+  }
+  if (missionD.stage === 'won'){
+    if (t > 4.8 && missionD.capIdx === 0){
+      missionD.capIdx = 1;
+      showScores(missionD.ms, 10);
+      missionD.stage = 'post'; missionD.tStage = 0;
+    }
+    return;
+  }
+  if (missionD.stage === 'post'){ if (t > 22) mdCleanup(); }
+}
 function allIdle(){
   return mission.stage === 'idle' && mission2.stage === 'idle' &&
          mission3.stage === 'idle' && mission4.stage === 'idle' &&
          mission5.stage === 'idle' && mission6.stage === 'idle' &&
          mission7.stage === 'idle' && mission8.stage === 'idle' &&
-         mission9.stage === 'idle';
+         mission9.stage === 'idle' && missionD.stage === 'idle';
 }
 // Everything mission-related on the overlay (start markers, target
 // brackets, edge arrow, timers, zone chips, the fight chopper tag) draws
@@ -5273,6 +5438,7 @@ labels.push({name: '★ MISSION: THE MELT', x: M6_TRIG.x, y: 9, z: M6_TRIG.z, co
 labels.push({name: '★ MISSION: TAILGATE COMPLIANCE', x: M7_TRIG.x, y: 9, z: M7_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: LOOSE IN THE PADDOCK', x: M8_TRIG.x, y: 9, z: M8_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: AIR MAIL', x: M9_TRIG.x, y: 9, z: M9_TRIG.z, col: MISSION_COL, mission: true});
+labels.push({name: '★ DAILY: THE DASH', x: MD_TRIG.x, y: 9, z: MD_TRIG.z, col: MISSION_COL, mission: true});
 // the gentle shove: when nothing else is going on, point at the next mission
 // bare next-unbeaten mission name, by the same best-gated chain ('' when all
 // beaten). Shared by the hint AND the F2 welcome-back so the two can't disagree.
@@ -5286,6 +5452,8 @@ function nextMissionName(){
   if (!m7Best) return 'TAILGATE COMPLIANCE';
   if (!m8Best) return 'LOOSE IN THE PADDOCK';
   if (!m9Best) return 'AIR MAIL';
+  // all nine beaten: point at today's DAILY DASH until it's run today
+  if (!dailyBest || dailyBest.day !== dayIndex()) return 'THE DASH';
   return '';
 }
 // each mission's on-screen where-to-go suffix (DOM-only text, em dashes kept)
@@ -5298,7 +5466,8 @@ var MISSION_HINT_SUFFIX = {
   'THE MELT': 'PINK RING, W MAIN AT THE DISTILLERY DISTRICT',
   'TAILGATE COMPLIANCE': 'BLUE RING, KROGER FIELD LOTS',
   'LOOSE IN THE PADDOCK': 'AMBER RING AT ELMENDORF (NORTH, PAST NEW CIRCLE)',
-  'AIR MAIL': 'VIOLET RING DOWNTOWN (JETPACK - HOLD SPACE)'
+  'AIR MAIL': 'VIOLET RING DOWNTOWN (JETPACK - HOLD SPACE)',
+  'THE DASH': 'GOLD RING AT THE COURTHOUSE — NEW ROUTE DAILY'
 };
 function nextMissionHint(){
   var nm = nextMissionName();
@@ -5464,6 +5633,10 @@ function tryEnterExit(){
   }
   if (allIdle() && !player.veh && !player.ride && player.bus === null && !isFrozen() && nearM9Trig()){
     startMission9();
+    return;
+  }
+  if (allIdle() && !player.veh && !player.ride && player.bus === null && !isFrozen() && nearMDTrig()){
+    startMissionD();
     return;
   }
   if (!player.veh && !isFrozen()){
@@ -6932,6 +7105,10 @@ function chip(x, y, text, col){
 // mission objective tracker: gold brackets on the live target, edge arrow
 // with bearing + distance when it's off-screen
 function missionTarget(){
+  if (missionD.stage === 'run' && missionD.cur < MD_CPS.length){
+    var cpd = MD_CPS[missionD.cur];
+    return {x: cpd.x, y: 3, z: cpd.z, label: 'CHECKPOINT ' + (missionD.cur + 1) + '/' + MD_CPS.length};
+  }
   if (mission5.stage === 'driving' && mission5.cur < M5_CPS.length){
     var cp5 = M5_CPS[mission5.cur];
     return {x: cp5.x, y: 3, z: cp5.z, label: 'CHECKPOINT ' + (mission5.cur + 1) + '/' + M5_CPS.length};
@@ -7056,6 +7233,8 @@ function currentObjective(){
     return {x: M8_TRIG.x, y: 9, z: M8_TRIG.z, label: 'LOOSE IN THE PADDOCK'};
   if (typeof m9Best !== 'undefined' && !m9Best && typeof M9_TRIG !== 'undefined')
     return {x: M9_TRIG.x, y: 9, z: M9_TRIG.z, label: 'AIR MAIL'};
+  if (typeof missionD !== 'undefined' && (!dailyBest || dailyBest.day !== dayIndex()))
+    return {x: MD_TRIG.x, y: 9, z: MD_TRIG.z, label: 'THE DASH'};
   return null;
 }
 // F1: persistent gold diamond pointing at the current objective plus a
@@ -7187,6 +7366,9 @@ function drawOverlay(){
   else if (mission5.stage === 'driving')
     tTxt = 'DEADLINE · CP ' + Math.min(mission5.cur + 1, M5_CPS.length) + '/' + M5_CPS.length + ' · ' +
       Math.max(0, Math.ceil(M5_BUDGET - (performance.now() - mission5.t0) / 1000)) + 's';
+  else if (missionD.stage === 'run')
+    tTxt = 'DAILY DASH · CP ' + Math.min(missionD.cur + 1, MD_N) + '/' + MD_N + ' · ' +
+      ((performance.now() - missionD.t0) / 1000).toFixed(1) + 's';
   if (tTxt){   // mission timer, top center
     ov.font = '12px ui-monospace, Menlo, Consolas, monospace';
     var tw3 = ov.measureText(tTxt).width;
@@ -7559,6 +7741,7 @@ function frameStep(now){
   updateMission7(dt);
   updateMission8(dt);
   updateMission9(dt);
+  updateMissionD(dt);
   updateRouteRibbon(dt);
   updateRockets(dt);
   updateDrops(dt);
@@ -7636,6 +7819,7 @@ function frameStep(now){
       if (ghost && ghostEnabled && ghostDelta !== null) hint += ' · ' + (ghostDelta <= 0 ? 'AHEAD ' : 'BEHIND ') + Math.abs(ghostDelta).toFixed(1) + 's';
     }
     else if (mission6.stage === 'drive') hint = 'THE MELT · STOP ' + (mission6.cur + 1) + '/' + M6_CPS.length + ' · MELT ' + Math.min(99, Math.max(0, Math.round(m6MeltSec() / M6_BUDGET * 100))) + '% · CRASHES MELT IT FASTER';
+    else if (missionD.stage === 'run') hint = 'DAILY DASH · CHECKPOINT ' + (missionD.cur + 1) + '/' + MD_N + ' · NEXT: ' + MD_CPS[missionD.cur].name + ' · ' + ((performance.now() - missionD.t0) / 1000).toFixed(1) + 's · ANY WHEELS';
     else if (player.veh) hint = 'E — EXIT · W/S DRIVE · A/D STEER · ' + Math.round(Math.abs(player.veh.spd) * 3.6) + ' KM/H';
     else if (mission2.stage === 'plow' && plowVeh) hint = 'GET TO THE PLOW — MAIN ST BY CITY HALL (E TO BOARD)';
     else if (mission3.stage === 'tail') hint = 'TAIL THE COUNCILMAN — STAY BACK, STAY CLOSE ENOUGH';
@@ -7658,6 +7842,7 @@ function frameStep(now){
     else if (allIdle() && nearM7Trig()) hint = 'E — START MISSION: TAILGATE COMPLIANCE';
     else if (allIdle() && nearM8Trig()) hint = 'E — START MISSION: LOOSE IN THE PADDOCK';
     else if (allIdle() && nearM9Trig()) hint = 'E — START MISSION: AIR MAIL';
+    else if (allIdle() && nearMDTrig()) hint = 'E — START THE DAILY DASH';
     else if (canEnterHeli()) hint = 'E — FLY THE NEWS CHOPPER';
     else if (!heliUnlocked && canEnterHeliBase()) hint = 'LOCKED — BEAT "THE RIBBON CUTTING" AT CITY HALL TO FLY';
     else if (canBoardBus()) hint = 'DOORS OPEN — E TO BOARD THE LOOP';

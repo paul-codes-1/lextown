@@ -165,25 +165,48 @@ process.on('unhandledRejection', (err) => {
 //   m7 = TAILGATE COMPLIANCE (fastest canopy tagging before kickoff)
 //   m8 = LOOSE IN THE PADDOCK (fastest foal roundup)
 //   m9 = AIR MAIL (fastest jetpack rooftop delivery run)
+//   d  = DAILY DASH (m:10) — one rotating checkpoint route/day, resets at the
+//        EST day boundary; `dDay` stamps which dayIndex() the board holds.
 // Migration: an old plain-array scores.json becomes the m1 board.
 const SCORES_PATH = path.join(__dirname, 'scores.json');
 const BOARDS = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8', 'm9'];
 // every board MUST be seeded here — on a fresh box (no scores.json) the catch
-// below leaves the literal as-is, and topScores() throws on a missing board
-let scores = { m1: [], m2: [], m3: [], m4: [], m5: [], m6: [], m7: [], m8: [], m9: [] };
+// below leaves the literal as-is, and topScores() throws on a missing board.
+// DAILY DASH (m:10) is the `d` board: it lives OUTSIDE the BOARDS array (its
+// `dDay` companion is an int, not a leaderboard) so both are seeded + loaded
+// explicitly — the BOARDS.forEach loader won't touch them.
+let scores = { m1: [], m2: [], m3: [], m4: [], m5: [], m6: [], m7: [], m8: [], m9: [], d: [], dDay: 0 };
 try {
   const parsed = JSON.parse(fs.readFileSync(SCORES_PATH, 'utf8'));
   if (Array.isArray(parsed)) scores.m1 = parsed;
-  else BOARDS.forEach((b) => { scores[b] = parsed[b] || []; });
+  else {
+    BOARDS.forEach((b) => { scores[b] = parsed[b] || []; });
+    scores.d = parsed.d || [];
+    scores.dDay = parsed.dDay || 0;
+  }
 } catch { /* fresh file */ }
 function saveScores() {
   try { fs.writeFileSync(SCORES_PATH, JSON.stringify(scores, null, 2)); }
   catch (e) { console.log('[warn] could not persist scores:', e.message); }
 }
+// DAILY DASH day seed — EST-anchored (fixed UTC-5, no tz lib / no DST). The
+// client uses the IDENTICAL formula; any drift here is a split-brain reset.
+function dayIndex() { return Math.floor((Date.now() - 5 * 3600e3) / 86400e3); }
+// lazily reset the daily board when the calendar (EST) day flips. Called at the
+// top of score handling AND topScores() so the board is always current-day.
+function rollDaily() {
+  if (scores.dDay !== dayIndex()) {
+    scores.d = [];
+    scores.dDay = dayIndex();
+    saveScores();
+  }
+}
 function topScores() {
+  rollDaily();
   const top = (b) => scores[b].slice(0, 10).map((s) => ({ n: s.n, ms: s.ms }));
   return { m1: top('m1'), m2: top('m2'), m3: top('m3'), m4: top('m4'),
-           m5: top('m5'), m6: top('m6'), m7: top('m7'), m8: top('m8'), m9: top('m9') };
+           m5: top('m5'), m6: top('m6'), m7: top('m7'), m8: top('m8'), m9: top('m9'),
+           d: top('d'), dDay: scores.dDay };
 }
 
 // persistent ban list: [{ip, name}]
@@ -688,13 +711,14 @@ wss.on('connection', (ws, req) => {
       // announce) — they're a farming/pollution vector. DEVICE BEST still saves
       // client-side; the client also suppresses the submit (defense-in-depth).
       if (client.room !== PUBLIC) return;
+      rollDaily();   // reset the daily board first if the EST day flipped
       // mission completion: plausible time window per board, 1 per 15s per client
-      const board = { 2: 'm2', 3: 'm3', 4: 'm4', 5: 'm5', 6: 'm6', 7: 'm7', 8: 'm8', 9: 'm9' }[msg.m] || 'm1';
+      const board = { 2: 'm2', 3: 'm3', 4: 'm4', 5: 'm5', 6: 'm6', 7: 'm7', 8: 'm8', 9: 'm9', 10: 'd' }[msg.m] || 'm1';
       const WIN = { m1: [3000, 600000], m2: [20000, 900000],
                     m3: [20000, 900000], m4: [30000, 1500000],
                     m5: [30000, 480000], m6: [40000, 900000],
                     m7: [25000, 900000], m8: [15000, 300000],
-                    m9: [25000, 300000] }[board];
+                    m9: [25000, 300000], d: [20000, 900000] }[board];
       if (!num(msg.ms, WIN[0], WIN[1])) return;
       if (client.lastScoreAt && now - client.lastScoreAt < 15000) return;
       client.lastScoreAt = now;
@@ -715,7 +739,8 @@ wss.on('connection', (ws, req) => {
                m6: `${n} delivered the scoops still frozen in ${sec}s`,
                m7: `${n} tagged the whole tailgate in ${sec}s`,
                m8: `${n} settled the foals in ${sec}s`,
-               m9: `${n} flew the airmail route in ${sec}s` }[board] }, null, client.room);
+               m9: `${n} flew the airmail route in ${sec}s`,
+               d: `${n} won the DAILY DASH in ${sec}s` }[board] }, null, client.room);
       ws.send(JSON.stringify(Object.assign({ t: 'scores' }, topScores())));
       return;
     }

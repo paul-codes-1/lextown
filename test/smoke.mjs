@@ -14,9 +14,14 @@
 // exercises "Private Worlds / Rooms" — ?room=<code> partitioning: presence /
 // chat / leave isolation, welcome.peers filtering, per-room heli independence,
 // the private-room score gate, sanitization equivalence, and NPC-forced-PUBLIC
-// (see runRoomAssertions). A final pass exercises the fire-and-forget "mev"
+// (see runRoomAssertions). A further pass exercises the fire-and-forget "mev"
 // telemetry beacon — validated, rate-limited, log-only, never broadcast (see
-// runMevAssertions).
+// runMevAssertions). Two board passes (runM8/runM9Assertions) verify the foal +
+// airmail leaderboards end-to-end. A final DAILY DASH pass covers the m:10 daily
+// board: a valid score lands on `d` with the dDay stamp + announce, below-window
+// + private-room submits are dropped, and a throwaway second server (booted from
+// a stale scores.json) proves rollDaily() empties the board on the EST day flip
+// (see runDailyAssertions + runDailyRollAssertion).
 // PASS/FAIL per check; exits non-zero if any check fails. Uses only `ws`
 // (already a dependency) + node builtins. Re-runnable.
 //
@@ -59,10 +64,15 @@ function softCheck(name, cond, detail) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// EST-anchored day seed — MUST match server.js dayIndex() byte-for-byte (the
+// DAILY DASH board rolls on this; any drift here is a split-brain test).
+const dayIndex = () => Math.floor((Date.now() - 5 * 3600e3) / 86400e3);
 
 // --- tiny ws client harness ----------------------------------------------
-function connect(query) {
-  const c = { ws: new WebSocket(WS_URL + '/' + (query || '')), msgs: [], waiters: new Set() };
+// `base` overrides WS_URL so a throwaway second server (D4 day-roll) can be
+// driven on its own port; omitted everywhere else (defaults to the shared box).
+function connect(query, base) {
+  const c = { ws: new WebSocket((base || WS_URL) + '/' + (query || '')), msgs: [], waiters: new Set() };
   c.ws.on('message', (d) => {
     let m; try { m = JSON.parse(d); } catch { return; }
     c.msgs.push(m);
@@ -91,11 +101,11 @@ function expect(c, pred, opts) {
   });
 }
 
-function bootServer() {
+function bootServer(port = PORT) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [SERVER], {
       cwd: ROOT,
-      env: { ...process.env, PORT: String(PORT), ADMIN_TOKEN, NPC_TOKEN },
+      env: { ...process.env, PORT: String(port), ADMIN_TOKEN, NPC_TOKEN },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let out = '', settled = false;
@@ -635,6 +645,104 @@ async function runM9Assertions() {
   S1.ws.close(); S2.ws.close(); S3.ws.close(); OBS.ws.close();
 }
 
+// --- DAILY DASH: the m:10 daily board (F2) -----------------------------------
+// The daily board `d` is the mission-board wiring one notch over (score-handler
+// map 10:'d', WIN [20000,900000], DAILY DASH announce) plus two twists topScores
+// carries a `dDay` stamp (which dayIndex() the board holds), and rollDaily()
+// empties the board when the EST day flips. D1-D3 run against the shared server;
+// D4 needs its OWN throwaway server because the shared board is already today's
+// (runAssertions rolled it), so the flip can only be observed on a fresh boot
+// that loads a stale scores.json. Each submitter is a fresh client (the 1-per-15s
+// score cooldown is per-client). scores.json is restored in main()'s finally.
+async function runDailyAssertions() {
+  const want = async (c, pred, opts) => {
+    try { return await expect(c, pred, { timeout: 1500, ...(opts || {}) }); }
+    catch { return null; }
+  };
+  const named = async (query, name) => {   // fresh client with a fixed name + spawn
+    const c = connect(query); await opened(c); await expect(c, (m) => m.t === 'welcome');
+    send(c, { t: 'state', n: name, c: 0x3a76c4, m: 0, p: 0, x: 14, y: 1, z: -9.5, ry: 0 });
+    await sleep(140);
+    return c;
+  };
+  const OBS = connect(); await opened(OBS); await expect(OBS, (m) => m.t === 'welcome');
+
+  // D1: valid PUBLIC m:10 score (60s in [20s,900s]) -> lands on the .d board,
+  // fires the DAILY DASH announce, and the {t:scores} reply carries the d list +
+  // dDay === today's dayIndex().
+  const S1 = await named('', 'DASHER');
+  const obsD1 = OBS.msgs.length;
+  send(S1, { t: 'score', m: 10, ms: 60000 });
+  const rep1 = await want(S1, (m) => m.t === 'scores');
+  const ann1 = await want(OBS, (m) => m.t === 'chat' && m.n === '* MISSION', { from: obsD1 });
+  const d1land = !!(rep1 && (rep1.d || []).some((e) => e.n === 'DASHER' && e.ms === 60000));
+  const d1day = !!(rep1 && rep1.dDay === dayIndex());
+  const d1ann = !!(ann1 && /DAILY DASH/i.test(ann1.msg || ''));
+  check('D1. valid m:10 lands on the d board (topScores includes d + dDay===today) and announces',
+    d1land && d1day && d1ann, `land=${d1land} dDay=${rep1 && rep1.dDay} today=${dayIndex()} ann=${d1ann}`);
+
+  // D2: below-window m:10 score (19s < 20s floor) -> rejected before the board
+  // (no {t:scores} reply, no entry on a re-queried board).
+  const S2 = await named('', 'SLOWPOKE');
+  const s2mark = S2.msgs.length;
+  send(S2, { t: 'score', m: 10, ms: 19000 });
+  await sleep(400);
+  const s2reply = S2.msgs.slice(s2mark).some((m) => m.t === 'scores');
+  send(OBS, { t: 'scores' });
+  const req2 = await want(OBS, (m) => m.t === 'scores');
+  const s2onBoard = !!(req2 && (req2.d || []).some((e) => e.ms === 19000));
+  check('D2. below-window m:10 score rejected (no reply, board unchanged)',
+    !s2reply && !s2onBoard, `reply=${s2reply} onBoard=${s2onBoard}`);
+
+  // D3: an m:10 score from a private room is dropped (the private-room gate sits
+  // before the board map, so it covers m:10 like every other board). Mirrors C3.
+  const S3 = await named('?room=DASHRM', 'ROOMDASH');
+  const obsD3 = OBS.msgs.length, s3mark = S3.msgs.length;
+  send(S3, { t: 'score', m: 10, ms: 61000 });
+  await sleep(400);
+  const s3reply = S3.msgs.slice(s3mark).some((m) => m.t === 'scores');
+  const s3announce = OBS.msgs.slice(obsD3).some((m) => m.t === 'chat' && m.n === '* MISSION');
+  check('D3. m:10 score from a private room is dropped (no reply, no announce)', !s3reply && !s3announce,
+    `reply=${s3reply} announce=${s3announce}`);
+
+  S1.ws.close(); S2.ws.close(); S3.ws.close(); OBS.ws.close();
+}
+
+// --- DAILY DASH day roll (D4) ------------------------------------------------
+// rollDaily() empties the d board when scores.dDay drifts off dayIndex(). The
+// shared server already rolled to today, so we seed scores.json with a STALE
+// dDay (yesterday) + a phantom entry, boot a throwaway server on its OWN port
+// that loads that file, submit one valid m:10, and assert the stale entry is gone
+// (board reset FIRST) while the fresh one is present with dDay advanced to today.
+// The shared server stays idle during this (D4 is last), so it never re-saves
+// over the seed; main()'s finally restores scores.json byte-for-byte regardless.
+async function runDailyRollAssertion() {
+  const D4PORT = PORT + 1;
+  const D4WS = `ws://127.0.0.1:${D4PORT}`;
+  const stale = { d: [{ n: 'YESTERDAY', ms: 50000, ts: new Date().toISOString() }], dDay: dayIndex() - 1 };
+  fs.writeFileSync(SCORES, JSON.stringify(stale, null, 2));
+  let child2 = null;
+  try {
+    child2 = await bootServer(D4PORT);
+    const S = connect('', D4WS); await opened(S); await expect(S, (m) => m.t === 'welcome');
+    send(S, { t: 'state', n: 'ROLLER', c: 0x3a76c4, m: 0, p: 0, x: 14, y: 1, z: -9.5, ry: 0 });
+    await sleep(140);
+    send(S, { t: 'score', m: 10, ms: 60000 });
+    const rep = await expect(S, (m) => m.t === 'scores', { timeout: 2500 });
+    const staleGone = !((rep.d || []).some((e) => e.ms === 50000));
+    const freshPresent = (rep.d || []).some((e) => e.n === 'ROLLER' && e.ms === 60000);
+    const rolledDay = rep.dDay === dayIndex();
+    check('D4. day roll: stale board reset before the new score lands (dDay advances to today)',
+      staleGone && freshPresent && rolledDay,
+      `staleGone=${staleGone} fresh=${freshPresent} dDay=${rep.dDay} today=${dayIndex()}`);
+    S.ws.close();
+  } catch (e) {
+    check('D4. day roll', false, String((e && e.stack) || e));
+  } finally {
+    if (child2) { try { child2.kill('SIGKILL'); } catch {} }
+  }
+}
+
 async function main() {
   // snapshot the real scores.json (gitignored) so the m5 submit can't clobber it
   let scoresBackup = null, scoresExisted = false;
@@ -649,6 +757,8 @@ async function main() {
     await runMevAssertions();
     await runM8Assertions();
     await runM9Assertions();
+    await runDailyAssertions();
+    await runDailyRollAssertion();
   } catch (e) {
     check('harness ran to completion', false, String((e && e.stack) || e));
   } finally {
