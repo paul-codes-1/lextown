@@ -1625,7 +1625,7 @@ var spawnX = 14, spawnZ = -9.5;
 })();
 var player = {x: spawnX, y: 0, z: spawnZ, vy: 0, ry: -Math.PI / 2, phase: 0, swing: 0,
               grounded: true, moving: 0, fuel: 100, thrusting: false, veh: null,
-              heli: false, ride: null, kx: 0, kz: 0,
+              heli: false, ride: null, bus: null, kx: 0, kz: 0,
               pvp: false, frozenUntil: 0,
               av: makeAvatar(myColor, 0x3f7d3f)};
 function isFrozen(){ return performance.now() < player.frozenUntil; }
@@ -1650,7 +1650,7 @@ function spawnDart(ox, oy, oz, dx, dy, dz, mine){
               born: performance.now(), mine: !!mine});
 }
 function setPvp(on){
-  if (on && player.ride) return;   // a passenger is never a valid tag target
+  if (on && (player.ride || player.bus !== null)) return;   // a passenger is never a valid tag target
   if (on && blasterMissionActive()) return;   // mission darts never opt you in
   if (player.pvp === on) return;
   player.pvp = on;
@@ -1659,7 +1659,7 @@ function setPvp(on){
 }
 var _aim = new THREE.Vector3();
 function fireDart(){
-  if (mode !== 'player' || player.veh || player.ride || isFrozen()) return;
+  if (mode !== 'player' || player.veh || player.ride || player.bus !== null || isFrozen()) return;
   // first press draws = opts in — EXCEPT during a blaster mission, where the
   // dart is a tool and firing it must not make you a freeze-tag target
   if (!player.pvp && !blasterMissionActive()){ setPvp(true); return; }
@@ -2154,7 +2154,7 @@ function updatePickups(dt){
     s.g.visible = vis;
     if (!vis) continue;
     s.g.rotation.y += dt * 1.2;
-    if (!player.heli && !player.veh && !player.ride && mode === 'player'){
+    if (!player.heli && !player.veh && !player.ride && player.bus === null && mode === 'player'){
       var dx = s.g.position.x - player.x, dz = s.g.position.z - player.z;
       if (dx * dx + dz * dz < 6.5 && Math.abs(s.g.position.y - player.y) < 3){
         myRpg = 2;
@@ -2455,7 +2455,7 @@ var RADIO_STATIONS = [
 ];
 var radio = {st: 1, cur: null, last: '', lastKind: '', token: 0, queue: [], bags: {}};
 try { radio.st = Math.min(RADIO_STATIONS.length - 1, Math.max(0, parseInt(localStorage.getItem('lt_radio') || '1', 10) || 0)); } catch (e){}
-function inCar(){ return !!player.veh || !!player.ride; }   // driving OR riding shotgun
+function inCar(){ return !!player.veh || !!player.ride || player.bus !== null; }   // driving, riding shotgun, OR on the bus (it has a radio)
 function radioActive(){ return radio.st > 0 && mode === 'player' && inCar(); }
 // fixed shuffled rotation per station+pool: a segment cannot air again until
 // every other segment in its pool has aired once. Shuffled per session, then
@@ -3328,6 +3328,270 @@ function updateWeather(dt){
   } else _nextThunder = 0;
   if (wxFlash > 0.01) wxFlash -= dt * 4; else wxFlash = 0;
 }
+
+// ---------- RIDE THE BUS (F1) ----------
+// A LexTran loop bus whose position is a pure function of wall-clock time — the
+// same determinism trick as the weather above. Every client computes
+// busStateAt(Date.now()), so the bus is bit-identical everywhere (private rooms
+// included) and survives a reload mid-route, with ZERO new network protocol. It
+// runs a legal downtown loop (Main St E → MLK S → Vine St W → Broadway N) in the
+// correct lane offset, dwells 14s with the doors open at four stops, and you ride
+// it by standing at a stop and pressing E (it rides the m:4 passenger channel).
+var BUS_SPEED = 8.5;      // m/s along the route polyline (under the server h:38 cap)
+var BUS_DWELL = 14000;    // ms stopped, doors open, at each stop
+var BUS_LANE = 3.6;       // lane offset from centerline — matches ambient traffic
+var BUS_FLOOR = 0.95;     // seated-avatar foot height above the road inside the bus
+var BUS_CURB = 4.6;       // lateral hop-out distance (drops you onto the sidewalk)
+// Stops in route order. sx/sz is where the bus halts (on the travel lane); th is
+// the road heading there. The board/shelter/curb points all sit on the +lateral
+// (curb) side, which is the correct kerb for both legs given the one-way tables.
+var BUS_STOPS = [
+  {name: 'VICTORIAN SQUARE', sx: -155, sz: BUS_LANE, th: 0},        // Main St, just east of Broadway
+  {name: 'PHOENIX PARK',     sx: 80,  sz: BUS_LANE, th: 0},        // Main St, just west of Limestone
+  {name: 'LIBRARY',          sx: 178, sz: 100 - BUS_LANE, th: Math.PI},  // Vine St WB, MLK/Rose end
+  {name: 'TRANSIT CENTER',   sx: -85, sz: 100 - BUS_LANE, th: Math.PI}   // Vine St WB, near Mill (real hub: 220 W Vine)
+];
+BUS_STOPS.forEach(function(s){
+  var lx = Math.sin(s.th), lz = Math.cos(s.th);   // +lateral unit = curb side
+  s.bx = s.sx + lx * 3.4; s.bz = s.sz + lz * 3.4;   // board point (bus door → curb gap)
+  s.shx = s.sx + lx * 6.4; s.shz = s.sz + lz * 6.4;  // shelter point, on the sidewalk
+  s.cbx = lx * BUS_CURB; s.cbz = lz * BUS_CURB;      // hop-out curb vector
+});
+// Seat grid inside the bus (bus-local: +lf forward along heading, +ll lateral).
+var BUS_SEATS = [
+  {lf: 3.0, ll: -0.8}, {lf: 3.0, ll: 0.8},
+  {lf: 0.6, ll: -0.8}, {lf: 0.6, ll: 0.8},
+  {lf: -1.8, ll: -0.8}, {lf: -1.8, ll: 0.8}
+];
+function busSeatFor(id){   // stable seat index from a player id (remote seat snap)
+  var h = 0, i; id = '' + id;
+  for (i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return h % BUS_SEATS.length;
+}
+function busSeatWorld(bs, idx){
+  var s = BUS_SEATS[idx % BUS_SEATS.length];
+  var c = Math.cos(bs.th), sn = Math.sin(bs.th);
+  var x = bs.x + s.lf * c + s.ll * sn;
+  var z = bs.z - s.lf * sn + s.ll * c;
+  return {x: x, y: groundY(x, z) + BUS_FLOOR, z: z, ry: bs.th};
+}
+// Piecewise timeline built once at boot: move segments (constant BUS_SPEED along
+// the polyline) alternating with 14s dwells at the stops. Corners are rounded
+// with a short quadratic-Bézier arc (3 interpolated points) so the bus swings the
+// turn instead of pivoting; heading falls out of each short segment's direction.
+var busPhases = [], BUS_PERIOD = 0, busStopArrive = [];
+(function(){
+  var R = 7;
+  function arc(cx, cz, dix, diz, dox, doz){   // p0 (approach end) → 3 mids → p2 (exit start)
+    var p0x = cx - dix * R, p0z = cz - diz * R, p2x = cx + dox * R, p2z = cz + doz * R;
+    var out = [[p0x, p0z]], i, t, mt;
+    for (i = 1; i <= 3; i++){
+      t = i / 4; mt = 1 - t;
+      out.push([mt * mt * p0x + 2 * mt * t * cx + t * t * p2x,
+                mt * mt * p0z + 2 * mt * t * cz + t * t * p2z]);
+    }
+    out.push([p2x, p2z]);
+    return out;
+  }
+  var zN = BUS_LANE, zS = 100 - BUS_LANE, xW = -196.4, xE = 196.4;
+  var neA = arc(xE, zN, 1, 0, 0, 1);   // Main E → MLK S
+  var seA = arc(xE, zS, 0, 1, -1, 0);  // MLK S → Vine W
+  var swA = arc(xW, zS, -1, 0, 0, -1); // Vine W → Broadway N
+  var nwA = arc(xW, zN, 0, -1, 1, 0);  // Broadway N → Main E
+  var P = [];
+  function pt(x, z, stop){ P.push({x: x, z: z, stop: stop}); }
+  pt(nwA[4][0], nwA[4][1]);                       // start: just onto Main St eastbound
+  pt(BUS_STOPS[0].sx, BUS_STOPS[0].sz, 0);        // VICTORIAN SQUARE
+  pt(BUS_STOPS[1].sx, BUS_STOPS[1].sz, 1);        // PHOENIX PARK
+  for (var i = 0; i < 5; i++) pt(neA[i][0], neA[i][1]);
+  for (i = 0; i < 5; i++) pt(seA[i][0], seA[i][1]);
+  pt(BUS_STOPS[2].sx, BUS_STOPS[2].sz, 2);        // LIBRARY
+  pt(BUS_STOPS[3].sx, BUS_STOPS[3].sz, 3);        // TRANSIT CENTER
+  for (i = 0; i < 5; i++) pt(swA[i][0], swA[i][1]);
+  for (i = 0; i < 4; i++) pt(nwA[i][0], nwA[i][1]);  // p0..m3; loop closes to P[0] = nwA[4]
+  var acc = 0, n = P.length;
+  for (i = 0; i < n; i++){
+    var a = P[i], b = P[(i + 1) % n];
+    var th = Math.atan2(-(b.z - a.z), b.x - a.x);
+    if (a.stop !== undefined){
+      busStopArrive[a.stop] = acc;
+      busPhases.push({kind: 'dwell', dur: BUS_DWELL, t0: acc, x: a.x, z: a.z, th: th, stopIdx: a.stop});
+      acc += BUS_DWELL;
+    }
+    var d = Math.hypot(b.x - a.x, b.z - a.z);
+    if (d > 0.01){
+      busPhases.push({kind: 'move', dur: d / BUS_SPEED * 1000, t0: acc, x0: a.x, z0: a.z, x1: b.x, z1: b.z, th: th});
+      acc += d / BUS_SPEED * 1000;
+    }
+  }
+  BUS_PERIOD = acc;
+})();
+function busStateAt(tMs){
+  var t = ((tMs % BUS_PERIOD) + BUS_PERIOD) % BUS_PERIOD;
+  var ph = busPhases[busPhases.length - 1], i;
+  for (i = 0; i < busPhases.length; i++){
+    if (t < busPhases[i].t0 + busPhases[i].dur){ ph = busPhases[i]; break; }
+  }
+  var x, z, th = ph.th, stopIdx = -1, doorOpen = false;
+  if (ph.kind === 'dwell'){ x = ph.x; z = ph.z; stopIdx = ph.stopIdx; doorOpen = true; }
+  else { var f = ph.dur > 0 ? (t - ph.t0) / ph.dur : 0; x = ph.x0 + (ph.x1 - ph.x0) * f; z = ph.z0 + (ph.z1 - ph.z0) * f; }
+  var best = 1e18, ns = 0;
+  for (i = 0; i < busStopArrive.length; i++){
+    var e = (busStopArrive[i] - t + BUS_PERIOD) % BUS_PERIOD;
+    if (doorOpen && i === stopIdx) e += BUS_PERIOD;   // skip the stop we're sitting at
+    if (e < best){ best = e; ns = i; }
+  }
+  return {x: x, z: z, th: th, stopIdx: stopIdx, doorOpen: doorOpen, nextStopIdx: ns, etaMs: best % BUS_PERIOD};
+}
+function busEtaToStop(tMs, si){
+  var t = ((tMs % BUS_PERIOD) + BUS_PERIOD) % BUS_PERIOD;
+  return (busStopArrive[si] - t + BUS_PERIOD) % BUS_PERIOD;
+}
+function busFmtEta(ms){ var s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2); }
+
+// bus + shelters + labels (drawn on canvas at boot, like everything else)
+var busMesh = new THREE.Group();
+(function(){
+  var busTex = makeTex(256, 64, function(g, w, h){
+    g.fillStyle = '#1f8f74'; g.fillRect(0, 0, w, h);                 // teal body
+    g.fillStyle = '#176b57'; g.fillRect(0, h * 0.66, w, h * 0.2);    // lower green band
+    g.fillStyle = '#0d2b28';                                         // window strip
+    for (var x = 8; x < w - 8; x += 30) g.fillRect(x, 12, 22, 20);
+    g.fillStyle = 'rgba(255,255,255,0.14)';
+    for (x = 8; x < w - 8; x += 30) g.fillRect(x, 12, 22, 3);
+  });
+  var bodyMat = new THREE.MeshStandardMaterial({map: busTex, roughness: 0.6, metalness: 0.15});
+  var body = new THREE.Mesh(new THREE.BoxGeometry(11, 2.6, 3), bodyMat);
+  body.position.y = 2.3; body.castShadow = true; busMesh.add(body);
+  var floor = new THREE.Mesh(new THREE.PlaneGeometry(10.4, 2.6),
+    new THREE.MeshStandardMaterial({color: 0x222a2c, roughness: 0.9}));
+  floor.rotation.x = -Math.PI / 2; floor.position.y = 1.02; busMesh.add(floor);
+  var wheelG = new THREE.CylinderGeometry(0.55, 0.55, 0.5, 10); wheelG.rotateX(Math.PI / 2);
+  var wheelMat = new THREE.MeshStandardMaterial({color: 0x14161a, roughness: 0.8});
+  [[3.6, 1.4], [3.6, -1.4], [-3.6, 1.4], [-3.6, -1.4]].forEach(function(w){
+    var wh = new THREE.Mesh(wheelG, wheelMat); wh.position.set(w[0], 0.55, w[1]); busMesh.add(wh);
+  });
+  // lit door strip on the +lateral (curb) side; brightens while dwelling
+  var doorMat = new THREE.MeshStandardMaterial({color: 0x0a1a16, emissive: 0x9ff4d0, emissiveIntensity: 0});
+  var door = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.0, 0.1), doorMat);
+  door.position.set(1.6, 1.6, 1.52); busMesh.add(door);
+  busMesh.userData.doorMat = doorMat;
+  // "THE LOOP" head sign on the front (+x end)
+  var signTex = makeTex(128, 32, function(g, w, h){
+    g.fillStyle = '#111'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#ffd24a'; g.font = 'bold 17px Helvetica, Arial, sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('THE LOOP', w / 2, h / 2 + 1);
+  });
+  var sign = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 0.85),
+    new THREE.MeshStandardMaterial({map: signTex, emissive: 0xffffff, emissiveMap: signTex, emissiveIntensity: 0.5}));
+  sign.rotation.y = Math.PI / 2; sign.position.set(5.51, 2.9, 0); busMesh.add(sign);
+  scene.add(busMesh);
+})();
+(function(){
+  var postMat = new THREE.MeshStandardMaterial({color: 0x3a4247, roughness: 0.7, metalness: 0.3});
+  var roofMat = new THREE.MeshStandardMaterial({color: 0x1f8f74, roughness: 0.6});
+  var benchMat = new THREE.MeshStandardMaterial({color: 0x5a4634, roughness: 0.9});
+  BUS_STOPS.forEach(function(s){
+    var g = new THREE.Group();
+    var postG = new THREE.BoxGeometry(0.16, 3.0, 0.16);
+    [-2, 2].forEach(function(dx){
+      var p = new THREE.Mesh(postG, postMat); p.position.set(dx, 1.5, -0.6); g.add(p);
+    });
+    var roof = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.18, 1.8), roofMat);
+    roof.position.set(0, 3.05, 0); roof.castShadow = true; g.add(roof);
+    var bench = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.16, 0.55), benchMat);
+    bench.position.set(0, 0.6, -0.6); g.add(bench);
+    var signTex = makeTex(256, 48, function(gc, w, h){
+      gc.fillStyle = '#0d2b28'; gc.fillRect(0, 0, w, h);
+      gc.strokeStyle = '#6ef7df'; gc.lineWidth = 3; gc.strokeRect(3, 3, w - 6, h - 6);
+      gc.fillStyle = '#eafffa'; gc.font = 'bold 13px Helvetica, Arial, sans-serif';
+      gc.textBaseline = 'middle';
+      gc.fillText('LEXTOWN TRANSIT', 12, 16);
+      gc.fillStyle = '#9adfd2'; gc.font = 'bold 15px Helvetica, Arial, sans-serif';
+      gc.fillText(s.name, 12, 34, w - 20);
+    });
+    var sign = new THREE.Mesh(new THREE.PlaneGeometry(3.8, 0.72),
+      new THREE.MeshStandardMaterial({map: signTex, roughness: 0.7, side: THREE.DoubleSide}));
+    sign.position.set(0, 2.4, 0.92); g.add(sign);
+    g.position.set(s.shx, 0, s.shz);
+    g.rotation.y = s.th + Math.PI;   // roof/bench span the street; sign + bench face the stop
+    scene.add(g);
+    // low collider so you can't walk through the shelter (jetpack still clears it)
+    colliders.push({x0: s.shx - 2.4, x1: s.shx + 2.4, z0: s.shz - 1.0, z1: s.shz + 1.0, h: 3.2});
+    labels.push({name: 'BUS — ' + s.name, x: s.shx, y: 5.4, z: s.shz});   // ambient, not mission gold
+  });
+})();
+var busBoardedT = 0;   // Date.now() at board — for the full-loop telemetry beacon
+function busBoardStop(){   // stopIdx you may board right now (doors open, within 6m), else -1
+  var bs = busStateAt(Date.now());
+  if (!bs.doorOpen) return -1;
+  var s = BUS_STOPS[bs.stopIdx];
+  var dx = player.x - s.bx, dz = player.z - s.bz;
+  return (dx * dx + dz * dz <= 36) ? bs.stopIdx : -1;
+}
+function canBoardBus(){
+  return mode === 'player' && !player.veh && !player.heli && !player.ride && player.bus === null &&
+    !isFrozen() && player.grounded && allIdle() && busBoardStop() >= 0;
+}
+function boardBus(){
+  if (busBoardStop() < 0) return;
+  var bs = busStateAt(Date.now());
+  player.bus = busSeatFor(myId);
+  setPvp(false);   // holster the blaster — a passenger is not a tag target
+  rigP.r = Math.max(rigP.r, 17);
+  playClip('sfx_door', {gain: 0.6});
+  caption('THE LOOP', 'ALL ABOARD — NEXT: ' + BUS_STOPS[bs.nextStopIdx].name, 2400);
+  if (radio.st > 0) setTimeout(function(){ if (radioActive()) radioNext(true); }, 900);
+  busBoardedT = Date.now();
+  mev(60);
+}
+function leaveBus(){
+  if (player.bus === null) return;
+  var bs = busStateAt(Date.now());
+  // drop on the curb side relative to the bus's CURRENT heading (works mid-route too)
+  var lx = Math.sin(bs.th), lz = Math.cos(bs.th);
+  var px = bs.x + lx * BUS_CURB, pz = bs.z + lz * BUS_CURB;
+  player.bus = null;
+  radioStop();
+  playClip('sfx_door', {gain: 0.6});
+  player.av.g.visible = (mode !== 'player' || !camFP);
+  player.x = px; player.z = pz;
+  player.y = groundY(px, pz, player.y + 1); player.vy = 0; player.grounded = false;
+  collide(player, 0.55, player.y);
+  if (busBoardedT && Date.now() - busBoardedT >= BUS_PERIOD) mev(62);   // rode a full loop
+  busBoardedT = 0;
+  mev(61);
+}
+function busWaitHint(){   // 'BUS IN m:ss — NAME' when idling on foot within 25m of a stop
+  if (mode !== 'player' || player.veh || player.heli || player.ride || player.bus !== null) return '';
+  if (isFrozen() || !allIdle()) return '';
+  var best = -1, bd = 625, i;   // 25m squared
+  for (i = 0; i < BUS_STOPS.length; i++){
+    var s = BUS_STOPS[i];
+    var dx = player.x - s.bx, dz = player.z - s.bz, d2 = dx * dx + dz * dz;
+    if (d2 < bd){ bd = d2; best = i; }
+  }
+  if (best < 0) return '';
+  var bs = busStateAt(Date.now());
+  if (bs.doorOpen && bs.stopIdx === best) return 'DOORS OPEN — ' + BUS_STOPS[best].name;
+  return 'BUS IN ' + busFmtEta(busEtaToStop(Date.now(), best)) + ' — ' + BUS_STOPS[best].name;
+}
+function updateBus(dt){   // wall-clock: animates even while the sim is paused
+  var bs = busStateAt(Date.now());
+  busMesh.position.set(bs.x, groundY(bs.x, bs.z), bs.z);
+  busMesh.rotation.y = bs.th;
+  busMesh.userData.doorMat.emissiveIntensity = bs.doorOpen ? 1.1 : 0;
+}
+function updateBusRide(dt){   // pin the rider to their deterministic seat BEFORE netTick/cam
+  if (player.bus === null || mode !== 'player') return;
+  var seat = busSeatWorld(busStateAt(Date.now()), player.bus);
+  player.x = seat.x; player.y = seat.y; player.z = seat.z; player.ry = seat.ry;
+  player.moving = 0; player.thrusting = false; player.grounded = true;
+  setSwing(player.av, 0, 0);
+  player.av.g.position.set(seat.x, seat.y, seat.z);
+  player.av.g.rotation.y = seat.ry;
+}
+
 function m2ZonesDone(){
   for (var z = 0; z < zoneState.length; z++)
     if (zoneState[z].cleared < zoneState[z].total - 2) return false;
@@ -5091,6 +5355,9 @@ if (/debug=1/.test(hashStr)){
     clips: function(){ return Object.keys(clips).map(function(k){ return k + (clips[k].buf ? ':ok' : ':loading'); }); },
     pos: function(){ return {x: player.x, y: player.y, z: player.z}; },
     cam: function(){ return {az: rigP.az, el: rigP.el}; },
+    bus: function(){ return player.bus; },
+    busStateAt: function(t){ return busStateAt(t === undefined ? Date.now() : t); },
+    busPeriod: function(){ return BUS_PERIOD; },
     setCam: function(az, el){ rigP.az = az; if (el !== undefined) rigP.el = el; followPause = 3; },
     audioTap: function(){   // MediaStream of the game's synth audio (for capture rigs)
       pokeAudio();
@@ -5147,7 +5414,7 @@ function nearestVehicle(){
 }
 function fireAction(){
   if (player.heli) return;   // water cannon is hold-to-spray, handled in flight
-  if (player.ride) return;   // no firing from the shotgun seat
+  if (player.ride || player.bus !== null) return;   // no firing from a passenger seat
   if (mission3.stage === 'photo' && !player.veh){ takePhoto(); return; }
   if (missionFight() && !player.veh){ fireRocket(); return; }
   if (myRpg > 0 && heliActive() && !player.veh){ fireRocket(); return; }
@@ -5162,6 +5429,7 @@ function tryEnterExit(){
     return;
   }
   if (player.ride){ leaveRide(true); return; }   // hop out before any mission/enter gate
+  if (player.bus !== null){ leaveBus(); return; }   // bus hop-out first too, mirroring the shotgun seat
   if (allIdle() && !player.veh && !isFrozen() && nearMissionTrig()){
     startMission();
     return;
@@ -5190,11 +5458,11 @@ function tryEnterExit(){
     startMission7();
     return;
   }
-  if (allIdle() && !player.veh && !player.ride && !isFrozen() && nearM8Trig()){
+  if (allIdle() && !player.veh && !player.ride && player.bus === null && !isFrozen() && nearM8Trig()){
     startMission8();
     return;
   }
-  if (allIdle() && !player.veh && !player.ride && !isFrozen() && nearM9Trig()){
+  if (allIdle() && !player.veh && !player.ride && player.bus === null && !isFrozen() && nearM9Trig()){
     startMission9();
     return;
   }
@@ -5216,6 +5484,7 @@ function tryEnterExit(){
     collide(player, 0.55, player.y);
     return;
   }
+  if (canBoardBus()){ boardBus(); return; }         // catch the LexTown loop bus at a stop
   if (canRideShotgun()){ requestRide(); return; }   // board a friend's moving car
   if (!player.grounded) return;
   var nv = nearestVehicle();
@@ -5267,7 +5536,7 @@ function updatePlayer(dt){
   if (wasFrozen && !frozenNow){ sndThaw(); frozenByName = ''; }
   wasFrozen = frozenNow;
   player.av.ice.visible = frozenNow;
-  if (player.ride && mode === 'player') return;   // seat pose is written by updateRideAlong
+  if ((player.ride || player.bus !== null) && mode === 'player') return;   // seat pose is written by updateRideAlong / updateBusRide
   if (player.heli && mode === 'player'){ updateHeliFlight(dt); return; }
   if (player.veh && mode === 'player'){ updateDrive(dt); return; }
   var f = 0, r = 0;
@@ -5384,7 +5653,7 @@ function updatePlayerCam(dt){
       var vg = player.veh.g.position;
       ex = vg.x + Math.cos(player.veh.th) * 0.4; ey = vg.y + 1.95;
       ez = vg.z - Math.sin(player.veh.th) * 0.4;
-    } else if (player.ride){
+    } else if (player.ride || player.bus !== null){
       ex = player.x; ey = player.y + 0.95; ez = player.z;   // seated eye height (player.y is already the seat)
     } else {
       ex = player.x; ey = player.y + 2.35; ez = player.z;
@@ -5403,18 +5672,18 @@ function updatePlayerCam(dt){
       tAz = Math.atan2(Math.cos(heli.th), -Math.sin(heli.th)) + Math.PI;
     else if (player.veh)
       tAz = Math.atan2(Math.cos(player.veh.th), -Math.sin(player.veh.th)) + Math.PI;
-    else if (player.ride)
-      tAz = player.ry + Math.PI;   // settle behind the car heading (player.ry carries it)
+    else if (player.ride || player.bus !== null)
+      tAz = player.ry + Math.PI;   // settle behind the vehicle heading (player.ry carries it)
     else if (player.moving > 0)
       tAz = player.ry + Math.PI;
     if (tAz !== null)
-      rigP.az += angDelta(rigP.az, tAz) * Math.min(1, dt * (player.veh || player.heli || player.ride ? 1.7 : 2.1));
+      rigP.az += angDelta(rigP.az, tAz) * Math.min(1, dt * (player.veh || player.heli || player.ride || player.bus !== null ? 1.7 : 2.1));
   }
   rigP.r = Math.max(4, Math.min(90, rigP.r));
   camR += ((aiming ? (player.heli ? 9 : 4.4) : rigP.r) - camR) * Math.min(1, dt * 9);
   // over-the-shoulder framing: a light constant offset on foot (the avatar
   // rides left-of-center instead of blocking the view), stronger while aiming
-  var onFoot = !player.veh && !player.heli && !player.ride;
+  var onFoot = !player.veh && !player.heli && !player.ride && player.bus === null;
   var offAmt = 1.25 * aimBlend + (onFoot ? 0.55 * (1 - aimBlend) : 0);
   var offX = Math.cos(rigP.az) * offAmt;
   var offZ = -Math.sin(rigP.az) * offAmt;
@@ -5494,7 +5763,7 @@ function nearestDriver(){
   return best;
 }
 function canRideShotgun(){
-  return mode === 'player' && !player.veh && !player.heli && !player.ride &&
+  return mode === 'player' && !player.veh && !player.heli && !player.ride && player.bus === null &&
     !isFrozen() && player.grounded && nearestDriver() !== null;
 }
 function requestRide(){
@@ -5697,7 +5966,15 @@ function updateRemotes(dt){
       r.av.ice.visible = false;
       var drv = ridePairs[id], seat = drv ? seatWorldPos(drv) : null;
       if (seat){ r.av.g.position.set(seat.x, seat.y, seat.z); r.av.g.rotation.y = seat.ry; }
-      else { r.av.g.position.set(x, y, z); r.av.g.rotation.y = r.ry; }   // binding unknown: fall back to their own packets
+      else {
+        // no shotgun binding: if they're netted onto the loop bus, snap them into a
+        // deterministic seat so they don't trail 1.4m out the back of a moving bus
+        var bs = busStateAt(Date.now()), dbx = x - bs.x, dbz = z - bs.z;
+        if (dbx * dbx + dbz * dbz < 20.25){   // within 4.5m of the local bus → a passenger
+          var bseat = busSeatWorld(bs, busSeatFor(id));
+          r.av.g.position.set(bseat.x, bseat.y, bseat.z); r.av.g.rotation.y = bseat.ry;
+        } else { r.av.g.position.set(x, y, z); r.av.g.rotation.y = r.ry; }   // fall back to their own packets
+      }
     } else {
       if (r.carG) r.carG.visible = false;
       r.av.g.visible = true;
@@ -5786,7 +6063,7 @@ function netTick(dt){
     var sry = player.heli ? heli.th : player.veh ? player.veh.th : player.ry;
     sry = Math.atan2(Math.sin(sry), Math.cos(sry));
     ws.send(JSON.stringify({t: 'state', n: myName, c: myColor,
-      m: player.ride ? 4 : player.heli ? 3 : player.veh ? 2 : (player.thrusting ? 1 : 0),
+      m: (player.ride || player.bus !== null) ? 4 : player.heli ? 3 : player.veh ? 2 : (player.thrusting ? 1 : 0),
       p: player.pvp ? 1 : 0,
       x: +player.x.toFixed(2), y: +player.y.toFixed(2), z: +player.z.toFixed(2),
       ry: +sry.toFixed(3)}));
@@ -7265,11 +7542,13 @@ function frameStep(now){
     updatePeds(dt, simT);
   }
   updateWeather(dt);   // wall-clock ambient weather - deliberately runs while paused too
+  updateBus(dt);       // wall-clock loop bus - deterministic, also runs while paused
   updatePlayer(dt);
   updateDarts(dt);
   runBots(dt);
   updateRemotes(dt);
   updateRideAlong(dt);   // pin the passenger to the bound driver's seat BEFORE netTick/cam read player pos
+  updateBusRide(dt);     // same, for a loop-bus passenger's deterministic seat
   updateHeli(dt);
   updateMission(dt);
   updateMission2(dt);
@@ -7345,6 +7624,7 @@ function frameStep(now){
   var hint = '';
   if (mode === 'player'){
     if (isFrozen()) hint = 'FROZEN' + (frozenByName ? ' BY ' + frozenByName : '') + ' — ' + Math.ceil((player.frozenUntil - performance.now()) / 1000) + 's';
+    else if (player.bus !== null) hint = 'THE LOOP — NEXT: ' + BUS_STOPS[busStateAt(Date.now()).nextStopIdx].name + ' · E — HOP OUT · R — RADIO';
     else if (player.ride) hint = 'E — HOP OUT · R — RADIO · C — VIEW';
     else if (missionFight()) hint = 'SHOOT DOWN THE CHOPPER · F/CLICK — FIRE · RMB — AIM · CHOPPER HP ' + mh.hp + '/3';
     else if (player.heli) hint = 'W/S A/D FLY · SPACE UP · SHIFT DOWN · HOLD F/CLICK — WATER CANNON · E — EXIT · HP ' + heli.hp + '/3';
@@ -7380,11 +7660,13 @@ function frameStep(now){
     else if (allIdle() && nearM9Trig()) hint = 'E — START MISSION: AIR MAIL';
     else if (canEnterHeli()) hint = 'E — FLY THE NEWS CHOPPER';
     else if (!heliUnlocked && canEnterHeliBase()) hint = 'LOCKED — BEAT "THE RIBBON CUTTING" AT CITY HALL TO FLY';
+    else if (canBoardBus()) hint = 'DOORS OPEN — E TO BOARD THE LOOP';
     else if (player.grounded && canRideShotgun()) hint = 'E — RIDE SHOTGUN';
     else if (player.grounded && nearestVehicle()) hint = 'E — ENTER CAR';
     else if (!player.grounded && player.thrusting) hint = 'JETPACK · FUEL ' + Math.round(player.fuel) + '%';
     else if (myRpg > 0 && heliActive()) hint = 'RPG ×' + myRpg + ' · F/CLICK — FIRE AT THE CHOPPER · RMB — AIM';
     else if (player.pvp) hint = 'CLICK/F — FIRE · RMB — AIM · G — HOLSTER';
+    else if (busWaitHint()) hint = busWaitHint();   // 'BUS IN m:ss — NAME' at a stop
     else if (allIdle()) hint = nextMissionHint();
   }
   // one-time discoverability tip, fired only when the feature is actually usable

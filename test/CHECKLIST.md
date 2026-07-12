@@ -566,3 +566,58 @@ first (`node --check web/app.js && node --check server.js`, then `npm test`).
       Network tab) — the only output is the saved file.
 - [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
       pass and `npm test` (`node test/smoke.mjs`) is all green (56/56, no server change).
+
+## F11 — RIDE THE BUS (Phase 4 F1: the deterministic loop bus)
+
+The bus position is a pure function of `Date.now()` (like the weather), so no new
+network protocol — but the *remote-rider seat snap* only shows with 2+ clients, so
+run the seat check with **Tab A** riding and **Tab B** watching. It is a
+**client-only** feature (no server surface, no smoke-suite change). Standing gate
+first (`node --check web/app.js && node --check server.js`, then `npm test`).
+
+Tip: `#debug=1` exposes `__lt.busStateAt(t)` (defaults to now), `__lt.busPeriod()`
+(~169 000 ms), and `__lt.bus()` (your seat index or `null`). Stop board points are
+in `web/app.js` `BUS_STOPS`: VICTORIAN SQUARE `x:-155`, PHOENIX PARK `x:80` (both
+on Main St, z≈3.6), LIBRARY `x:178`, TRANSIT CENTER `x:-85` (both on Vine St,
+z≈96.4). `#x=..&z=..` deep-links you next to one.
+
+- [ ] **Same bus, same place (determinism).** Load two tabs; the bus (teal "THE
+      LOOP") is at the **identical** spot in both at any instant, and stays synced
+      as it loops. Reload one tab mid-route — it snaps back onto the shared bus, no
+      drift. `__lt.busStateAt()` returns the same `{x,z,stopIdx}` in both consoles.
+- [ ] **Countdown never lies.** Stand within 25 m of a stop, on foot, all missions
+      idle: the `#hint` reads `BUS IN m:ss — <STOP>` and ticks down; when the bus
+      arrives it flips to `DOORS OPEN — <STOP>` (and `DOORS OPEN — E TO BOARD THE
+      LOOP` inside 6 m). The countdown matches the bus actually pulling in
+      (cross-check against `__lt.busStateAt().etaMs`).
+- [ ] **Board when the doors are open.** With the doors open and you within 6 m of
+      the board point, `E` (or the touch **E-VEH** button) boards: the `ALL ABOARD —
+      NEXT: <STOP>` caption fires, the blaster holsters, the radio chip appears, and
+      the `#hint` becomes `THE LOOP — NEXT: <STOP> · E — HOP OUT · R — RADIO`. `E`
+      does **nothing** while the doors are closed / you're too far.
+- [ ] **Ride past 2+ stops, seated + glued.** Stay aboard through at least two stops:
+      your avatar sits in a fixed seat, no `WASD` movement leaks, the camera follows
+      the bus, and the `NEXT:` stop name updates each time it departs. Dwells 14 s
+      with the door strip lit at each stop.
+- [ ] **Remote rider renders in the seat (2 tabs).** Tab A boards; in **Tab B** A's
+      avatar sits *inside* the moving bus (snapped to a deterministic seat by id
+      hash), not trailing out the back. A stale/older client without the snap shows A
+      sliding along at the netted position (acceptable fallback) — no crash either way.
+- [ ] **Radio on board.** `R` cycles the radio while riding (bus has a radio); the
+      dial chip shows the station, `lt_snd` mute silences it — same behavior as a car.
+- [ ] **Hop out at the curb.** `E` drops you on the sidewalk beside the bus at its
+      current position (`groundY` placement, `collide` settle), the on-foot prompt
+      returns, and `player.bus` is `null` again. Works mid-route, not only at a stop.
+- [ ] **No mission / heli / fire from the bus.** While riding, `E` at a mission ring
+      or the helipad hops you **out** first (never starts a mission or boards the
+      heli); RPG crates don't grab; the blaster won't fire; you're not a freeze-tag
+      target. Boarding is blocked while a mission is running or while frozen.
+- [ ] **Shelters + labels.** Each of the four stops has a shelter (posts + roof +
+      bench + "LEXTOWN TRANSIT — <NAME>" sign) you can't walk through, and toggling
+      **LBL** shows an ambient (cyan, not gold) `BUS — <NAME>` label over it.
+- [ ] **Telemetry (log-only).** Boarding logs `mev k:60`, hopping out `k:61`, and
+      completing a full loop before exit `k:62` (visible in the server's
+      `logs/events-*.jsonl`, never chat, never persisted). No new localStorage key.
+- [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
+      pass and `npm test` (`node test/smoke.mjs`) is all green (client-only; unchanged
+      count).
