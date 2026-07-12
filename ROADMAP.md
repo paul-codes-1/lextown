@@ -29,42 +29,26 @@ missions 6 + 7 ripped from the July 2026 headlines (THE MELT, TAILGATE
 COMPLIANCE); the radio dial grew to four stations (BIG BLUE 100.1, NEWS 630
 THE BLOCK, 98.5 THE CAT, TRACKSIDE 1450) with per-station no-repeat rotations.
 
----
+**Phase 2 — the company release** (July 2026): who's in the city with you, and
+the city knowing you when you walk back in. **Ride shotgun** (passenger seats,
+the most-requested play-together moment) · **It remembers you** (your name,
+your look, and your bests survive the reload — no account) · **Private
+worlds** (share a `#room=` link, get your own Lexington) · **Weather** (rain,
+fog, and overcast on a shared real-world schedule) · **HORSEPOWER, tuned**
+(from real telemetry: 1 finisher in 138 players) · **Mission 8: LOOSE IN THE
+PADDOCK** (the freeze blaster gets a job). Specs in `PHASE2-SPEC.md`; the
+smoke suite grew 24 → 51 checks.
 
-## NOW — the company release (Phase 2)
-
-You stayed past the first minute. This release is about who's in the city with
-you — and the city knowing you when you walk back in.
-
-**Status: built.** Every item below (plus Mission 8, pulled forward from NEXT)
-is complete on the `feature/next-wave` branch — specs in `PHASE2-SPEC.md`, the
-smoke suite grown 24 → 51 checks — awaiting merge + deploy.
-
-- **Ride shotgun.** Hop into a friend's car as a passenger — hand on the door,
-  they drive, you watch downtown roll by with the radio on. The single
-  most-requested kind of "play together" moment. *(built)*
-- **It remembers you.** Account-less persistence — your name, your look, and
-  your mission best-times follow you back without ever creating an account
-  (privacy promise intact). *(built)*
-- **Private worlds / rooms.** A shareable room code so you and your friends get
-  your own instance of Lexington instead of the public commons. *(built)*
-- **Weather beyond the storm.** Rain and fog rolling through on a real
-  schedule — the same sky for everyone, no server required. *(built)*
-- **HORSEPOWER, tuned.** With completion data in hand (1 finisher in 138
-  players; 86s median session), every friction knob eased — plus a mission
-  funnel beacon so the next pass tunes on data. *(built)*
-- **Mission 8: LOOSE IN THE PADDOCK.** The freeze blaster finally gets a job —
-  settle three escaped foals at Elmendorf before the Keeneland sale. *(built)*
+**Phase 3 — the postcard release** (July 2026): what you take away.
+**Mission 9: AIR MAIL** (the jetpack's showcase — rooftop ring-run, fuel as
+the clock) · **Ghost racers** (your best DEADLINE run rides beside you) ·
+**Photo mode** (frame it, letterbox it, download a stamped postcard). Specs
+in `PHASE2-SPEC.md` §F7 + `PHASE3-SPEC.md`; suite at 56 checks.
 
 ---
 
 ## NEXT — depth and reasons to return
 
-- **Mission 9: AIR MAIL.** The jetpack's showcase — a rooftop ring-run over
-  the downtown skyline, fuel as the clock. *(specced in PHASE2-SPEC.md)*
-- **Ghost racers + photo mode.** Specced ahead in `PHASE3-SPEC.md` ("the
-  postcard release") — your best DEADLINE run as a translucent ghost, and
-  frame-it-letterbox-it-download-it postcards from LEXTOWN.
 - **Ride the bus.** A LexTran route through downtown you can actually board —
   the passenger seat tech, pointed at an NPC driver on a loop.
 - **Daily challenge.** One rotating objective a day with its own board —
