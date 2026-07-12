@@ -222,12 +222,14 @@ function isBanned(ip, name) {
   return bans.some((b) => b.ip === ip || (n && b.name && b.name.toLowerCase() === n));
 }
 // per-mode speed caps (m/s): m=0 walk (run 13.5), m=1 jetpack (fly 15 h,
-// 13 v up), m=2 driving (30 h), m=3 news chopper (36 h, 17 climb). Mode is
-// client-declared, so a cheater can claim the highest cap — this bounds
-// absurdity, not honesty.
+// 13 v up), m=2 driving (30 h), m=3 news chopper (36 h, 17 climb), m=4 shotgun
+// passenger (rides the driver's car, 30 h), m=5 scooter (9.5 top + jitter
+// slack). Mode is client-declared, so a cheater can claim the highest cap —
+// this bounds absurdity, not honesty. Without CAPS[5] the relay rewrites m:5→0,
+// so a remote scooter rider would render as a plain walker (no scooter mesh).
 // `v` caps UPWARD speed only; falling is capped separately at terminal
 // velocity, otherwise legitimate falls past ~4m get rejected (rubber-band).
-const CAPS = { 0: { h: 18, v: 14 }, 1: { h: 20, v: 16 }, 2: { h: 38, v: 12 }, 3: { h: 42, v: 20 }, 4: { h: 38, v: 12 } };
+const CAPS = { 0: { h: 18, v: 14 }, 1: { h: 20, v: 16 }, 2: { h: 38, v: 12 }, 3: { h: 42, v: 20 }, 4: { h: 38, v: 12 }, 5: { h: 13, v: 12 } };
 const MAX_FALL = 34;   // client terminal velocity is 30
 
 // --- the news chopper (one per room) --------------------------------------

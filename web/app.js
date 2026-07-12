@@ -1625,7 +1625,7 @@ var spawnX = 14, spawnZ = -9.5;
 })();
 var player = {x: spawnX, y: 0, z: spawnZ, vy: 0, ry: -Math.PI / 2, phase: 0, swing: 0,
               grounded: true, moving: 0, fuel: 100, thrusting: false, veh: null,
-              heli: false, ride: null, bus: null, kx: 0, kz: 0,
+              heli: false, ride: null, bus: null, scoot: null, kx: 0, kz: 0,
               pvp: false, frozenUntil: 0,
               av: makeAvatar(myColor, 0x3f7d3f)};
 function isFrozen(){ return performance.now() < player.frozenUntil; }
@@ -1650,7 +1650,7 @@ function spawnDart(ox, oy, oz, dx, dy, dz, mine){
               born: performance.now(), mine: !!mine});
 }
 function setPvp(on){
-  if (on && (player.ride || player.bus !== null)) return;   // a passenger is never a valid tag target
+  if (on && (player.ride || player.bus !== null || player.scoot)) return;   // a passenger / scooter rider is never a valid tag target
   if (on && blasterMissionActive()) return;   // mission darts never opt you in
   if (player.pvp === on) return;
   player.pvp = on;
@@ -1659,7 +1659,7 @@ function setPvp(on){
 }
 var _aim = new THREE.Vector3();
 function fireDart(){
-  if (mode !== 'player' || player.veh || player.ride || player.bus !== null || isFrozen()) return;
+  if (mode !== 'player' || player.veh || player.ride || player.bus !== null || player.scoot || isFrozen()) return;
   // first press draws = opts in — EXCEPT during a blaster mission, where the
   // dart is a tool and firing it must not make you a freeze-tag target
   if (!player.pvp && !blasterMissionActive()){ setPvp(true); return; }
@@ -2154,7 +2154,7 @@ function updatePickups(dt){
     s.g.visible = vis;
     if (!vis) continue;
     s.g.rotation.y += dt * 1.2;
-    if (!player.heli && !player.veh && !player.ride && player.bus === null && mode === 'player'){
+    if (!player.heli && !player.veh && !player.ride && player.bus === null && !player.scoot && mode === 'player'){
       var dx = s.g.position.x - player.x, dz = s.g.position.z - player.z;
       if (dx * dx + dz * dz < 6.5 && Math.abs(s.g.position.y - player.y) < 3){
         myRpg = 2;
@@ -3569,7 +3569,7 @@ function busBoardStop(){   // stopIdx you may board right now (doors open, withi
 function canBoardBus(){
   // the bus is legal locomotion during a DAILY DASH run, so allow boarding then too
   return mode === 'player' && !player.veh && !player.heli && !player.ride && player.bus === null &&
-    !isFrozen() && player.grounded && (allIdle() || missionD.stage === 'run') && busBoardStop() >= 0;
+    !player.scoot && !isFrozen() && player.grounded && (allIdle() || missionD.stage === 'run') && busBoardStop() >= 0;
 }
 function boardBus(){
   if (busBoardStop() < 0) return;
@@ -3601,7 +3601,7 @@ function leaveBus(){
   mev(61);
 }
 function busWaitHint(){   // 'BUS IN m:ss — NAME' when idling on foot within 25m of a stop
-  if (mode !== 'player' || player.veh || player.heli || player.ride || player.bus !== null) return '';
+  if (mode !== 'player' || player.veh || player.heli || player.ride || player.bus !== null || player.scoot) return '';
   if (isFrozen() || !(allIdle() || missionD.stage === 'run')) return '';
   var best = -1, bd = 625, i;   // 25m squared
   for (i = 0; i < BUS_STOPS.length; i++){
@@ -3629,6 +3629,161 @@ function updateBusRide(dt){   // pin the rider to their deterministic seat BEFOR
   player.av.g.position.set(seat.x, seat.y, seat.z);
   player.av.g.rotation.y = seat.ry;
 }
+
+// ---------- SCOOTER SHARE (F3) ----------
+// Kick-scooters racked around downtown: the missing rung between walking and
+// driving. On foot, press E within 2.2 m of a rack scooter to hop on, ride at
+// ~double walk speed (9.5 m/s), drop it anywhere with E. Scooters themselves are
+// LOCAL-ONLY (each client renders its own set, like ambient traffic) — riders are
+// synced over the new m:5 mode (server CAPS[5]); a remote rider gets a shared
+// scooter mesh drawn under their standing avatar. Mount stays visible + standing
+// (hands on the bars), unlike a car — so it rides through updateScoot, NOT the
+// passenger seat-pose path.
+var SCOOT_MAX = 9.5;        // top speed (m/s) — matches server CAPS[5] budget
+var SCOOT_GREEN = 0x3fce7a; // rental-green accent
+// deck + stem + handlebar + 2 wheels. Long axis = +x (forward at th=0, matching
+// the car body), origin at ground so wheels touch when g.position.y = groundY.
+function buildScooter(){
+  var g = new THREE.Group();
+  var deckMat = new THREE.MeshStandardMaterial({color: 0x2a2e33, roughness: 0.6, metalness: 0.3});
+  var accentMat = new THREE.MeshStandardMaterial({color: SCOOT_GREEN, roughness: 0.5, metalness: 0.2});
+  var wheelMat = new THREE.MeshStandardMaterial({color: 0x14161a, roughness: 0.8});
+  var deck = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.12, 0.34), accentMat);
+  deck.position.set(0, 0.3, 0); deck.castShadow = true; g.add(deck);
+  var stem = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.15, 8), deckMat);
+  stem.position.set(0.62, 0.86, 0); stem.rotation.z = 0.3; g.add(stem);
+  var bar = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.72, 8), deckMat);
+  bar.rotation.x = Math.PI / 2; bar.position.set(0.72, 1.36, 0); g.add(bar);
+  var grip = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.74, 8), accentMat);
+  grip.rotation.x = Math.PI / 2; grip.position.set(0.72, 1.36, 0); g.add(grip);
+  var wg = new THREE.CylinderGeometry(0.26, 0.26, 0.12, 12); wg.rotateX(Math.PI / 2);
+  [0.66, -0.66].forEach(function(wx){
+    var wh = new THREE.Mesh(wg, wheelMat); wh.position.set(wx, 0.26, 0); wh.castShadow = true; g.add(wh);
+  });
+  scene.add(g);
+  return g;
+}
+// Racks: a low bar on two posts + a SCOOTERS label; each spawns 2 scooters just
+// in front (fwd = cos a, -sin a; scooters line up along the lateral sin a, cos a).
+// `a` points the scooters at open ground so the mount approach is never blocked
+// by the rack's own (thin, low) collider.
+var scooters = [];
+var SCOOT_RACKS = [
+  {name: 'TRANSIT CENTER',   x: -72,  z: 86,  a: -Math.PI / 2},  // Vine St hub, near the LexTran shelter
+  {name: 'COURTHOUSE PLAZA', x: 56,   z: -18, a: -Math.PI / 2},  // Cheapside paver plaza, north of the old courthouse
+  {name: 'TRIANGLE PARK',    x: -158, z: 22,  a: Math.PI / 2},   // the wedge park green west of Big Blue
+  {name: 'UK CAMPUS',        x: 178,  z: 416, a: Math.PI / 2}    // the quad green, just off Euclid
+];
+(function(){
+  var postMat = new THREE.MeshStandardMaterial({color: 0x3a4247, roughness: 0.7, metalness: 0.3});
+  var railMat = new THREE.MeshStandardMaterial({color: SCOOT_GREEN, roughness: 0.5, metalness: 0.2});
+  SCOOT_RACKS.forEach(function(rk){
+    var fx = Math.cos(rk.a), fz = -Math.sin(rk.a);   // forward (toward open ground)
+    var lx = Math.sin(rk.a), lz = Math.cos(rk.a);    // lateral (along the rack bar)
+    var g = new THREE.Group();
+    [-0.8, 0.8].forEach(function(dl){
+      var p = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.9, 0.12), postMat);
+      p.position.set(lx * dl, 0.45, lz * dl); g.add(p);
+    });
+    var rail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 1.9), railMat);
+    rail.rotation.y = -rk.a; rail.position.y = 0.78; g.add(rail);
+    g.position.set(rk.x, groundY(rk.x, rk.z), rk.z);
+    scene.add(g);
+    // thin, low collider on the rack bar only (jetpack clears it; the scooters
+    // sit ~1.5 m forward on open ground so the 2.2 m mount reach isn't blocked)
+    colliders.push({x0: rk.x - Math.abs(lx) * 0.9 - 0.2, x1: rk.x + Math.abs(lx) * 0.9 + 0.2,
+                    z0: rk.z - Math.abs(lz) * 0.9 - 0.2, z1: rk.z + Math.abs(lz) * 0.9 + 0.2, h: 0.9});
+    labels.push({name: 'SCOOTERS — ' + rk.name, x: rk.x, y: 4.4, z: rk.z});   // ambient (cyan), not mission gold — like the bus stop labels
+    [-0.55, 0.55].forEach(function(dl){
+      var sx = rk.x + fx * 1.5 + lx * dl, sz = rk.z + fz * 1.5 + lz * dl;
+      var s = {g: buildScooter(), x: sx, z: sz, th: rk.a, taken: false, spd: 0};
+      s.g.position.set(sx, groundY(sx, sz), sz); s.g.rotation.y = rk.a;
+      scooters.push(s);
+    });
+  });
+})();
+function nearScooter(){
+  if (!player.grounded) return null;
+  var best = null, bd = 2.2 * 2.2, k;
+  for (k = 0; k < scooters.length; k++){
+    var s = scooters[k];
+    if (s.taken) continue;
+    var dx = s.x - player.x, dz = s.z - player.z, d2 = dx * dx + dz * dz;
+    if (d2 < bd){ bd = d2; best = s; }
+  }
+  return best;
+}
+function canMountScoot(){
+  // rideable mid-DAILY DASH run (like the bus) — legal locomotion during a dash
+  return mode === 'player' && !player.veh && !player.heli && !player.ride && player.bus === null &&
+    !player.scoot && !isFrozen() && player.grounded &&
+    (allIdle() || missionD.stage === 'run') && nearScooter() !== null;
+}
+function mountScoot(){
+  var s = nearScooter();
+  if (!s) return;
+  player.scoot = s; s.taken = true; s.spd = 0;
+  setPvp(false);   // hands on the bars — a rider is not a tag target and can't fire
+  player.x = s.x; player.z = s.z; player.ry = s.th;
+  player.y = groundY(s.x, s.z, player.y + 1); player.vy = 0; player.grounded = true;
+  playClip('sfx_door', {gain: 0.4});
+  caption('SCOOTER', 'HOP ON — E TO HOP OFF', 2000);
+}
+function dismountScoot(){
+  var s = player.scoot;
+  if (!s) return;
+  s.x = player.x; s.z = player.z; s.th = player.ry; s.spd = 0; s.taken = false;   // park at the drop spot
+  s.g.position.set(s.x, groundY(s.x, s.z), s.z); s.g.rotation.y = s.th;
+  var lx = Math.sin(player.ry), lz = Math.cos(player.ry);   // step off to the side (mirrors the car exit-drop)
+  var px = player.x + lx * 1.4, pz = player.z + lz * 1.4;
+  player.scoot = null;
+  playClip('sfx_door', {gain: 0.4});
+  player.x = px; player.z = pz;
+  player.y = groundY(px, pz, player.y + 1); player.vy = 0; player.grounded = false;
+  collide(player, 0.55, player.y);
+  player.av.g.visible = (mode !== 'player' || !camFP);
+  player.av.armL.rotation.x = 0; player.av.armR.rotation.x = 0;   // drop the bar pose; walking takes over next frame
+}
+// physics — mirrors updateDrive's shape (accel/brake/steer/collide/crunch) but
+// grounded-only, avatar-visible, and livelier steering at low speed.
+function updateScoot(dt){
+  var s = player.scoot;
+  var fwd = keysDown.w || keysDown.arrowup, back = keysDown.s || keysDown.arrowdown;
+  var left = keysDown.a || keysDown.arrowleft, right = keysDown.d || keysDown.arrowright;
+  if (stick.active){ fwd = stick.y < -0.25; back = stick.y > 0.25;
+                     left = stick.x < -0.3; right = stick.x > 0.3; }
+  if (isFrozen()){ fwd = back = left = right = false; }
+  if (fwd) s.spd += 8 * dt;
+  else if (back) s.spd -= 12 * dt;
+  else s.spd -= Math.sign(s.spd) * Math.min(Math.abs(s.spd), (3 + Math.abs(s.spd) * 0.4) * dt);
+  s.spd = Math.max(-2, Math.min(SCOOT_MAX, s.spd));
+  // steer factor 1.9*dt like the car, but the low-speed floor (0.55) keeps it
+  // nimble at a crawl where the car (min speed/9) barely turns
+  var stt = (left ? 1 : 0) - (right ? 1 : 0);
+  s.th += stt * (0.55 + 0.45 * Math.min(1, Math.abs(s.spd) / 6)) * 1.9 * dt * (s.spd >= 0 ? 1 : -1);
+  var fx = Math.cos(s.th), fz = -Math.sin(s.th);
+  var p = {x: player.x + fx * s.spd * dt, z: player.z + fz * s.spd * dt};
+  var ox = p.x, oz = p.z;
+  collide(p, 0.6, player.y);
+  if (p.x !== ox || p.z !== oz) s.spd *= 0.3;   // crunch
+  p.x = Math.max(X0 - 20, Math.min(X1 + 20, p.x));
+  p.z = Math.max(Z0 - 20, Math.min(Z1 + 20, p.z));
+  var gy = groundY(p.x, p.z, player.y);
+  player.x = p.x; player.z = p.z; player.y = gy; player.vy = 0; player.grounded = true;
+  player.ry = s.th;
+  player.moving = Math.abs(s.spd);
+  player.thrusting = false;
+  player.fuel = Math.min(100, player.fuel + 30 * dt);
+  jumpQueued = false;   // no jump while mounted — don't let a queued jump fire on dismount
+  // scooter mesh rides under the standing rider; avatar stands, hands on the bars
+  s.g.position.set(player.x, gy, player.z); s.g.rotation.y = s.th;
+  setSwing(player.av, 0, 0);
+  player.av.armL.rotation.x = -1.1; player.av.armR.rotation.x = -1.1;
+  player.av.flames.forEach(function(fl){ fl.visible = false; });
+  player.av.g.position.set(player.x, player.y, player.z);
+  player.av.g.rotation.y = player.ry;
+}
+function buildRemoteScooter(){ return buildScooter(); }   // shared remote mesh, mirrors buildRemoteCar
 
 function m2ZonesDone(){
   for (var z = 0; z < zoneState.length; z++)
@@ -5599,7 +5754,7 @@ function nearestVehicle(){
 }
 function fireAction(){
   if (player.heli) return;   // water cannon is hold-to-spray, handled in flight
-  if (player.ride || player.bus !== null) return;   // no firing from a passenger seat
+  if (player.ride || player.bus !== null || player.scoot) return;   // no firing from a passenger seat / scooter bars
   if (mission3.stage === 'photo' && !player.veh){ takePhoto(); return; }
   if (missionFight() && !player.veh){ fireRocket(); return; }
   if (myRpg > 0 && heliActive() && !player.veh){ fireRocket(); return; }
@@ -5615,6 +5770,7 @@ function tryEnterExit(){
   }
   if (player.ride){ leaveRide(true); return; }   // hop out before any mission/enter gate
   if (player.bus !== null){ leaveBus(); return; }   // bus hop-out first too, mirroring the shotgun seat
+  if (player.scoot){ dismountScoot(); return; }     // hop off the scooter before any mission/enter gate
   if (allIdle() && !player.veh && !isFrozen() && nearMissionTrig()){
     startMission();
     return;
@@ -5643,15 +5799,15 @@ function tryEnterExit(){
     startMission7();
     return;
   }
-  if (allIdle() && !player.veh && !player.ride && player.bus === null && !isFrozen() && nearM8Trig()){
+  if (allIdle() && !player.veh && !player.ride && player.bus === null && !player.scoot && !isFrozen() && nearM8Trig()){
     startMission8();
     return;
   }
-  if (allIdle() && !player.veh && !player.ride && player.bus === null && !isFrozen() && nearM9Trig()){
+  if (allIdle() && !player.veh && !player.ride && player.bus === null && !player.scoot && !isFrozen() && nearM9Trig()){
     startMission9();
     return;
   }
-  if (allIdle() && !player.veh && !player.ride && player.bus === null && !isFrozen() && nearMDTrig()){
+  if (allIdle() && !player.veh && !player.ride && player.bus === null && !player.scoot && !isFrozen() && nearMDTrig()){
     startMissionD();
     return;
   }
@@ -5674,6 +5830,7 @@ function tryEnterExit(){
     return;
   }
   if (canBoardBus()){ boardBus(); return; }         // catch the LexTown loop bus at a stop
+  if (canMountScoot()){ mountScoot(); return; }     // grab a racked scooter (after bus, before the car-enter fallthrough)
   if (canRideShotgun()){ requestRide(); return; }   // board a friend's moving car
   if (!player.grounded) return;
   var nv = nearestVehicle();
@@ -5728,6 +5885,7 @@ function updatePlayer(dt){
   if ((player.ride || player.bus !== null) && mode === 'player') return;   // seat pose is written by updateRideAlong / updateBusRide
   if (player.heli && mode === 'player'){ updateHeliFlight(dt); return; }
   if (player.veh && mode === 'player'){ updateDrive(dt); return; }
+  if (player.scoot && mode === 'player'){ updateScoot(dt); return; }   // grounded, avatar-visible ride — its own pose, NOT the seat-pose skip
   var f = 0, r = 0;
   if (mode === 'player' && !isFrozen()){
     if (keysDown.w || keysDown.arrowup) f += 1;
@@ -5899,6 +6057,7 @@ function removeRemote(id){
   if (r){
     scene.remove(r.av.g);
     if (r.carG) scene.remove(r.carG);
+    if (r.scootG) scene.remove(r.scootG);
     if (heli.pilot === id) heli.pilot = null;   // server broadcasts the crash
     delete remotes[id]; setNetChip();
   }
@@ -5953,7 +6112,7 @@ function nearestDriver(){
 }
 function canRideShotgun(){
   return mode === 'player' && !player.veh && !player.heli && !player.ride && player.bus === null &&
-    !isFrozen() && player.grounded && nearestDriver() !== null;
+    !player.scoot && !isFrozen() && player.grounded && nearestDriver() !== null;
 }
 function requestRide(){
   var drv = nearestDriver();
@@ -6018,7 +6177,7 @@ function handleNet(m){
     var r = remotes[m.id];
     if (!r){
       r = remotes[m.id] = {av: makeAvatar(m.c || 0x3a76c4, 0x555a63), name: m.n || m.id,
-        c: m.c || 0x3a76c4, m: 0, carG: null,
+        c: m.c || 0x3a76c4, m: 0, carG: null, scootG: null,
         buf: [], phase: Math.random() * 6, swing: 0, lx: m.x, lz: m.z, ry: m.ry || 0};
       setNetChip();
     }
@@ -6133,10 +6292,12 @@ function updateRemotes(dt){
     if (r.m === 2){        // driving: render their car, hide the avatar
       if (!r.carG) r.carG = buildRemoteCar(r.c);
       r.carG.visible = true; r.av.g.visible = false;
+      if (r.scootG) r.scootG.visible = false;
       r.carG.position.set(x, y + 0.15, z);
       r.carG.rotation.y = r.ry;
     } else if (r.m === 3){ // flying the news chopper: the one heli follows them
       if (r.carG) r.carG.visible = false;
+      if (r.scootG) r.scootG.visible = false;
       r.av.g.visible = false;
       r.av.g.position.set(x, y, z);   // tag/dart anchor
       heli.pilot = id;
@@ -6148,6 +6309,7 @@ function updateRemotes(dt){
       }
     } else if (r.m === 4){ // riding shotgun: seat the avatar on the bound driver's car
       if (r.carG) r.carG.visible = false;
+      if (r.scootG) r.scootG.visible = false;
       r.av.g.visible = true;
       setSwing(r.av, 0, 0);   // at-rest pose - a passenger isn't walking
       r.av.flames.forEach(function(fl){ fl.visible = false; });
@@ -6168,8 +6330,23 @@ function updateRemotes(dt){
         } else { r.av.g.position.set(x, y, z); r.av.g.rotation.y = r.ry; }   // fall back to their own packets
       }
       else { r.av.g.position.set(x, y, z); r.av.g.rotation.y = r.ry; }   // binding known, car not built yet — their packets already mirror the seat
+    } else if (r.m === 5){ // riding a scooter: standing avatar + a scooter mesh under them
+      if (r.carG) r.carG.visible = false;
+      if (!r.scootG) r.scootG = buildRemoteScooter();
+      r.scootG.visible = true;
+      r.av.g.visible = true;
+      setSwing(r.av, 0, 0);   // standing, no walk swing
+      r.av.armL.rotation.x = -1.1; r.av.armR.rotation.x = -1.1;   // hands forward on the bars
+      r.av.flames.forEach(function(fl){ fl.visible = false; });
+      r.av.gun.visible = false;
+      r.av.ice.visible = !!(r.frozenUntil && now < r.frozenUntil);
+      r.av.g.position.set(x, y, z);
+      r.av.g.rotation.y = r.ry;
+      r.scootG.position.set(x, y, z);
+      r.scootG.rotation.y = r.ry;
     } else {
       if (r.carG) r.carG.visible = false;
+      if (r.scootG) r.scootG.visible = false;
       r.av.g.visible = true;
       setSwing(r.av, r.phase, r.swing);
       r.av.flames.forEach(function(fl){ fl.visible = r.m === 1; });
@@ -6256,7 +6433,7 @@ function netTick(dt){
     var sry = player.heli ? heli.th : player.veh ? player.veh.th : player.ry;
     sry = Math.atan2(Math.sin(sry), Math.cos(sry));
     ws.send(JSON.stringify({t: 'state', n: myName, c: myColor,
-      m: (player.ride || player.bus !== null) ? 4 : player.heli ? 3 : player.veh ? 2 : (player.thrusting ? 1 : 0),
+      m: (player.ride || player.bus !== null) ? 4 : player.heli ? 3 : player.veh ? 2 : player.scoot ? 5 : (player.thrusting ? 1 : 0),
       p: player.pvp ? 1 : 0,
       x: +player.x.toFixed(2), y: +player.y.toFixed(2), z: +player.z.toFixed(2),
       ry: +sry.toFixed(3)}));
@@ -7829,6 +8006,7 @@ function frameStep(now){
     if (isFrozen()) hint = 'FROZEN' + (frozenByName ? ' BY ' + frozenByName : '') + ' — ' + Math.ceil((player.frozenUntil - performance.now()) / 1000) + 's';
     else if (player.bus !== null) hint = 'THE LOOP — NEXT: ' + BUS_STOPS[busStateAt(Date.now()).nextStopIdx].name + ' · E — HOP OUT · R — RADIO';
     else if (player.ride) hint = 'E — HOP OUT · R — RADIO · C — VIEW';
+    else if (player.scoot) hint = 'E — HOP OFF · W/S THROTTLE · A/D STEER · ' + Math.round(Math.abs(player.scoot.spd) * 3.6) + ' KM/H';
     else if (missionFight()) hint = 'SHOOT DOWN THE CHOPPER · F/CLICK — FIRE · RMB — AIM · CHOPPER HP ' + mh.hp + '/3';
     else if (player.heli) hint = 'W/S A/D FLY · SPACE UP · SHIFT DOWN · HOLD F/CLICK — WATER CANNON · E — EXIT · HP ' + heli.hp + '/3';
     else if (player.veh && player.veh.plow) hint = 'BLADE: ' + (bladeDown ? 'DOWN' : 'UP') + ' · SPACE — RAISE/LOWER · CLEAR THE SNOWY STREETS · E — EXIT';

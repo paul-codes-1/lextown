@@ -743,6 +743,54 @@ async function runDailyRollAssertion() {
   }
 }
 
+// --- SCOOTER SHARE: the m:5 mode (F3) ----------------------------------------
+// CAPS[5] = { h: 13, v: 12 } gives scooter mode a horizontal travel budget that
+// comfortably admits the client's 9.5 m/s top speed, AND — because m:5 is now a
+// KNOWN mode — the relay preserves m===5 instead of rewriting it to 0 (an unknown
+// m coerces to 0, which would make a remote rider render as a plain walker with
+// no scooter mesh). S1 rides one client at scooter speed for 15 packets and
+// asserts zero `correct` snap-backs; S2 asserts a peer receives the m:5 state with
+// the mode preserved (same relay-integrity pattern as E3's m:4 check).
+async function runScooterAssertions() {
+  const want = async (c, pred, opts) => {
+    try { return await expect(c, pred, { timeout: 1500, ...(opts || {}) }); }
+    catch { return null; }
+  };
+  const S = connect(); await opened(S); const SID = (await expect(S, (m) => m.t === 'welcome')).id;
+  const P = connect(); await opened(P); await expect(P, (m) => m.t === 'welcome');
+
+  // fix S's spawn with a first m:5 packet (the first packet is uncapped).
+  let x = 14; const z = -9.5;
+  send(S, { t: 'state', n: 'SCOOTZ', c: 0x3a76c4, m: 5, p: 0, x, y: 1, z, ry: Math.PI / 2 });
+  await sleep(140);
+
+  // S1: ride 15 packets at 9.5 m/s (~1.14 m per 120 ms hop, all m:5). A sustained
+  // scooter-speed run must never trip a `correct` snap-back — CAPS[5]'s budget
+  // admits it, where an absent CAPS entry would leave m:5 an unknown mode.
+  const sMark = S.msgs.length;
+  const HOP = 9.5 * 0.12;
+  for (let i = 0; i < 15; i++) {
+    x += HOP;
+    send(S, { t: 'state', n: 'SCOOTZ', c: 0x3a76c4, m: 5, p: 0, x, y: 1, z, ry: Math.PI / 2 });
+    await sleep(120);
+  }
+  await sleep(200);
+  const corrections = S.msgs.slice(sMark).filter((m) => m.t === 'correct').length;
+  check('F13a. m:5 scooter at 9.5 m/s is not move-rejected (CAPS[5] admits it; zero corrections)',
+    corrections === 0, 'corrections=' + corrections);
+
+  // S2: a fresh m:5 state relays to peer P with the mode preserved as 5 (an
+  // unknown mode would be rewritten to 0 — cf. runAssertions #2 and E3).
+  const pMark = P.msgs.length;
+  x += HOP;
+  send(S, { t: 'state', n: 'SCOOTZ', c: 0x3a76c4, m: 5, p: 0, x, y: 1, z, ry: Math.PI / 2 });
+  const relayed = await want(P, (m) => m.t === 'state' && m.id === SID && m.m === 5, { from: pMark });
+  check('F13b. m:5 scooter state relays to a peer with m preserved as 5 (not rewritten to 0)',
+    !!relayed, JSON.stringify(relayed));
+
+  S.ws.close(); P.ws.close();
+}
+
 async function main() {
   // snapshot the real scores.json (gitignored) so the m5 submit can't clobber it
   let scoresBackup = null, scoresExisted = false;
@@ -758,6 +806,7 @@ async function main() {
     await runM8Assertions();
     await runM9Assertions();
     await runDailyAssertions();
+    await runScooterAssertions();
     await runDailyRollAssertion();
   } catch (e) {
     check('harness ran to completion', false, String((e && e.stack) || e));

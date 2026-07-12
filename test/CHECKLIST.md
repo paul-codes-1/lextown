@@ -688,3 +688,48 @@ tabs for the announce check — **Tab A** plays, **Tab B** observes. Tip:
       the `#tut` DAILY DASH grid block, and the `#scoreListD` modal block are all present.
 - [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
       pass and `npm test` (`node test/smoke.mjs`) is 60/60.
+
+## F13 — SCOOTER SHARE (Phase 4 F3: racked kick-scooters, new m:5 mode)
+
+Scooters are **local-only** meshes (each client its own set, like ambient traffic),
+but *riders* are synced over the new **m:5** mode — so the remote-rider scooter mesh
+only shows with 2+ clients: run it with **Tab A** riding and **Tab B** watching.
+Server surface is one line (`CAPS[5]`) plus smoke checks F13a/F13b. Standing gate
+first (`node --check web/app.js && node --check server.js`, then `npm test`).
+
+Tip: `#debug=1` exposes `__lt.tp(x,z)` and `__lt.pos()`. Racks (`SCOOT_RACKS` in
+`web/app.js`): TRANSIT CENTER `x:-72,z:86`, COURTHOUSE PLAZA `x:56,z:-18`, TRIANGLE
+PARK `x:-158,z:22`, UK CAMPUS `x:178,z:416` — `#x=..&z=..` deep-links you next to one.
+
+- [ ] **Mount within reach.** On foot within ~2.2 m of a rack scooter, `E` (or the
+      touch **E-VEH** button) hops on: the `SCOOTER — HOP ON` caption fires, the blaster
+      holsters, and the `#hint` becomes `E — HOP OFF · W/S THROTTLE · A/D STEER · <km/h>`.
+      `E` does nothing if no scooter is in reach. Each rack shows a `SCOOTERS — <PLACE>`
+      ambient label under **LBL**.
+- [ ] **Speed vs. walk.** Ride open street: the scooter clearly out-paces walking,
+      tops out ~34 km/h (9.5 m/s), and is **nimble at a crawl** (tighter turn than a car
+      at low speed). Avatar stays **visible and standing**, hands forward on the bars, no
+      walk swing. Rides across grass, not just pavement.
+- [ ] **Crunch on contact.** Steer into a building/wall: `collide` stops you and speed
+      drops hard (crunch), no clipping through. No jumping while mounted (`Space` does
+      nothing); frozen (freeze-tag) zeroes throttle/steer just like a car.
+- [ ] **Dismount + remount.** `E` parks the scooter at the drop spot (`taken=false`) and
+      steps you off to the side (`groundY` + `collide` settle); the on-foot prompt
+      returns and `player.scoot` is `null`. Walk back and `E` re-mounts the same scooter
+      from where it was left.
+- [ ] **Remote rider shows a scooter (2 tabs).** Tab A rides; in **Tab B**, A stands on a
+      green scooter mesh that glides under them at real speed (no walk swing), and it
+      **disappears** the instant A hops off / drives / flies. A stale client without m:5
+      shows A sliding standing (walk fallback) — no crash either way.
+- [ ] **No firing / not a target while mounted.** `G`/fire won't draw or shoot on a
+      scooter (hands on the bars); you're `pvp:0`, so not a freeze-tag target; RPG crates
+      don't grab. `E` at a mission ring or the helipad hops you **off** first (never
+      starts a mission or boards). No car radio (a scooter is **not** `inCar()`).
+- [ ] **DAILY DASH on a scooter.** During a dash run (`missionD.stage==='run'`), you can
+      mount/dismount a scooter mid-run (legal locomotion, like the bus); checkpoints bank
+      while riding.
+- [ ] **Server plumbing + smoke.** `CAPS[5] = { h:13, v:12 }` present (9.5 top + jitter
+      slack); an m:5 run at scooter speed is never move-rejected and relays with `m===5`
+      preserved (not rewritten to 0). Smoke checks **F13a/F13b** cover it.
+- [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
+      pass and `npm test` (`node test/smoke.mjs`) is **62/62**.
