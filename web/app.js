@@ -5473,22 +5473,28 @@ var MD_POOL = [
 ];
 // deterministic daily route: seeded Fisher-Yates over the pool with dayIndex()-
 // derived wxRand draws, first MD_N in order. Same day => same five for everyone.
-function mdRoute(){
-  var pool = MD_POOL.slice(), seed = dayIndex() * 40503, i, j, tmp;
+function mdRoute(day){
+  var pool = MD_POOL.slice(), seed = day * 40503, i, j, tmp;
   for (i = pool.length - 1; i > 0; i--){
     j = Math.floor(wxRand(seed + i) * (i + 1));
     tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
   }
   return pool.slice(0, MD_N);
 }
-var MD_CPS = mdRoute();
+// the day MD_CPS was built for. The local clock seeds it, but the server's
+// dDay (riding along in every scores broadcast) overrides on mismatch — a
+// spoofed/skewed clock or a tab left open across the EST flip would otherwise
+// run yesterday's (or an arbitrary day's) route against today's board.
+var mdDay = dayIndex();
+var mdServerDay = null;   // latest dDay seen in a scores broadcast; wins over the local clock
+var MD_CPS = mdRoute(mdDay);
 // device best for TODAY only ({day, ms}); a stale (yesterday) best reads as null
 var dailyBest = null;
 try {
   var _db = JSON.parse(localStorage.getItem('lt_dailyBest') || 'null');
   if (_db && _db.day === dayIndex() && typeof _db.ms === 'number') dailyBest = _db;
 } catch (e){}
-var missionD = {stage: 'idle', tStage: 0, t0: 0, ms: 0, cur: 0, capIdx: 0};
+var missionD = {stage: 'idle', tStage: 0, t0: 0, ms: 0, cur: 0, capIdx: 0, day: 0, localDay: 0};
 var mdRings = [], mdTrig = null;
 (function(){
   mdTrig = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.06, 6, 24),
@@ -5510,9 +5516,21 @@ function nearMDTrig(){
   var dx = player.x - MD_TRIG.x, dz = player.z - MD_TRIG.z;
   return dx * dx + dz * dz < 16;
 }
-function startMissionD(){
-  MD_CPS = mdRoute();   // recompute in case the EST day rolled while the tab stayed open
+// (re)build the course for a day: route, ring positions, and a device best
+// that no longer applies reads as null. Called at run start, on the mid-run
+// day-flip abandon, and when a scores broadcast carries a different dDay.
+function mdSetDay(day){
+  mdDay = day;
+  MD_CPS = mdRoute(day);
   for (var k = 0; k < MD_N; k++) mdRings[k].position.set(MD_CPS[k].x, 1.2, MD_CPS[k].z);
+  if (dailyBest && dailyBest.day !== day) dailyBest = null;
+}
+function startMissionD(){
+  // recompute in case the EST day rolled while the tab stayed open; the
+  // server's day (when we've heard one) beats the local clock for the course
+  mdSetDay(mdServerDay !== null ? mdServerDay : dayIndex());
+  missionD.day = mdDay;
+  missionD.localDay = dayIndex();   // local-midnight stamp — the mid-run flip check
   missionD.stage = 'run'; missionD.tStage = 0; missionD.capIdx = 0;
   missionD.cur = 0; missionD.ms = 0; missionD.t0 = performance.now();
   caption('THE DASH', 'TODAY\'S DAILY DASH - FIVE CHECKPOINTS, ANY WHEELS. FIRST: ' + MD_CPS[0].name + '.', 5200);
@@ -5547,6 +5565,18 @@ function updateMissionD(dt){
       mdCleanup();
       return;
     }
+    // the EST day flipped mid-run: rollDaily() has already emptied the server
+    // board for the NEW route, so finishing now would rank an old-route time
+    // (likely #1 on an empty board). Compared against the LOCAL day stamped at
+    // start (not mdDay, which may be an adopted server day that differs from
+    // this clock) so an adopted course doesn't insta-abandon. Abandon + rebuild.
+    if (missionD.localDay !== dayIndex()){
+      caption('THE DASH', 'MIDNIGHT - A NEW ROUTE JUST DROPPED. RUN ABANDONED. E TO RUN TODAY\'S.', 4600);
+      mev(43);
+      mdCleanup();
+      mdSetDay(mdServerDay !== null ? mdServerDay : dayIndex());
+      return;
+    }
     // bank the current checkpoint on ANY locomotion (foot / car / jetpack / bus),
     // horizontal distance only so a low chopper pass or a drive-through both count
     var cp = MD_CPS[missionD.cur];
@@ -5569,7 +5599,10 @@ function updateMissionD(dt){
         mev(42);
       } else {
         sndTone(880, 0.18, 0, 'square', 0.14);
-        caption('THE DASH', 'CHECKPOINT ' + missionD.cur + '/' + MD_N + '. NEXT: ' + MD_CPS[missionD.cur].name + '.', 3200);
+        // "N OF 5 BANKED" (count done), never "CHECKPOINT N/5" — the HUD timer
+        // and hint both show the NEXT target's ordinal, and the two disagreeing
+        // on screen at once reads as an off-by-one
+        caption('THE DASH', missionD.cur + ' OF ' + MD_N + ' BANKED. NEXT: ' + MD_CPS[missionD.cur].name + '.', 3200);
       }
     }
     return;
@@ -6234,6 +6267,21 @@ function handleNet(m){
     if (m.id !== myId)
       sprayBurst(m.ox, m.oy, m.oz, m.dx, m.dy, m.dz);
   } else if (m.t === 'scores'){
+    // the server's day wins: a scores broadcast carrying a dDay we don't match
+    // means a skewed/spoofed local clock or the EST day flipping under an open
+    // tab — rebuild the course on the server's day (abandoning any live run,
+    // whose banked checkpoints belong to a route the board no longer holds)
+    if (typeof m.dDay === 'number'){
+      mdServerDay = m.dDay;
+      if (m.dDay !== mdDay){
+        if (missionD.stage === 'run'){
+          caption('THE DASH', 'THE BOARD ROLLED TO A NEW ROUTE. RUN ABANDONED. E TO RUN TODAY\'S.', 4600);
+          mev(43);
+          mdCleanup();
+        }
+        mdSetDay(m.dDay);
+      }
+    }
     renderScores(m);
   } else if (m.t === 'sys'){
     addChatLine('⚙ SERVER', String(m.msg || ''), false);
