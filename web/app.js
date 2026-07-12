@@ -2410,22 +2410,34 @@ var RADIO_STATIONS = [
   {name: 'TRACKSIDE 1450 AM',
    talk: ['tr_id', 'tr_bugle', 'tr_race', 'tr_tips', 'ad_park', 'ad_cars']}
 ];
-var radio = {st: 1, cur: null, last: '', lastKind: '', token: 0, queue: []};
+var radio = {st: 1, cur: null, last: '', lastKind: '', token: 0, queue: [], bags: {}};
 try { radio.st = Math.min(RADIO_STATIONS.length - 1, Math.max(0, parseInt(localStorage.getItem('lt_radio') || '1', 10) || 0)); } catch (e){}
 function radioActive(){ return radio.st > 0 && mode === 'player' && !!player.veh; }
-function radioPick(){
-  var st = RADIO_STATIONS[radio.st], pool;
-  if (st.music){
-    var brk = radio.lastKind === 'music' && Math.random() < 0.45;
-    pool = brk ? st.breaks : st.music;
-    radio.lastKind = brk ? 'break' : 'music';
-  } else {
-    pool = st.talk; radio.lastKind = 'talk';
+// fixed shuffled rotation per station+pool: a segment cannot air again until
+// every other segment in its pool has aired once. Shuffled per session, then
+// looped — a plain reshuffled bag can still repeat across the reshuffle seam.
+function radioDraw(kind, pool){
+  var k = radio.st + ':' + kind, rot = radio.bags[k];
+  if (!rot){
+    var order = pool.slice();
+    for (var i = order.length - 1; i > 0; i--){
+      var j = (Math.random() * (i + 1)) | 0, t = order[i]; order[i] = order[j]; order[j] = t;
+    }
+    rot = radio.bags[k] = {order: order, i: 0};
   }
-  var key = pool[(Math.random() * pool.length) | 0];
-  var guard = 4;
-  while (key === radio.last && pool.length > 1 && guard-- > 0)
-    key = pool[(Math.random() * pool.length) | 0];
+  var key = rot.order[rot.i];
+  rot.i = (rot.i + 1) % rot.order.length;
+  return key;
+}
+function radioPick(){
+  var st = RADIO_STATIONS[radio.st], kind;
+  if (st.music){
+    kind = radio.lastKind === 'music' && Math.random() < 0.45 ? 'break' : 'music';
+  } else {
+    kind = 'talk';
+  }
+  radio.lastKind = kind;
+  var key = radioDraw(kind, kind === 'break' ? st.breaks : (kind === 'music' ? st.music : st.talk));
   radio.last = key;
   return key;
 }
