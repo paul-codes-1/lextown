@@ -770,6 +770,7 @@ wss.on('connection', (ws, req) => {
         client.lastDiag = now;
         logEvent('diag', { id, room: client.room, fps: num(msg.fps, 0, 1000) ? msg.fps : null,
           coarse: msg.coarse ? 1 : 0, dpr: num(msg.dpr, 0, 10) ? msg.dpr : null,
+          rq: num(msg.rq, 1, 40) ? msg.rq : null,   // adaptive render quality ×10 (P3, pocket release)
           peers: num(msg.peers, 0, 1000) ? msg.peers : null });
       }
       return;

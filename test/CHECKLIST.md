@@ -733,3 +733,25 @@ PARK `x:-158,z:22`, UK CAMPUS `x:178,z:416` — `#x=..&z=..` deep-links you next
       preserved (not rewritten to 0). Smoke checks **F13a/F13b** cover it.
 - [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
       pass and `npm test` (`node test/smoke.mjs`) is **62/62**.
+
+## P — THE POCKET RELEASE (mobile-native pass)
+
+- [ ] **Full-tilt sprint.** On touch, dragging the move stick to its rim runs at
+      sprint speed (13.5, same as desktop Shift); part-tilt walks (7.5). Sprinting
+      past horses/foals spooks them exactly like a desktop sprint.
+- [ ] **Context E button.** On touch the E-VEH button relabels live: DRIVE near a
+      car, BOARD at open bus doors, SCOOT at a rack, START at any mission/daily
+      ring, SHOTGUN near a friend driving, FLY at the pad, CALM near a wild horse,
+      EXIT / HOP OFF while in/on anything. Desktop button text never changes.
+- [ ] **Adaptive quality.** Sustained <30fps steps render resolution down one
+      notch per 5s window (floor 1.0x), never back up. `rq` field appears in the
+      server's diag log lines (10 = floor, 15 = coarse default, 20 = desktop cap).
+- [ ] **Haptics (Android).** Short vibration on: getting frozen (80ms), mission
+      win (triple), m5/daily checkpoint bank (25ms), bus board (20ms), scooter
+      mount (15ms). No vibration on iOS (API absent) — no errors either.
+- [ ] **Touch-first tutorial.** On a phone the ON A PHONE section is the FIRST
+      section of the tutorial; on desktop it stays at the bottom. Copy mentions
+      rim-sprint and the relabeling E button.
+- [ ] **Landscape tip.** First tutorial close on a portrait phone shows the
+      one-shot 'LANDSCAPE PLAYS BETTER' caption; never again (lt_rot_seen).
+- [ ] **Standing gate green.** node --check both files; smoke 62/62.
