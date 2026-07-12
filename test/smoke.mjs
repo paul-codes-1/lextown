@@ -8,6 +8,9 @@
 // drives two (then three) real `ws` clients through the relay, and asserts the
 // welcome handshake, state/chat relay, the m5 DEADLINE board (valid + rejected
 // score), NPC tagging in /admin/stats, and out-of-bounds move correction.
+// A second cast then exercises "Ride Shotgun" — the server-arbitrated passenger
+// seat ({t:'ride'} enter/exit/deny/eject, welcome.seats snapshot, CAPS[4] relay
+// integrity) over more real ws connections (see runRideAssertions).
 // PASS/FAIL per check; exits non-zero if any check fails. Uses only `ws`
 // (already a dependency) + node builtins. Re-runnable.
 //
@@ -171,6 +174,132 @@ async function runAssertions() {
   A.ws.close(); B.ws.close(); C.ws.close();
 }
 
+// --- Ride Shotgun: server-arbitrated passenger seat (task #7) ----------------
+// A fresh cast exercises the {t:'ride'} enter/exit/deny/eject protocol, the
+// welcome.seats snapshot, and CAPS[4] relay integrity, all over real ws
+// connections. The server pins each client's position from ACCEPTED state
+// packets and reads client.pos/lastM for the ride range + mode checks, so every
+// client fixes its spawn with a couple of state packets first (m:2 for drivers
+// so lastM===2; m:0 for walkers). Positions stay inside WORLD (x -745..845,
+// z -1525..1025, y -1..190) and every hop is 0-3 m so the token-bucket travel
+// budget never false-rejects; packets are spaced >100ms to respect MAX_STATE_HZ.
+//   Cast: RA/RD drive; RB walks then rides (main subject); RC observes every
+//   broadcast; RE/RF are second-seat passengers. RIDE_RANGE is 12 m server-side.
+async function runRideAssertions() {
+  // timeout-tolerant expect: a miss becomes a failed check, not an aborted run.
+  // Ride broadcasts are instant, so a short timeout keeps failures cheap.
+  const want = async (c, pred, opts) => {
+    try { return await expect(c, pred, { timeout: 1500, ...(opts || {}) }); }
+    catch { return null; }
+  };
+  const state = (cl, m, x, z, n) =>
+    send(cl, { t: 'state', n, c: 0x3a76c4, m, p: 0, x, y: 1, z, ry: 0 });
+  const rideEnter = (cl, drv) => send(cl, { t: 'ride', a: 'enter', drv });
+  const isEnter = (drv, pax) => (m) => m.t === 'ride' && m.a === 'enter' && m.drv === drv && m.pax === pax;
+  const isExit  = (drv, pax) => (m) => m.t === 'ride' && m.a === 'exit'  && m.drv === drv && m.pax === pax;
+  const isEject = (drv, pax) => (m) => m.t === 'ride' && m.a === 'eject' && m.drv === drv && m.pax === pax;
+
+  // cast + welcome ids
+  const RA = connect(); await opened(RA); const A = (await expect(RA, (m) => m.t === 'welcome')).id;
+  const RB = connect(); await opened(RB); const B = (await expect(RB, (m) => m.t === 'welcome')).id;
+  const RC = connect(); await opened(RC); const C = (await expect(RC, (m) => m.t === 'welcome')).id;
+
+  // fix spawns: A drives (m:2) at the spawn point; B & C walk (m:0) 3 m either
+  // side of A (well inside RIDE_RANGE=12). Two packets each so lastM + pos stick.
+  for (let i = 0; i < 2; i++) {
+    state(RA, 2, 14, -9.5, 'RADRIVER');
+    state(RB, 0, 17, -9.5, 'RBRIDER');
+    state(RC, 0, 11, -9.5, 'RCWATCH');
+    await sleep(140);
+  }
+
+  // E1: B boards A -> the enter grant broadcasts to BOTH requester B and observer C.
+  rideEnter(RB, A);
+  const e1b = await want(RB, isEnter(A, B));
+  const e1c = await want(RC, isEnter(A, B));
+  check('E1a. ride enter grant reaches requester B', !!e1b, JSON.stringify(e1b));
+  check('E1b. ride enter grant reaches observer C', !!e1c, JSON.stringify(e1c));
+
+  // E1c: a client joining mid-ride sees the live seat in welcome.seats.
+  const RL = connect(); await opened(RL);
+  const wRL = await expect(RL, (m) => m.t === 'welcome');
+  const seatSnap = (wRL.seats || []).find((s) => s.drv === A && s.pax === B);
+  check('E1c. welcome.seats snapshot reflects the active ride', !!seatSnap, 'seats=' + JSON.stringify(wRL.seats));
+  RL.ws.close();
+
+  // E2: C tries to board the taken seat -> deny to C, and NO second enter
+  // broadcast reaches B (negative window, like the non-relay check #7b).
+  const bMark = RB.msgs.length, cDenyMark = RC.msgs.length;
+  state(RC, 0, 12, -9.5, 'RCWATCH');   // "moves near A" (already in range; 1 m hop)
+  await sleep(120);
+  rideEnter(RC, A);
+  const e2deny = await want(RC, (m) => m.t === 'ride' && m.a === 'deny', { from: cDenyMark });
+  await sleep(300);
+  const doubled = RB.msgs.slice(bMark).some(isEnter(A, C));
+  check('E2a. second boarder C is denied (seat taken)', !!e2deny, JSON.stringify(e2deny));
+  check('E2b. denied board sends no enter broadcast to B', !doubled, 'doubled=' + doubled);
+
+  // E3: seated B sends an m:4 state -> C receives it relayed with m===4 (CAPS[4]
+  // relay integrity; unknown modes used to be rewritten to 0). B hops to A's seat.
+  const cMark = RC.msgs.length;
+  state(RB, 4, 14, -9.5, 'RBRIDER');
+  const e3 = await want(RC, (m) => m.t === 'state' && m.id === B && m.m === 4, { from: cMark });
+  check('E3. m:4 passenger state relays as m:4 (not rewritten to 0)', !!e3, JSON.stringify(e3));
+
+  // E4: driver A leaves drive mode (m:0) -> everyone gets eject{drv:A,pax:B}.
+  await sleep(140);
+  const e4bMark = RB.msgs.length, e4cMark = RC.msgs.length;
+  state(RA, 0, 14, -9.5, 'RADRIVER');   // mode-switch slack covers the 0 m hop
+  const e4b = await want(RB, isEject(A, B), { from: e4bMark });
+  const e4c = await want(RC, isEject(A, B), { from: e4cMark });
+  check('E4. driver leaving drive mode ejects the passenger (broadcast)', !!e4b && !!e4c,
+    `B=${JSON.stringify(e4b)} C=${JSON.stringify(e4c)}`);
+
+  // E5: rebind (A resumes m:2, B re-boards), then A disconnects -> B gets eject.
+  await sleep(140);
+  state(RA, 2, 14, -9.5, 'RADRIVER');   // back to driving
+  await sleep(140);
+  state(RB, 0, 14, -9.5, 'RBRIDER');    // B on foot at the car
+  await sleep(140);
+  const e5cMark = RC.msgs.length;
+  rideEnter(RB, A);
+  const e5bind = await want(RC, isEnter(A, B), { from: e5cMark });
+  const e5Mark = RB.msgs.length;
+  RA.ws.close();                        // driver vanishes
+  const e5eject = await want(RB, isEject(A, B), { from: e5Mark });
+  check('E5a. passenger re-boards after driver resumes driving', !!e5bind, JSON.stringify(e5bind));
+  check('E5b. driver disconnect ejects the passenger', !!e5eject, JSON.stringify(e5eject));
+
+  // E6: B (on foot at the old spot) tries to board a NEW driver D ~40 m away ->
+  // deny purely on proximity (seat empty, D is driving, B is walking).
+  const RD = connect(); await opened(RD); const D = (await expect(RD, (m) => m.t === 'welcome')).id;
+  for (let i = 0; i < 2; i++) { state(RD, 2, 14, -50, 'RDDRIVER'); await sleep(140); }
+  const e6Mark = RB.msgs.length;
+  rideEnter(RB, D);                     // dist ~40.5 m > RIDE_RANGE
+  const e6 = await want(RB, (m) => m.t === 'ride' && m.a === 'deny', { from: e6Mark });
+  check('E6. out-of-range board request is denied', !!e6, JSON.stringify(e6));
+
+  // E7: E binds D, E disconnects -> observer sees exit{drv:D,pax:E} and the seat
+  // frees so F can then board D successfully.
+  const RE = connect(); await opened(RE); const E = (await expect(RE, (m) => m.t === 'welcome')).id;
+  const RF = connect(); await opened(RF); const F = (await expect(RF, (m) => m.t === 'welcome')).id;
+  for (let i = 0; i < 2; i++) { state(RE, 0, 16, -50, 'RERIDER'); state(RF, 0, 12, -50, 'RFRIDER'); await sleep(140); }
+  const e7bindMark = RC.msgs.length;
+  rideEnter(RE, D);
+  const e7bind = await want(RC, isEnter(D, E), { from: e7bindMark });
+  const e7exitMark = RC.msgs.length;
+  RE.ws.close();
+  const e7exit = await want(RC, isExit(D, E), { from: e7exitMark });
+  const e7reMark = RC.msgs.length;
+  rideEnter(RF, D);
+  const e7reboard = await want(RC, isEnter(D, F), { from: e7reMark });
+  check('E7a. passenger disconnect frees the seat (exit broadcast)', !!e7bind && !!e7exit,
+    `bind=${JSON.stringify(e7bind)} exit=${JSON.stringify(e7exit)}`);
+  check('E7b. freed seat accepts a new passenger', !!e7reboard, JSON.stringify(e7reboard));
+
+  RB.ws.close(); RC.ws.close(); RD.ws.close(); RF.ws.close();
+}
+
 async function main() {
   // snapshot the real scores.json (gitignored) so the m5 submit can't clobber it
   let scoresBackup = null, scoresExisted = false;
@@ -180,6 +309,7 @@ async function main() {
   try {
     child = await bootServer();
     await runAssertions();
+    await runRideAssertions();
   } catch (e) {
     check('harness ran to completion', false, String((e && e.stack) || e));
   } finally {

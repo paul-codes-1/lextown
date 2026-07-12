@@ -46,6 +46,7 @@ No server? Opening `web/index.html` directly (or hosting `web/` statically) runs
 | `Shift` | Run |
 | `Space` | Jump — **hold in mid-air to fly the jetpack** (fuel drains, recharges on the ground; land on rooftops) |
 | `E` | Enter / exit the nearest car — W/S to drive, A/D to steer, up to 108 km/h. On Big Blue's helipad it boards the **news chopper** instead |
+| `E` near a player who's driving | Ride shotgun — they drive, you look around; `R` radio, `C` camera, `E` again hops out |
 | In the chopper | W/S fly, A/D turn, `Space` climb, `Shift` descend, `E` lands (mid-air it bails out and the chopper crashes). Hold `F`/click for the **water cannon** — the jet pushes players around |
 | RPG | While the chopper is up, crates glow at five spots downtown. Walk over one to grab a launcher (2 rockets); `F` fires. Holding it locks you into first-person aim. Three hits down the chopper; rockets are harmless to people |
 | `E` at City Hall's gold ring | Start **THE RIBBON CUTTING** mission (see above) |
@@ -122,7 +123,7 @@ jq 'select(.e=="metrics") | {ts,online,rssMb}' logs/events-*.jsonl    # 5-min he
 
 The client renders remote players through a small interpolation buffer (~160 ms), so movement is smooth at any reasonable latency, and auto-reconnects with backoff if the relay drops. There is no world persistence — only the mission leaderboards survive a server restart.
 
-Ideas for where to take it: spatial interest management, persistence, private worlds, riding the cars.
+Ideas for where to take it: spatial interest management, persistence, private worlds.
 
 ## Ambient NPCs
 

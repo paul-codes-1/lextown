@@ -215,3 +215,77 @@ Precondition: m1–m3 beaten, m4 not; every mission idle. Reset `lt_m4_coached`.
       never stored/logged (server logs volume only). `web/privacy.html` still true.
 - [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
       passes, and `npm test` (`node test/smoke.mjs`) is all green.
+
+---
+
+## F5 — Ride Shotgun (passenger seat)
+
+Phase 2 F1. The seat only reveals its bugs with 2+ clients — one tab drives, one
+tab rides — so run this with **Tab A = the driver** and **Tab B = the passenger**,
+distinct names via `#name=DRIVER` / `#name=PAX`. Standing gate first
+(`node --check web/app.js && node --check server.js`, then `npm test`), then work
+the list by hand. Keep both consoles open.
+
+Reset the ride tip flag before an onboarding run — in Tab B's console:
+
+```js
+localStorage.removeItem('lt_ride_seen'); location.reload();
+```
+
+- [ ] **Prompt only near a live driver.** In Tab B on foot, walk near Tab A while
+      A is **not** driving → no ride prompt. A steals a car (`E`) and drives near B
+      → B's `#hint` shows `E — RIDE SHOTGUN`. Confirm the prompt never appears in a
+      solo/offline tab (bots don't drive, so it's self-gating).
+- [ ] **First-opportunity TIP caption, once.** The first time an eligible driver is
+      in range, B sees the one-shot `TIP — …ride along` caption; it sets
+      `lt_ride_seen` and does **not** fire again this session or after reload.
+- [ ] **Board while moving.** With A driving, B presses `E` (or the touch **E-VEH**
+      button) → B snaps into A's shotgun seat, B's caption reads
+      `RIDING SHOTGUN — DRIVER`, B's blaster holsters, and the radio chip appears
+      for B. Works while A is moving.
+- [ ] **Seated avatar stays glued (all three screens).** As A drives hard around
+      downtown, B's avatar + camera stay pinned to A's car at the shotgun offset —
+      no `W/A/S/D` movement from B, no relative jitter between B's avatar and the
+      car. Confirm on all three views: B's own screen, A's screen (B in A's shotgun
+      seat), and a **third** spectator tab (B seated with name tag over the seat, A
+      at the wheel).
+- [ ] **Driver sees the pickup.** Tab A gets the one-shot `PAX hopped in — shotgun`
+      caption when B boards.
+- [ ] **Radio is per-listener.** In Tab B, `R` cycles stations (persists
+      `lt_radio`), independent of A's station; `lt_snd` mute silences it. A's own
+      station does **not** change when B cycles.
+- [ ] **First-person + chat while seated.** `C` toggles B into first-person
+      (looking out the window); B chats (`Enter`) and the bubble/log appear in both
+      tabs.
+- [ ] **Single seat / deny.** Open a third tab (`#name=PAX2`), drive-adjacent, try
+      to board A while B is seated → denied with the brief deny caption, no second
+      figure appears; A still carries exactly one passenger.
+- [ ] **Passenger hops out.** B presses `E` → B drops at the car's current position
+      on foot, the on-foot prompt returns, and the seat frees (a new passenger can
+      now board). All tabs drop the seated figure.
+- [ ] **Driver exits car → auto-eject.** With B seated, A presses `E` to leave the
+      car → B is ejected to the car's parked spot on foot with the
+      `DRIVER parked — you hopped out` caption; both end up on foot in all tabs.
+- [ ] **Driver disconnects → gentle set-down.** Reboard, then close Tab A → B is set
+      down at the last car position (no crash, no console error), seat cleared
+      server-side.
+- [ ] **Passenger disconnects → seat frees.** Reboard, then close Tab B → A keeps
+      driving solo, A's seated figure clears, and a fresh passenger can board.
+- [ ] **Frozen can't board; seated can't be frozen.** With both opted into PvP on
+      foot, freeze B with a dart → while frozen, B's `E` board is denied. Once
+      seated, B is not a valid freeze target (blaster holstered, PvP opt-in dropped).
+- [ ] **No mission / heli / fire from the seat.** While seated, B at a mission ring
+      or the helipad → `E` does not start a mission or board the heli, and RPG
+      crates don't grab; B can't fire the blaster. The mission start-gates
+      (`allIdle`) still behave.
+- [ ] **Bounds hold.** A drives to the edge of `WORLD` (server clamps A) → B stays
+      glued and in-bounds; no `correct` snap-back storms on B, no console errors.
+- [ ] **Surfaces updated together.** The tutorial `CARS` grid (`#tut`) and the
+      README controls table both describe ride shotgun, and the seated/on-foot
+      `#hint` strings match; the `#help` bar's `E VEHICLE` token still covers it (no
+      new token).
+- [ ] **Privacy intact.** `lt_ride_seen` (a boolean tip flag) is the only new
+      localStorage key; no new server-side storage or logging; chat still never
+      stored. `web/privacy.html` remains true.
+- [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
+      pass and `npm test` (`node test/smoke.mjs`) is all green.

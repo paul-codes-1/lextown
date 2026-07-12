@@ -66,6 +66,7 @@ const server = http.createServer((req, res) => {
 //   server -> everyone:           {t:'chat', id, n, msg}
 //   server -> others on drop:     {t:'leave', id}
 //   news chopper:                 {t:'heli', a:'enter'|'exit'|'deny'|'snap'|'hp'|'down', ...}
+//   ride shotgun (seat mutex):    {t:'ride', a:'enter'|'exit'|'deny'|'eject', drv, pax}
 //   RPG rockets (cosmetic relay): {t:'rocket', ox..dz}; hit claim {t:'rhit'}
 //   water cannon:                 {t:'spray', ox..dz} relay; {t:'push', target, vx,vy,vz}
 //                                 -> validated, sent to all as {t:'pushed', id, vx,vy,vz}
@@ -193,7 +194,7 @@ function isBanned(ip, name) {
 // absurdity, not honesty.
 // `v` caps UPWARD speed only; falling is capped separately at terminal
 // velocity, otherwise legitimate falls past ~4m get rejected (rubber-band).
-const CAPS = { 0: { h: 18, v: 14 }, 1: { h: 20, v: 16 }, 2: { h: 38, v: 12 }, 3: { h: 42, v: 20 } };
+const CAPS = { 0: { h: 18, v: 14 }, 1: { h: 20, v: 16 }, 2: { h: 38, v: 12 }, 3: { h: 42, v: 20 }, 4: { h: 38, v: 12 } };
 const MAX_FALL = 34;   // client terminal velocity is 30
 
 // --- the news chopper -----------------------------------------------------
@@ -202,6 +203,12 @@ const MAX_FALL = 34;   // client terminal velocity is 30
 // packets (m=3). Pad = the helipad on Big Blue.
 const HELI_PAD = { x: -127, y: 129.8, z: 11, th: 1.5708 };
 const HELI = { pilot: null, hp: 3, x: HELI_PAD.x, y: HELI_PAD.y, z: HELI_PAD.z, th: HELI_PAD.th };
+// ride shotgun: the passenger seat is a server-arbitrated mutex keyed on the
+// driver's id, exactly like HELI.pilot — cars aren't server objects, so the
+// pairing lives here for the duration of the ride (never persisted or logged).
+const seats = new Map();   // driverId -> passengerId
+const seatOf = new Map();  // passengerId -> driverId
+const RIDE_RANGE = 12;     // looser than the client's 8m UX gate — absorbs the ~160ms interp trail
 function heliSnap() {
   return { t: 'heli', a: 'snap', pilot: HELI.pilot, hp: HELI.hp,
     x: HELI.x, y: HELI.y, z: HELI.z, th: HELI.th };
@@ -368,7 +375,7 @@ wss.on('connection', (ws, req) => {
     admin: false,
     stateTimes: [],       // sliding window for packet-rate limiting
     lastM: 0,             // last accepted mode (for mode-switch slack)
-    rocketTimes: [], sprayTimes: [], pushTimes: [], lastRhit: 0,
+    rocketTimes: [], sprayTimes: [], pushTimes: [], rideTimes: [], seatAt: 0, lastRhit: 0,
     chatTokens: 3, chatAt: Date.now(),
     strikes: 0,
     joinedAt: Date.now(), chatCount: 0, shotCount: 0, tagCount: 0, errCount: 0,
@@ -383,7 +390,8 @@ wss.on('connection', (ws, req) => {
   const peers = [...clients.values()]
     .filter((c) => c.id !== id && c.state)
     .map((c) => c.state);
-  ws.send(JSON.stringify({ t: 'welcome', id, peers, heli: heliSnap() }));
+  ws.send(JSON.stringify({ t: 'welcome', id, peers, heli: heliSnap(),
+    seats: [...seats.entries()].map(([drv, pax]) => ({ drv, pax })) }));
   console.log(`[join] ${id} (${clients.size} online)`);
 
   ws.on('message', (data) => {
@@ -425,6 +433,21 @@ wss.on('connection', (ws, req) => {
       client.posAt = now;
       const cleanM = CAPS[msg.m] ? msg.m : 0;
       client.lastM = cleanM;
+      // a driver who leaves drive mode (exited the car, jetpack, etc.) drops
+      // any passenger — eject BEFORE the driver's non-drive state relays
+      if (seats.has(id) && cleanM !== 2) {
+        const pax = seats.get(id);
+        seats.delete(id); seatOf.delete(pax);
+        broadcast({ t: 'ride', a: 'eject', drv: id, pax }, null);
+      }
+      // a seated passenger must self-report m:4 — a raw client that boards and
+      // then reports another mode would squat the seat forever. Grace window
+      // covers legit in-flight pre-grant packets (10 Hz + latency).
+      if (seatOf.has(id) && cleanM !== 4 && now - client.seatAt > 1200) {
+        const sdrv = seatOf.get(id);
+        seatOf.delete(id); seats.delete(sdrv);
+        broadcast({ t: 'ride', a: 'exit', drv: sdrv, pax: id }, null);
+      }
       const clean = { t: 'state', id, n: client.name || id,
         c: typeof msg.c === 'number' ? msg.c : 0x3a76c4,
         m: cleanM,
@@ -490,6 +513,46 @@ wss.on('connection', (ws, req) => {
           if (num(msg.th, -10, 10)) HELI.th = msg.th;
         }
         broadcast({ t: 'heli', a: 'exit', id, x: HELI.x, y: HELI.y, z: HELI.z, th: HELI.th }, ws);
+        return;
+      }
+      return;
+    }
+
+    if (msg.t === 'ride') {
+      // passenger seat arbitration — mirrors the heli enter/exit/deny pattern.
+      // Verbs: enter (board), exit (hop out); server also emits eject.
+      // rate-limited like every other broadcast-producing message (max 3/s)
+      client.rideTimes = client.rideTimes.filter((t) => now - t < 1000);
+      if (client.rideTimes.length >= 3) return;
+      client.rideTimes.push(now);
+      if (msg.a === 'enter') {
+        const drv = msg.drv;
+        const driver = [...clients.values()].find((c) => c.id === drv);
+        // deny if: driver gone or not driving; seat taken; requester is already
+        // a passenger / has a passenger / pilots the heli / is driving-or-flying;
+        // requester frozen; either side lacks a position; or out of range
+        // (horizontal AND vertical — no boarding from a bridge or rooftop)
+        if (!driver || driver.lastM !== 2 || seats.has(drv) || seatOf.has(drv) ||
+            seatOf.has(id) || seats.has(id) || HELI.pilot === id ||
+            client.lastM === 1 || client.lastM === 2 || client.lastM === 3 ||
+            now < client.frozenUntil ||
+            !client.pos || !driver.pos ||
+            Math.abs(client.pos.y - driver.pos.y) > 5 ||
+            Math.hypot(client.pos.x - driver.pos.x, client.pos.z - driver.pos.z) > RIDE_RANGE) {
+          ws.send(JSON.stringify({ t: 'ride', a: 'deny' }));
+          return;
+        }
+        seats.set(drv, id); seatOf.set(id, drv);
+        client.seatAt = now;
+        broadcast({ t: 'ride', a: 'enter', drv, pax: id }, null);
+        return;
+      }
+      if (msg.a === 'exit') {
+        if (seatOf.has(id)) {
+          const drv = seatOf.get(id);
+          seats.delete(drv); seatOf.delete(id);
+          broadcast({ t: 'ride', a: 'exit', drv, pax: id }, null);
+        }
         return;
       }
       return;
@@ -625,6 +688,18 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     clients.delete(ws);
     if (HELI.pilot === id) heliDown(null);   // pilot vanished: chopper crashes
+    // a driver leaving drops their passenger (gentle eject); a passenger
+    // leaving frees the driver's seat for a new boarder
+    if (seats.has(id)) {
+      const pax = seats.get(id);
+      seats.delete(id); seatOf.delete(pax);
+      broadcast({ t: 'ride', a: 'eject', drv: id, pax }, null);
+    }
+    if (seatOf.has(id)) {
+      const drv = seatOf.get(id);
+      seats.delete(drv); seatOf.delete(id);
+      broadcast({ t: 'ride', a: 'exit', drv, pax: id }, null);
+    }
     broadcast({ t: 'leave', id });
     logEvent('leave', { id, n: client.name, secs: Math.round((Date.now() - client.joinedAt) / 1000),
       chats: client.chatCount, shots: client.shotCount, tags: client.tagCount,

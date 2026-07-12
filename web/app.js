@@ -1609,7 +1609,7 @@ var spawnX = 14, spawnZ = -9.5;
 })();
 var player = {x: spawnX, y: 0, z: spawnZ, vy: 0, ry: -Math.PI / 2, phase: 0, swing: 0,
               grounded: true, moving: 0, fuel: 100, thrusting: false, veh: null,
-              heli: false, kx: 0, kz: 0,
+              heli: false, ride: null, kx: 0, kz: 0,
               pvp: false, frozenUntil: 0,
               av: makeAvatar(myColor, 0x3f7d3f)};
 function isFrozen(){ return performance.now() < player.frozenUntil; }
@@ -1634,6 +1634,7 @@ function spawnDart(ox, oy, oz, dx, dy, dz, mine){
               born: performance.now(), mine: !!mine});
 }
 function setPvp(on){
+  if (on && player.ride) return;   // a passenger is never a valid tag target
   if (player.pvp === on) return;
   player.pvp = on;
   player.av.gun.visible = on;
@@ -1641,7 +1642,7 @@ function setPvp(on){
 }
 var _aim = new THREE.Vector3();
 function fireDart(){
-  if (mode !== 'player' || player.veh || isFrozen()) return;
+  if (mode !== 'player' || player.veh || player.ride || isFrozen()) return;
   if (!player.pvp){ setPvp(true); return; }   // first press draws = opts in
   var now = performance.now();
   if (now - lastFire < 450) return;
@@ -2116,7 +2117,7 @@ function updatePickups(dt){
     s.g.visible = vis;
     if (!vis) continue;
     s.g.rotation.y += dt * 1.2;
-    if (!player.heli && !player.veh && mode === 'player'){
+    if (!player.heli && !player.veh && !player.ride && mode === 'player'){
       var dx = s.g.position.x - player.x, dz = s.g.position.z - player.z;
       if (dx * dx + dz * dz < 6.5 && Math.abs(s.g.position.y - player.y) < 3){
         myRpg = 2;
@@ -2412,7 +2413,8 @@ var RADIO_STATIONS = [
 ];
 var radio = {st: 1, cur: null, last: '', lastKind: '', token: 0, queue: [], bags: {}};
 try { radio.st = Math.min(RADIO_STATIONS.length - 1, Math.max(0, parseInt(localStorage.getItem('lt_radio') || '1', 10) || 0)); } catch (e){}
-function radioActive(){ return radio.st > 0 && mode === 'player' && !!player.veh; }
+function inCar(){ return !!player.veh || !!player.ride; }   // driving OR riding shotgun
+function radioActive(){ return radio.st > 0 && mode === 'player' && inCar(); }
 // fixed shuffled rotation per station+pool: a segment cannot air again until
 // every other segment in its pool has aired once. Shuffled per session, then
 // looped — a plain reshuffled bag can still repeat across the reshuffle seam.
@@ -2463,7 +2465,7 @@ function radioNext(tuneIn){
   if (!radio.cur) radioStop();
 }
 function cycleRadio(){
-  if (!player.veh || mode !== 'player') return;
+  if (!inCar() || mode !== 'player') return;
   pokeAudio(); assetAudioInit();
   radio.st = (radio.st + 1) % RADIO_STATIONS.length;
   try { localStorage.setItem('lt_radio', String(radio.st)); } catch (e){}
@@ -2479,7 +2481,7 @@ var _radioChipTxt = '';
 function updateRadioChip(){
   var el = document.getElementById('radiochip');
   if (!el) return;
-  var show = mode === 'player' && !!player.veh;
+  var show = mode === 'player' && inCar();
   var txt = show ? RADIO_STATIONS[radio.st].name : '';
   if (txt === _radioChipTxt) return;
   _radioChipTxt = txt;
@@ -4466,6 +4468,7 @@ function nearestVehicle(){
 }
 function fireAction(){
   if (player.heli) return;   // water cannon is hold-to-spray, handled in flight
+  if (player.ride) return;   // no firing from the shotgun seat
   if (mission3.stage === 'photo' && !player.veh){ takePhoto(); return; }
   if (missionFight() && !player.veh){ fireRocket(); return; }
   if (myRpg > 0 && heliActive() && !player.veh){ fireRocket(); return; }
@@ -4479,6 +4482,7 @@ function tryEnterExit(){
     exitHeli(heli.y > hgy + 3);
     return;
   }
+  if (player.ride){ leaveRide(true); return; }   // hop out before any mission/enter gate
   if (allIdle() && !player.veh && !isFrozen() && nearMissionTrig()){
     startMission();
     return;
@@ -4525,6 +4529,7 @@ function tryEnterExit(){
     collide(player, 0.55, player.y);
     return;
   }
+  if (canRideShotgun()){ requestRide(); return; }   // board a friend's moving car
   if (!player.grounded) return;
   var nv = nearestVehicle();
   if (!nv) return;
@@ -4575,6 +4580,7 @@ function updatePlayer(dt){
   if (wasFrozen && !frozenNow){ sndThaw(); frozenByName = ''; }
   wasFrozen = frozenNow;
   player.av.ice.visible = frozenNow;
+  if (player.ride && mode === 'player') return;   // seat pose is written by updateRideAlong
   if (player.heli && mode === 'player'){ updateHeliFlight(dt); return; }
   if (player.veh && mode === 'player'){ updateDrive(dt); return; }
   var f = 0, r = 0;
@@ -4691,6 +4697,8 @@ function updatePlayerCam(dt){
       var vg = player.veh.g.position;
       ex = vg.x + Math.cos(player.veh.th) * 0.4; ey = vg.y + 1.95;
       ez = vg.z - Math.sin(player.veh.th) * 0.4;
+    } else if (player.ride){
+      ex = player.x; ey = player.y + 0.95; ez = player.z;   // seated eye height (player.y is already the seat)
     } else {
       ex = player.x; ey = player.y + 2.35; ez = player.z;
     }
@@ -4708,16 +4716,18 @@ function updatePlayerCam(dt){
       tAz = Math.atan2(Math.cos(heli.th), -Math.sin(heli.th)) + Math.PI;
     else if (player.veh)
       tAz = Math.atan2(Math.cos(player.veh.th), -Math.sin(player.veh.th)) + Math.PI;
+    else if (player.ride)
+      tAz = player.ry + Math.PI;   // settle behind the car heading (player.ry carries it)
     else if (player.moving > 0)
       tAz = player.ry + Math.PI;
     if (tAz !== null)
-      rigP.az += angDelta(rigP.az, tAz) * Math.min(1, dt * (player.veh || player.heli ? 1.7 : 2.1));
+      rigP.az += angDelta(rigP.az, tAz) * Math.min(1, dt * (player.veh || player.heli || player.ride ? 1.7 : 2.1));
   }
   rigP.r = Math.max(4, Math.min(90, rigP.r));
   camR += ((aiming ? (player.heli ? 9 : 4.4) : rigP.r) - camR) * Math.min(1, dt * 9);
   // over-the-shoulder framing: a light constant offset on foot (the avatar
   // rides left-of-center instead of blocking the view), stronger while aiming
-  var onFoot = !player.veh && !player.heli;
+  var onFoot = !player.veh && !player.heli && !player.ride;
   var offAmt = 1.25 * aimBlend + (onFoot ? 0.55 * (1 - aimBlend) : 0);
   var offX = Math.cos(rigP.az) * offAmt;
   var offZ = -Math.sin(rigP.az) * offAmt;
@@ -4731,6 +4741,7 @@ function updatePlayerCam(dt){
 
 // ---------- net layer (WebSocket or local bot sim) ----------
 var remotes = {};   // id -> {av, name, buf, phase, swing, lastSeen, lx, lz, ry}
+var ridePairs = {};   // passengerId -> driverId (seat bindings, from 'ride' broadcasts)
 var ws = null, online = false;
 function peerCount(){ return Object.keys(remotes).length; }
 function setNetChip(){
@@ -4757,12 +4768,102 @@ function buildRemoteCar(color){
   scene.add(g);
   return g;
 }
+// ---------- ride shotgun (passenger seat) ----------
+// one tuning knob, shared by the local-passenger render AND the remote-passenger
+// render so the seated figure sits in the same spot for everyone. lx runs along
+// car-forward (cos th, -sin th); lz runs along car-lateral (sin th, cos th).
+// lz is negative so the shotgun seat lands on the OPPOSITE side from the driver's
+// +3.4 lateral exit-drop (tryEnterExit) - i.e. the passenger door, not the wheel.
+var SEAT_OFFSET = { lx: -0.2, lz: -0.62, y: 1.05 };
+function seatWorldPos(drvId){
+  var cx, cy, cz, th;
+  if (drvId === myId){
+    if (!player.veh) return null;
+    cx = player.veh.g.position.x; cy = player.veh.g.position.y; cz = player.veh.g.position.z; th = player.veh.th;
+  } else {
+    var r = remotes[drvId];
+    if (!r || r.m !== 2 || !r.carG) return null;
+    cx = r.carG.position.x; cy = r.carG.position.y; cz = r.carG.position.z; th = r.ry;
+  }
+  return { x: cx + SEAT_OFFSET.lx * Math.cos(th) + SEAT_OFFSET.lz * Math.sin(th),
+           y: cy + SEAT_OFFSET.y,
+           z: cz - SEAT_OFFSET.lx * Math.sin(th) + SEAT_OFFSET.lz * Math.cos(th),
+           ry: th };
+}
+function seatTaken(drvId){
+  for (var p in ridePairs) if (ridePairs[p] === drvId) return true;
+  return false;
+}
+function nearestDriver(){
+  var best = null, bd = 64;   // 8m squared - wider than the 6.5m on-foot enter check
+  for (var id in remotes){
+    var r = remotes[id];
+    if (r.m !== 2 || !r.carG || seatTaken(id)) continue;
+    var dx = r.carG.position.x - player.x, dz = r.carG.position.z - player.z;
+    var d2 = dx * dx + dz * dz;
+    if (d2 < bd){ bd = d2; best = id; }
+  }
+  return best;
+}
+function canRideShotgun(){
+  return mode === 'player' && !player.veh && !player.heli && !player.ride &&
+    !isFrozen() && player.grounded && nearestDriver() !== null;
+}
+function requestRide(){
+  var drv = nearestDriver();
+  if (!drv) return;
+  if (online && ws && ws.readyState === 1) ws.send(JSON.stringify({t: 'ride', a: 'enter', drv: drv}));
+}
+function enterRideLocal(drvId){
+  player.ride = drvId;
+  setPvp(false);   // holster the blaster - a passenger is not a tag target
+  rigP.r = Math.max(rigP.r, 17);
+  playClip('sfx_door', {gain: 0.6});
+  caption('RIDING SHOTGUN', remotes[drvId] ? remotes[drvId].name : 'DRIVER', 2200);
+  if (radio.st > 0) setTimeout(function(){ if (radioActive()) radioNext(true); }, 900);
+}
+function leaveRide(sendMsg){
+  if (!player.ride) return;
+  player.ride = null;
+  radioStop();
+  player.y = groundY(player.x, player.z, player.y + 1);
+  player.vy = 0; player.grounded = false;
+  collide(player, 0.55, player.y);
+  player.av.g.visible = (mode !== 'player' || !camFP);
+  if (sendMsg && online && ws && ws.readyState === 1) ws.send(JSON.stringify({t: 'ride', a: 'exit'}));
+}
+function handleRideMsg(m){
+  if (m.a === 'enter'){
+    ridePairs[m.pax] = m.drv;
+    if (m.pax === myId) enterRideLocal(m.drv);
+    else if (m.drv === myId) caption(remotes[m.pax] ? remotes[m.pax].name : 'SOMEONE', 'hopped in — shotgun', 2200);
+  } else if (m.a === 'deny'){
+    caption('RIDE', 'that seat is taken', 1800);
+  } else if (m.a === 'exit' || m.a === 'eject'){
+    delete ridePairs[m.pax];
+    if (m.pax === myId && player.ride){
+      leaveRide(false);
+      if (m.a === 'eject') caption(remotes[m.drv] ? remotes[m.drv].name : 'DRIVER', 'parked — you hopped out', 2600);
+    }
+  }
+}
+function updateRideAlong(dt){
+  if (!player.ride || mode !== 'player') return;
+  var seat = seatWorldPos(player.ride);
+  if (!seat) return;   // driver's car not interpolated yet - hold last pose
+  player.x = seat.x; player.y = seat.y; player.z = seat.z; player.ry = seat.ry;
+  player.moving = 0; player.thrusting = false; player.grounded = true;
+  setSwing(player.av, 0, 0);
+  player.av.g.position.set(seat.x, seat.y, seat.z);
+  player.av.g.rotation.y = seat.ry;
+}
 function handleNet(m){
   if (m.t === 'welcome'){
     myId = m.id; online = true;
     Object.keys(remotes).forEach(function(id){ if (id.indexOf('BOT') === 0) removeRemote(id); });
     (m.peers || []).forEach(handleNet);
     if (m.heli) handleHeliMsg(m.heli);
+    if (m.seats){ for (var si = 0; si < m.seats.length; si++) ridePairs[m.seats[si].pax] = m.seats[si].drv; }
     setNetChip();
     var adm = /admin=([^&#]+)/.exec(hashStr);   // #admin=<token> auto-auth
     if (adm) ws.send(JSON.stringify({t: 'chat', msg: '/admin ' + decodeURIComponent(adm[1])}));
@@ -4813,6 +4914,8 @@ function handleNet(m){
     }
   } else if (m.t === 'heli'){
     handleHeliMsg(m);
+  } else if (m.t === 'ride'){
+    handleRideMsg(m);
   } else if (m.t === 'pushed'){
     if (m.id === myId){   // caught in the water cannon jet
       player.kx += m.vx || 0; player.kz += m.vz || 0;
@@ -4890,6 +4993,16 @@ function updateRemotes(dt){
         heli.mesh.rotation.y = heli.th;
         heli.mesh.rotation.z += (-Math.min(36, spd) * 0.007 - heli.mesh.rotation.z) * Math.min(1, dt * 4);
       }
+    } else if (r.m === 4){ // riding shotgun: seat the avatar on the bound driver's car
+      if (r.carG) r.carG.visible = false;
+      r.av.g.visible = true;
+      setSwing(r.av, 0, 0);   // at-rest pose - a passenger isn't walking
+      r.av.flames.forEach(function(fl){ fl.visible = false; });
+      r.av.gun.visible = false;
+      r.av.ice.visible = false;
+      var drv = ridePairs[id], seat = drv ? seatWorldPos(drv) : null;
+      if (seat){ r.av.g.position.set(seat.x, seat.y, seat.z); r.av.g.rotation.y = seat.ry; }
+      else { r.av.g.position.set(x, y, z); r.av.g.rotation.y = r.ry; }   // binding unknown: fall back to their own packets
     } else {
       if (r.carG) r.carG.visible = false;
       r.av.g.visible = true;
@@ -4976,7 +5089,7 @@ function netTick(dt){
     var sry = player.heli ? heli.th : player.veh ? player.veh.th : player.ry;
     sry = Math.atan2(Math.sin(sry), Math.cos(sry));
     ws.send(JSON.stringify({t: 'state', n: myName, c: myColor,
-      m: player.heli ? 3 : player.veh ? 2 : (player.thrusting ? 1 : 0),
+      m: player.ride ? 4 : player.heli ? 3 : player.veh ? 2 : (player.thrusting ? 1 : 0),
       p: player.pvp ? 1 : 0,
       x: +player.x.toFixed(2), y: +player.y.toFixed(2), z: +player.z.toFixed(2),
       ry: +sry.toFixed(3)}));
@@ -5441,6 +5554,8 @@ try { if (localStorage.getItem('lt_waypt') === '0') show.waypt = false; } catch 
 if (/wp=0/.test(location.hash)) show.waypt = false;
 var objBannerDone = false;
 try { objBannerDone = localStorage.getItem('lt_obj_banner_seen') === '1'; } catch (e){}
+var rideTipShown = false;
+try { rideTipShown = !!localStorage.getItem('lt_ride_seen'); } catch (e){}
 var simH = 19.35;
 (function(){
   var m = /h=([\d.]+)/.exec(location.hash || '');
@@ -6204,6 +6319,7 @@ function frameStep(now){
   updateDarts(dt);
   runBots(dt);
   updateRemotes(dt);
+  updateRideAlong(dt);   // pin the passenger to the bound driver's seat BEFORE netTick/cam read player pos
   updateHeli(dt);
   updateMission(dt);
   updateMission2(dt);
@@ -6266,6 +6382,7 @@ function frameStep(now){
   var hint = '';
   if (mode === 'player'){
     if (isFrozen()) hint = 'FROZEN' + (frozenByName ? ' BY ' + frozenByName : '') + ' — ' + Math.ceil((player.frozenUntil - performance.now()) / 1000) + 's';
+    else if (player.ride) hint = 'E — HOP OUT · R — RADIO · C — VIEW';
     else if (missionFight()) hint = 'SHOOT DOWN THE CHOPPER · F/CLICK — FIRE · RMB — AIM · CHOPPER HP ' + mh.hp + '/3';
     else if (player.heli) hint = 'W/S A/D FLY · SPACE UP · SHIFT DOWN · HOLD F/CLICK — WATER CANNON · E — EXIT · HP ' + heli.hp + '/3';
     else if (player.veh && player.veh.plow) hint = 'BLADE: ' + (bladeDown ? 'DOWN' : 'UP') + ' · SPACE — RAISE/LOWER · CLEAR THE SNOWY STREETS · E — EXIT';
@@ -6291,11 +6408,19 @@ function frameStep(now){
     else if (allIdle() && nearM7Trig()) hint = 'E — START MISSION: TAILGATE COMPLIANCE';
     else if (canEnterHeli()) hint = 'E — FLY THE NEWS CHOPPER';
     else if (!heliUnlocked && canEnterHeliBase()) hint = 'LOCKED — BEAT "THE RIBBON CUTTING" AT CITY HALL TO FLY';
+    else if (player.grounded && canRideShotgun()) hint = 'E — RIDE SHOTGUN';
     else if (player.grounded && nearestVehicle()) hint = 'E — ENTER CAR';
     else if (!player.grounded && player.thrusting) hint = 'JETPACK · FUEL ' + Math.round(player.fuel) + '%';
     else if (myRpg > 0 && heliActive()) hint = 'RPG ×' + myRpg + ' · F/CLICK — FIRE AT THE CHOPPER · RMB — AIM';
     else if (player.pvp) hint = 'CLICK/F — FIRE · RMB — AIM · G — HOLSTER';
     else if (allIdle()) hint = nextMissionHint();
+  }
+  // one-time discoverability tip, fired only when the feature is actually usable
+  // (a live human is driving within range) - never repeats across sessions
+  if (!rideTipShown && canRideShotgun()){
+    rideTipShown = true;
+    try { localStorage.setItem('lt_ride_seen', '1'); } catch (e){}
+    caption('TIP', "walk up to a car someone's driving and press E to ride along", 4000);
   }
   els.hint.textContent = hint;
   els.hint.style.display = hint ? 'block' : 'none';
