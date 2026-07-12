@@ -2538,12 +2538,13 @@ function updateRadioChip(){
 // --- world/mission audio watcher, ticked from frame() ---
 var PARK_PTS = [[-171, 40], [122, 50], [250, 50], [350, 300], [150, -535], [150, -874]];
 var BELL_PT = {x: -46, z: -262};   // First Presbyterian tower
-var aw = {m1: '', m2: '', m3: '', m4: '', m5: '', m6: '', m7: '', hFloor: -1, horse: [], acc: 0};
+var aw = {m1: '', m2: '', m3: '', m4: '', m5: '', m6: '', m7: '', m8: '', m9: '', mD: '', hFloor: -1, horse: [], acc: 0};
 function stinger(stage, prev){
   if (stage === prev) return stage;
   if (prev !== ''){   // skip the very first observation (page load)
-    if (stage === 'intro' || stage === 'brief' || stage === 'driving' ||
-        stage === 'drive' || stage === 'tag') playClip('st_start', {gain: 0.7});
+    // leaving idle IS the mission start — keyed on prev so a brief->action
+    // transition never double-fires the start clip
+    if (prev === 'idle') playClip('st_start', {gain: 0.7});
     else if (stage === 'won') playClip('st_win', {gain: 0.8});
     else if (stage === 'fail') playClip('st_fail', {gain: 0.8});
   }
@@ -2563,6 +2564,9 @@ function updateAssetAudio(dt){
   aw.m5 = stinger(mission5.stage, aw.m5);
   aw.m6 = stinger(mission6.stage, aw.m6);
   aw.m7 = stinger(mission7.stage, aw.m7);
+  aw.m8 = stinger(mission8.stage, aw.m8);
+  aw.m9 = stinger(mission9.stage, aw.m9);
+  aw.mD = stinger(missionD.stage, aw.mD);
   // SNOW EMERGENCY: queue an EAS interrupt — it airs the moment the player
   // hops in the plow (the radio auto-starts and plays the queue first)
   if (aw.m2 === 'brief' && prevM2 !== 'brief' && prevM2 !== ''){
@@ -3573,7 +3577,7 @@ function busBoardStop(){   // stopIdx you may board right now (doors open, withi
 function canBoardBus(){
   // the bus is legal locomotion during a DAILY DASH run, so allow boarding then too
   return mode === 'player' && !player.veh && !player.heli && !player.ride && player.bus === null &&
-    !player.scoot && !isFrozen() && player.grounded && (allIdle() || missionD.stage === 'run') && busBoardStop() >= 0;
+    !player.scoot && !isFrozen() && player.grounded && (allIdle() || missionD.stage === 'run' || missionD.stage === 'brief') && busBoardStop() >= 0;
 }
 function boardBus(){
   if (busBoardStop() < 0) return;
@@ -3607,7 +3611,7 @@ function leaveBus(){
 }
 function busWaitHint(){   // 'BUS IN m:ss — NAME' when idling on foot within 25m of a stop
   if (mode !== 'player' || player.veh || player.heli || player.ride || player.bus !== null || player.scoot) return '';
-  if (isFrozen() || !(allIdle() || missionD.stage === 'run')) return '';
+  if (isFrozen() || !(allIdle() || missionD.stage === 'run' || missionD.stage === 'brief')) return '';
   var best = -1, bd = 625, i;   // 25m squared
   for (i = 0; i < BUS_STOPS.length; i++){
     var s = BUS_STOPS[i];
@@ -3724,7 +3728,7 @@ function canMountScoot(){
   // recorder samples only m 0/2 and DEADLINE's checkpoint banking assumes a car.
   return mode === 'player' && !player.veh && !player.heli && !player.ride && player.bus === null &&
     !player.scoot && !isFrozen() && player.grounded &&
-    (allIdle() || missionD.stage === 'run') && nearScooter() !== null;
+    (allIdle() || missionD.stage === 'run' || missionD.stage === 'brief') && nearScooter() !== null;
 }
 function mountScoot(){
   var s = nearScooter();
@@ -4568,11 +4572,16 @@ function nearM5Trig(){
   return dx * dx + dz * dz < 16;
 }
 function startMission5(){
-  mission5.stage = 'driving'; mission5.tStage = 0; mission5.capIdx = 0;
-  mission5.cur = 0; mission5.ms = 0; mission5.t0 = performance.now();
-  ghostRec = {samples: [], splits: []}; ghostDelta = null;   // always record (banks a new best)
-  loadGhost();   // load the best-run ghost for playback (if enabled + valid)
-  caption('THE BLOCK', 'THE BLOCK NEEDS ART FOR THE SIX O CLOCK. GRAB A CAR AND GET ME THESE FIVE SHOTS.', 5200);
+  mission5.stage = 'brief'; mission5.tStage = 0; mission5.capIdx = 0;
+  mission5.cur = 0; mission5.ms = 0;
+  // first-ever start gets the full two-beat brief; once briefed, retries get
+  // one quick context beat so grinding the board never re-sits the setup
+  mission5.quick = true;
+  try { mission5.quick = localStorage.getItem('lt_m5_briefed') === '1'; } catch (e){}
+  try { localStorage.setItem('lt_m5_briefed', '1'); } catch (e){}
+  caption('THE BLOCK', mission5.quick
+    ? 'THE SIX O CLOCK NEEDS ART AGAIN. YOU KNOW THE DRILL - FIVE SHOTS, ANY CAR.'
+    : 'COPY DESK. THE SIX O CLOCK NEEDS ART AND OUR PHOTOGRAPHER IS AT A WEDDING. IN VERSAILLES.', 4800);
   addChatLine('* MISSION', 'DEADLINE - drive five downtown checkpoints before air', true);
 }
 function m5Cleanup(){
@@ -4720,6 +4729,22 @@ function updateMission5(dt){
   mission5.tStage += dt;
   var t = mission5.tStage;
   updateGhost();   // play/park/hide the best-run replay (also hides it off the driving stages)
+  if (mission5.stage === 'brief'){
+    // clock is HELD through the brief — t0 is stamped at the GO beat, so
+    // reading the setup (or walking to a car) never costs leaderboard time
+    if (!mission5.quick && t > 5.4 && mission5.capIdx === 0){
+      mission5.capIdx = 1;
+      caption('THE BLOCK', 'FIVE SHOTS, FIVE SPOTS, ALL DOWNTOWN. THE RINGS MARK THE SHOTS. STEAL WHATEVER DRIVES.', 5000);
+    }
+    if (t > (mission5.quick ? 4.6 : 11.2)){
+      mission5.stage = 'driving'; mission5.tStage = 0; mission5.capIdx = 0;
+      mission5.t0 = performance.now();
+      ghostRec = {samples: [], splits: []}; ghostDelta = null;   // always record (banks a new best)
+      loadGhost();   // load the best-run ghost for playback (if enabled + valid)
+      caption('DISPATCH', 'CLOCK STARTED. FIRST: ' + M5_CPS[0].name + '.', 4000);
+    }
+    return;
+  }
   if (mission5.stage === 'driving'){
     // record the run at a steady 10Hz keyed on elapsed time (so sample i == i*0.1s
     // even through a frame hitch); captures the on-foot dash + the drive
@@ -4868,12 +4893,16 @@ var M6_SLOSH_LINES = [
   'ROCKY ROAD IS A FLAVOR, NOT A DRIVING STYLE.'
 ];
 function startMission6(){
-  mission6.stage = 'drive'; mission6.tStage = 0; mission6.capIdx = 0;
+  mission6.stage = 'brief'; mission6.tStage = 0; mission6.capIdx = 0;
   mission6.cur = 0; mission6.ms = 0; mission6.slosh = 0;
   mission6.prevSpd = 0; mission6.sloshAt = 0;
-  mission6.t0 = performance.now();
-  if (m6Cooler) m6Cooler.visible = true;
-  caption('CRANK & BOOM', 'THE64 BRACKET OPENS JULY 16 AND THE VOTERS HAVEN\'T TASTED A SPOONFUL. THE COOLER RIDES WITH YOU - GRAB A CAR.', 5400);
+  if (m6Cooler) m6Cooler.visible = true;   // handed over during the brief
+  mission6.quick = true;
+  try { mission6.quick = localStorage.getItem('lt_m6_briefed') === '1'; } catch (e){}
+  try { localStorage.setItem('lt_m6_briefed', '1'); } catch (e){}
+  caption('CRANK & BOOM', mission6.quick
+    ? 'FRESH COOLER, SAME BRACKET. FIVE STOPS, EASY ON THE CURBS.'
+    : 'THE64 BRACKET OPENS JULY 16 AND THE VOTERS HAVEN\'T TASTED A SPOONFUL.', 4800);
   addChatLine('* MISSION', 'THE MELT - five scoop stops before the cooler is soup', true);
 }
 function m6Cleanup(){
@@ -4890,13 +4919,25 @@ function updateMission6(dt){
   var now = performance.now();
   mission6.tStage += dt;
   var t = mission6.tStage;
+  if (mission6.stage === 'brief'){
+    // melt clock is HELD through the brief — m6MeltSec reads t0, stamped at GO
+    if (!mission6.quick){
+      if (t > 5.4 && mission6.capIdx === 0){ mission6.capIdx = 1; caption('CRANK & BOOM', 'LOUISVILLE HAS TWO SHOPS IN THIS BRACKET. LEXINGTON HAS US. NO PRESSURE.', 4600); }
+      if (t > 10.8 && mission6.capIdx === 1){ mission6.capIdx = 2; caption('CRANK & BOOM', 'THE COOLER RIDES ON YOUR BACK. EVERY CRASH SLOSHES IT, AND SLOSH MELTS SCOOPS. GRAB A CAR.', 5000); }
+    }
+    if (t > (mission6.quick ? 4.6 : 16.4)){
+      mission6.stage = 'drive'; mission6.tStage = 0; mission6.capIdx = 0;
+      mission6.t0 = performance.now();
+      caption('DISPATCH', 'THE MELT IS ON. FIRST STOP: ' + M6_CPS[0].name + '.', 4000);
+    }
+    return;
+  }
   if (mission6.stage === 'drive'){
     for (var k = 0; k < m6Rings.length; k++){
       var on = k === mission6.cur;
       m6Rings[k].visible = on;
       if (on) m6Rings[k].rotation.z += dt * 0.9;
     }
-    if (t > 7 && mission6.capIdx === 0){ mission6.capIdx = 1; caption('CRANK & BOOM', 'LOUISVILLE HAS TWO SHOPS IN THIS BRACKET. LEXINGTON HAS US. NO PRESSURE.', 4600); }
     // a collision chops car speed in a single frame (the 0.2x crunch in
     // updateDrive); braking never does — that one-frame cliff IS the slosh
     if (player.veh){
@@ -5020,15 +5061,19 @@ var M7_TAG_LINES = [
   'TAGGED. NICE CANOPY. SHAME ABOUT THE PAPERWORK.'
 ];
 function startMission7(){
-  mission7.stage = 'tag'; mission7.tStage = 0; mission7.capIdx = 0;
+  mission7.stage = 'brief'; mission7.tStage = 0; mission7.capIdx = 0;
   mission7.tagged = 0; mission7.ms = 0;
-  mission7.t0 = performance.now();
   for (var k = 0; k < m7Tents.length; k++){
     var tn = m7Tents[k];
     tn.tagged = false; tn.hold = 0;
     tn.canopy.material.color.setHex(tn.red ? 0xc41e3a : 0x0033a0);
   }
-  caption('UK COMPLIANCE', 'NEW TAILGATE GUIDELINES: EVERY STRUCTURE TAGGED WITH OWNER CONTACT INFO. THESE EIGHT CANOPIES HAVE NOTHING.', 5200);
+  mission7.quick = true;
+  try { mission7.quick = localStorage.getItem('lt_m7_briefed') === '1'; } catch (e){}
+  try { localStorage.setItem('lt_m7_briefed', '1'); } catch (e){}
+  caption('UK COMPLIANCE', mission7.quick
+    ? 'THE CANOPIES ARE BACK. EIGHT OF THEM. CLIPBOARD OUT.'
+    : 'EIGHT CANOPIES JUST WENT UP IN THE KROGER FIELD LOTS. SETUP DOES NOT BEGIN UNTIL AUGUST 8. IT IS JULY.', 5000);
   addChatLine('* MISSION', 'TAILGATE COMPLIANCE - tag all 8 canopies before kickoff', true);
 }
 function m7Cleanup(){
@@ -5043,9 +5088,20 @@ function updateMission7(dt){
   var now = performance.now();
   mission7.tStage += dt;
   var t = mission7.tStage;
+  if (mission7.stage === 'brief'){
+    // the kickoff clock is HELD through the brief — t0 stamps at GO
+    if (!mission7.quick){
+      if (t > 5.6 && mission7.capIdx === 0){ mission7.capIdx = 1; caption('UK COMPLIANCE', 'NEW GUIDELINES: EVERY STRUCTURE GETS TAGGED WITH THE OWNER\'S CONTACT INFO. THESE EIGHT HAVE NOTHING.', 5200); }
+      if (t > 11.6 && mission7.capIdx === 1){ mission7.capIdx = 2; caption('UK COMPLIANCE', 'STAND BY A CANOPY TO TAG IT. TWO USED DEEP GROUND STAKES NEAR TREE ROOTS - THOSE TAKE A LONGER PULL. ON FOOT. CLIPBOARDS DON\'T WORK FROM CARS.', 6200); }
+    }
+    if (t > (mission7.quick ? 4.6 : 18.4)){
+      mission7.stage = 'tag'; mission7.tStage = 0; mission7.capIdx = 0;
+      mission7.t0 = performance.now();
+      caption('DISPATCH', 'CLOCK STARTED. KICKOFF IN FOUR MINUTES. EIGHT CANOPIES.', 4200);
+    }
+    return;
+  }
   if (mission7.stage === 'tag'){
-    if (t > 6.4 && mission7.capIdx === 0){ mission7.capIdx = 1; caption('UK COMPLIANCE', 'SETUP DOES NOT BEGIN UNTIL AUGUST 8. IT IS JULY. AND YET.', 4400); }
-    else if (t > 13 && mission7.capIdx === 1){ mission7.capIdx = 2; caption('UK COMPLIANCE', 'TWO OF THEM USED DEEP GROUND STAKES. NEAR TREE ROOTS. STAND THERE UNTIL THE STAKES COME OUT.', 5000); }
     if ((now - mission7.t0) / 1000 > M7_BUDGET){
       mission7.stage = 'fail'; mission7.tStage = 0;
       caption('UK COMPLIANCE', 'KICKOFF. THE LOT IS A LAWLESS CANVAS CITY. WE GET THEM NEXT SEASON.', 4800);
@@ -5131,7 +5187,9 @@ function nearM8Trig(){
   var dx = player.x - M8_TRIG.x, dz = player.z - M8_TRIG.z;
   return dx * dx + dz * dz < 16;
 }
-function blasterMissionActive(){ return mission8.stage === 'wrangle'; }   // darts settle foals, no PvP opt-in
+// darts are a tool (no PvP opt-in) through the brief AND the wrangle — a
+// practice shot while the foreman is still talking must not draw you into tag
+function blasterMissionActive(){ return mission8.stage === 'wrangle' || mission8.stage === 'brief'; }
 // a foal: makeLiveHorse scaled down, with the coat material exposed for the
 // ice-blue settle shimmer.
 function makeFoal(col){
@@ -5155,9 +5213,9 @@ function makeFoal(col){
   return {g: g, coat: coat};
 }
 function startMission8(){
-  mission8.stage = 'wrangle'; mission8.tStage = 0; mission8.capIdx = 0;
+  mission8.stage = 'brief'; mission8.tStage = 0; mission8.capIdx = 0;
   mission8.penned = 0; mission8.ms = 0;
-  mission8.t0 = performance.now();
+  // foals spawn DURING the brief so the foreman can point at them grazing
   M8_SPOTS.forEach(function(s, i){
     var f = makeFoal([0x6e4a2e, 0x8a5a34, 0x4a3320][i % 3]);
     f.g.position.set(s.x, groundY(s.x, s.z) + 0.05, s.z);
@@ -5167,16 +5225,12 @@ function startMission8(){
   });
   if (m8PenRing) m8PenRing.visible = true;
   player.av.gun.visible = true;   // issue the blaster WITHOUT opting into PvP
-  // first-ever attempt leads with the lead-the-target coaching; once coached,
-  // returning players get the flavor brief. One caption() call only.
-  var m8Coached = true;
-  try { m8Coached = localStorage.getItem('lt_m8_coached') === '1'; } catch (e){}
-  if (!m8Coached){
-    caption('THE FOREMAN', 'AIM AHEAD OF A MOVING FOAL - THE DART TAKES A BEAT TO GET THERE.', 4200);
-    try { localStorage.setItem('lt_m8_coached', '1'); } catch (e){}
-  } else {
-    caption('THE FOREMAN', 'THREE FOALS JUMPED THE RAIL BEFORE THE SALE. SETTLE THEM WITH THE DART AND THEY WALK THEMSELVES TO THE PEN.', 5200);
-  }
+  mission8.quick = true;
+  try { mission8.quick = localStorage.getItem('lt_m8_briefed') === '1'; } catch (e){}
+  try { localStorage.setItem('lt_m8_briefed', '1'); } catch (e){}
+  caption('THE FOREMAN', mission8.quick
+    ? 'THEY\'RE OUT AGAIN. THREE FOALS. YOU KNOW WHERE THE PEN IS.'
+    : 'NIGHT BEFORE THE KEENELAND SALE AND THREE FOALS JUMPED THE RAIL. THAT IS THEM OUT THERE.', 5000);
   addChatLine('* MISSION', 'LOOSE IN THE PADDOCK - settle 3 foals with the dart', true);
   mev(20);   // funnel: mission start
 }
@@ -5253,6 +5307,20 @@ function updateMission8(dt){
   mission8.tStage += dt;
   var t = mission8.tStage;
   m8Foals.forEach(function(f){ updateFoal(f, dt, now); });
+  if (mission8.stage === 'brief'){
+    // the 180s clock is HELD through the brief — t0 stamps at GO. Darts fired
+    // now are duds (the settle check gates on 'wrangle') and never opt into PvP.
+    if (!mission8.quick){
+      if (t > 5.4 && mission8.capIdx === 0){ mission8.capIdx = 1; caption('THE FOREMAN', 'TAKE THE CALMING BLASTER. AIM AHEAD OF A MOVING FOAL - THE DART TAKES A BEAT TO GET THERE.', 5200); }
+      if (t > 11.2 && mission8.capIdx === 1){ mission8.capIdx = 2; caption('THE FOREMAN', 'A SETTLED FOAL WALKS ITSELF TO THE PEN. WALK UP SLOW - RUSH ONE AND IT BOLTS.', 4800); }
+    }
+    if (t > (mission8.quick ? 4.6 : 16.6)){
+      mission8.stage = 'wrangle'; mission8.tStage = 0; mission8.capIdx = 0;
+      mission8.t0 = performance.now();
+      caption('DISPATCH', 'CLOCK STARTED. THREE FOALS, THREE MINUTES. THE PEN IS THE AMBER RING.', 4400);
+    }
+    return;
+  }
   if (mission8.stage === 'wrangle'){
     if ((now - mission8.t0) / 1000 > M8_BUDGET){ m8Fail(); return; }
     if (mission8.penned >= 3){
@@ -5347,22 +5415,17 @@ function nearM9Trig(){
   return dx * dx + dz * dz < 20;
 }
 function startMission9(){
-  mission9.stage = 'flying'; mission9.tStage = 0; mission9.capIdx = 0;
+  mission9.stage = 'brief'; mission9.tStage = 0; mission9.capIdx = 0;
   mission9.cur = 0; mission9.ms = 0; mission9.dry = false;
-  mission9.t0 = performance.now();
-  // first-ever attempt leads with the hold-Space coaching; once coached,
-  // returning pilots get the postmaster's flavor brief. One caption() call (the
-  // m8 pattern). Fuel is NOT force-set — the start is on foot on the ground, so
-  // the stock 30/s ground regen tops the tank off in ~3s with zero fuel-model
+  // Fuel is NOT force-set — the start is on foot on the ground, so the stock
+  // 30/s ground regen tops the tank off during the brief with zero fuel-model
   // touch (per the F7 "fuel is untouched" non-goal).
-  var m9Coached = true;
-  try { m9Coached = localStorage.getItem('lt_m9_coached') === '1'; } catch (e){}
-  if (!m9Coached){
-    caption('THE POSTMASTER', 'HOLD SPACE TO CLIMB, EASE OFF TO GLIDE. LAND ON A ROOF PAD TO TOP OFF THE TANK.', 5200);
-    try { localStorage.setItem('lt_m9_coached', '1'); } catch (e){}
-  } else {
-    caption('THE POSTMASTER', 'STREET IS A PARKING LOT AND THE TRUCK ROLLS AT SIX. RUN THE MAIL ROOFTOP TO ROOFTOP - THE PADS ARE WHERE YOU CATCH YOUR BREATH, FUEL ONLY FILLS ON THE GROUND.', 6000);
-  }
+  mission9.quick = true;
+  try { mission9.quick = localStorage.getItem('lt_m9_briefed') === '1'; } catch (e){}
+  try { localStorage.setItem('lt_m9_briefed', '1'); } catch (e){}
+  caption('THE POSTMASTER', mission9.quick
+    ? 'ANOTHER BAG, SAME ROUTE. ROOFTOP TO ROOFTOP, ENDS ON BIG BLUE.'
+    : 'THE STREET IS A PARKING LOT AND THE MAIL TRUCK ROLLS AT SIX. SO TODAY THE MAIL GOES OVER THE STREET.', 5200);
   addChatLine('* MISSION', 'AIR MAIL - fly the rooftop mail route, land on the pads to refuel', true);
   mev(30);   // funnel: mission start
 }
@@ -5395,6 +5458,19 @@ function updateMission9(dt){
   var now = performance.now();
   mission9.tStage += dt;
   var t = mission9.tStage;
+  if (mission9.stage === 'brief'){
+    // the 180s clock is HELD through the brief — t0 stamps at GO
+    if (!mission9.quick){
+      if (t > 5.6 && mission9.capIdx === 0){ mission9.capIdx = 1; caption('THE POSTMASTER', 'JETPACK: HOLD SPACE TO CLIMB, EASE OFF TO GLIDE. THE TANK ONLY FILLS ON THE GROUND.', 5200); }
+      if (t > 11.4 && mission9.capIdx === 1){ mission9.capIdx = 2; caption('THE POSTMASTER', 'RING MEANS FLY THROUGH IT. PAD MEANS LAND AND CATCH YOUR BREATH. THE ROUTE ENDS ON BIG BLUE.', 5200); }
+    }
+    if (t > (mission9.quick ? 4.6 : 17.2)){
+      mission9.stage = 'flying'; mission9.tStage = 0; mission9.capIdx = 0;
+      mission9.t0 = performance.now();
+      caption('DISPATCH', 'CLOCK STARTED. THREE MINUTES. FIRST HOOP IS THE LOW ONE - HOLD SPACE.', 4600);
+    }
+    return;
+  }
   if (mission9.stage === 'flying'){
     // only the current waypoint is lit; the next lights on arrival
     for (var i = 0; i < m9Meshes.length; i++){
@@ -5542,9 +5618,22 @@ function startMissionD(){
   mdSetDay(mdServerDay !== null ? mdServerDay : dayIndex());
   missionD.day = mdDay;
   missionD.localDay = dayIndex();   // local-midnight stamp — the mid-run flip check
-  missionD.stage = 'run'; missionD.tStage = 0; missionD.capIdx = 0;
-  missionD.cur = 0; missionD.ms = 0; missionD.t0 = performance.now();
-  caption('THE DASH', 'TODAY\'S DAILY DASH - FIVE CHECKPOINTS, ANY WHEELS. FIRST: ' + MD_CPS[0].name + '.', 5200);
+  missionD.tStage = 0; missionD.capIdx = 0;
+  missionD.cur = 0; missionD.ms = 0;
+  // already ran today's route? straight to the clock — same-day re-runs are
+  // board grinding and re-briefing them is pure friction
+  if (dailyBest && dailyBest.day === missionD.localDay){
+    missionD.stage = 'run'; missionD.t0 = performance.now();
+    caption('THE DASH', 'YOU KNOW TODAY\'S ROUTE. CLOCK STARTED. FIRST: ' + MD_CPS[0].name + '.', 4400);
+  } else {
+    missionD.stage = 'brief';
+    missionD.quick = true;
+    try { missionD.quick = localStorage.getItem('lt_md_briefed') === '1'; } catch (e){}
+    try { localStorage.setItem('lt_md_briefed', '1'); } catch (e){}
+    caption('THE DASH', missionD.quick
+      ? 'A NEW ROUTE DROPPED AT MIDNIGHT. FIVE CHECKPOINTS, ANY WHEELS.'
+      : 'THE DAILY DASH: FIVE CHECKPOINTS, SAME ROUTE FOR EVERYBODY, NEW ROUTE AT MIDNIGHT.', 5000);
+  }
   addChatLine('* DAILY', 'THE DASH - five checkpoints, new route daily', true);
   mev(40);
 }
@@ -5561,6 +5650,19 @@ function updateMissionD(dt){
   var now = performance.now();
   missionD.tStage += dt;
   var t = missionD.tStage;
+  if (missionD.stage === 'brief'){
+    // clock HELD through the brief — t0 stamps at GO (grab wheels meanwhile)
+    if (!missionD.quick && t > 5.4 && missionD.capIdx === 0){
+      missionD.capIdx = 1;
+      caption('THE DASH', 'ANY WHEELS COUNT - CAR, BUS, SCOOTER, JETPACK, FEET. FASTEST TIME TODAY TAKES THE BOARD.', 5000);
+    }
+    if (t > (missionD.quick ? 4.6 : 10.8)){
+      missionD.stage = 'run'; missionD.tStage = 0; missionD.capIdx = 0;
+      missionD.t0 = performance.now();
+      caption('THE DASH', 'CLOCK STARTED. FIRST: ' + MD_CPS[0].name + '.', 4000);
+    }
+    return;
+  }
   if (missionD.stage === 'run'){
     // only the current checkpoint ring is lit; it spins slowly
     for (var k = 0; k < mdRings.length; k++){
