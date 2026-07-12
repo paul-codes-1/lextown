@@ -5941,8 +5941,15 @@ function updatePlayer(dt){
     if (keysDown.a || keysDown.arrowleft) r -= 1;
     if (stick.active){ f = -stick.y; r = stick.x; }
   }
-  // full-tilt on the touch stick sprints — Shift doesn't exist on a phone
-  var sp = (keysDown.shift || (stick.active && stick.x * stick.x + stick.y * stick.y > 0.85)) ? 13.5 : 7.5;
+  // full-tilt on the touch stick sprints — Shift doesn't exist on a phone.
+  // Blended across the outer throw rather than a hard threshold: the stick
+  // clamps each axis independently, so any decisive drag saturates one axis
+  // and a threshold would make walk unreachable AND pop speeds at 1px.
+  var sp = keysDown.shift ? 13.5 : 7.5;
+  if (stick.active){
+    var sm = Math.min(1, Math.hypot(stick.x, stick.y));
+    if (sm > 0.7) sp = Math.max(sp, 7.5 + 20 * (sm - 0.7));   // 7.5 → 13.5 across 0.7..1.0
+  }
   if (!player.grounded && player.thrusting) sp = 15;
   // water-cannon knockback: an impulse that decays; while it's strong you
   // can't fight it at full walking speed (also keeps combined speed under

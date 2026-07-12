@@ -737,8 +737,9 @@ PARK `x:-158,z:22`, UK CAMPUS `x:178,z:416` — `#x=..&z=..` deep-links you next
 ## P — THE POCKET RELEASE (mobile-native pass)
 
 - [ ] **Full-tilt sprint.** On touch, dragging the move stick to its rim runs at
-      sprint speed (13.5, same as desktop Shift); part-tilt walks (7.5). Sprinting
-      past horses/foals spooks them exactly like a desktop sprint.
+      sprint speed (13.5, same as desktop Shift); speed blends smoothly from walk
+      (7.5) to sprint across the outer stick throw — no speed pop at a threshold.
+      Sprinting past horses/foals spooks them exactly like a desktop sprint.
 - [ ] **Context E button.** On touch the E-VEH button relabels live: DRIVE near a
       car, BOARD at open bus doors, SCOOT at a rack, START at any mission/daily
       ring, SHOTGUN near a friend driving, FLY at the pad, CALM near a wild horse,
