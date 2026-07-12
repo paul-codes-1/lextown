@@ -1625,7 +1625,7 @@ var spawnX = 14, spawnZ = -9.5;
 })();
 var player = {x: spawnX, y: 0, z: spawnZ, vy: 0, ry: -Math.PI / 2, phase: 0, swing: 0,
               grounded: true, moving: 0, fuel: 100, thrusting: false, veh: null,
-              heli: false, ride: null, kx: 0, kz: 0,
+              heli: false, ride: null, bus: null, scoot: null, kx: 0, kz: 0,
               pvp: false, frozenUntil: 0,
               av: makeAvatar(myColor, 0x3f7d3f)};
 function isFrozen(){ return performance.now() < player.frozenUntil; }
@@ -1650,7 +1650,7 @@ function spawnDart(ox, oy, oz, dx, dy, dz, mine){
               born: performance.now(), mine: !!mine});
 }
 function setPvp(on){
-  if (on && player.ride) return;   // a passenger is never a valid tag target
+  if (on && (player.ride || player.bus !== null || player.scoot)) return;   // a passenger / scooter rider is never a valid tag target
   if (on && blasterMissionActive()) return;   // mission darts never opt you in
   if (player.pvp === on) return;
   player.pvp = on;
@@ -1659,7 +1659,7 @@ function setPvp(on){
 }
 var _aim = new THREE.Vector3();
 function fireDart(){
-  if (mode !== 'player' || player.veh || player.ride || isFrozen()) return;
+  if (mode !== 'player' || player.veh || player.ride || player.bus !== null || player.scoot || isFrozen()) return;
   // first press draws = opts in — EXCEPT during a blaster mission, where the
   // dart is a tool and firing it must not make you a freeze-tag target
   if (!player.pvp && !blasterMissionActive()){ setPvp(true); return; }
@@ -2154,7 +2154,7 @@ function updatePickups(dt){
     s.g.visible = vis;
     if (!vis) continue;
     s.g.rotation.y += dt * 1.2;
-    if (!player.heli && !player.veh && !player.ride && mode === 'player'){
+    if (!player.heli && !player.veh && !player.ride && player.bus === null && !player.scoot && mode === 'player'){
       var dx = s.g.position.x - player.x, dz = s.g.position.z - player.z;
       if (dx * dx + dz * dz < 6.5 && Math.abs(s.g.position.y - player.y) < 3){
         myRpg = 2;
@@ -2455,7 +2455,7 @@ var RADIO_STATIONS = [
 ];
 var radio = {st: 1, cur: null, last: '', lastKind: '', token: 0, queue: [], bags: {}};
 try { radio.st = Math.min(RADIO_STATIONS.length - 1, Math.max(0, parseInt(localStorage.getItem('lt_radio') || '1', 10) || 0)); } catch (e){}
-function inCar(){ return !!player.veh || !!player.ride; }   // driving OR riding shotgun
+function inCar(){ return !!player.veh || !!player.ride || player.bus !== null; }   // driving, riding shotgun, OR on the bus (it has a radio)
 function radioActive(){ return radio.st > 0 && mode === 'player' && inCar(); }
 // fixed shuffled rotation per station+pool: a segment cannot air again until
 // every other segment in its pool has aired once. Shuffled per session, then
@@ -2844,6 +2844,22 @@ function mev(k){
 }
 function fmtMs(ms){ return (ms / 1000).toFixed(1) + 's'; }
 function missionPoints(ms){ return Math.max(100, 1000 - Math.round(ms / 100)); }
+// DAILY DASH modal meta: 'NEW ROUTE IN xH yM' countdown to the next EST day
+// boundary (same anchor as dayIndex()) + this device's best time for today.
+// Computed locally so it shows offline too; dayIndex/dailyBest live on the
+// missionD island and resolve at call time (runtime), well after load.
+function dailyCountdown(){
+  var next = (dayIndex() + 1) * 86400e3 + 5 * 3600e3;   // ms at the next EST midnight boundary
+  var rem = Math.max(0, next - Date.now());
+  var h = Math.floor(rem / 3600e3), mn = Math.floor((rem % 3600e3) / 60e3);
+  return 'NEW ROUTE IN ' + h + 'H ' + mn + 'M';
+}
+function setDailyMeta(){
+  var el = document.getElementById('scoreDailyMeta');
+  if (!el) return;
+  var best = (dailyBest && dailyBest.day === dayIndex()) ? 'YOUR BEST TODAY ' + fmtMs(dailyBest.ms) : 'NO RUN TODAY YET';
+  el.textContent = dailyCountdown() + ' · ' + best;
+}
 function showScores(myMs, board){
   var sEl = document.getElementById('scores');
   if (!sEl) return;
@@ -2855,11 +2871,13 @@ function showScores(myMs, board){
     var verb = board === 2 ? 'PLOWED IN ' : board === 3 ? 'STORY BROKEN IN ' :
                board === 4 ? 'HORSES HOME IN ' : board === 5 ? 'DEADLINE MET IN ' :
                board === 6 ? 'SCOOPS LANDED IN ' : board === 7 ? 'LOT TAGGED IN ' :
-               board === 8 ? 'FOALS PENNED IN ' : board === 9 ? 'ROUTE FLOWN IN ' : 'CHOPPER DOWN IN ';
+               board === 8 ? 'FOALS PENNED IN ' : board === 9 ? 'ROUTE FLOWN IN ' :
+               board === 10 ? 'THE DASH IN ' : 'CHOPPER DOWN IN ';
     you = verb + fmtMs(myMs) + ' · +' + missionPoints(myMs) + ' PTS';
     var best = board === 2 ? m2Best : board === 3 ? m3Best : board === 4 ? m4Best :
                board === 5 ? m5Best : board === 6 ? m6Best : board === 7 ? m7Best :
-               board === 8 ? m8Best : board === 9 ? m9Best : missionBest;
+               board === 8 ? m8Best : board === 9 ? m9Best :
+               board === 10 ? (dailyBest ? dailyBest.ms : 0) : missionBest;
     if (best) you += ' · DEVICE BEST ' + fmtMs(best);
     if (roomCode) you += ' · PRIVATE ROOM · TIMES DON\'T RANK';
   } else {
@@ -2874,7 +2892,8 @@ function showScores(myMs, board){
       ' · ' + (m9Best ? 'AIR MAIL: ' + fmtMs(m9Best) : 'AIR MAIL: —');
   }
   document.getElementById('scoreYou').textContent = you;
-  ['scoreList', 'scoreList2', 'scoreList3', 'scoreList4', 'scoreList5', 'scoreList6', 'scoreList7', 'scoreList8', 'scoreList9'].forEach(function(id){
+  setDailyMeta();
+  ['scoreListD', 'scoreList', 'scoreList2', 'scoreList3', 'scoreList4', 'scoreList5', 'scoreList6', 'scoreList7', 'scoreList8', 'scoreList9'].forEach(function(id){
     var list = document.getElementById(id);
     if (!list) return;
     list.textContent = '';
@@ -2902,6 +2921,7 @@ function renderScores(m){
       list.appendChild(li);
     });
   }
+  fill('scoreListD', m.d || []);
   fill('scoreList', m.m1 || m.top || []);
   fill('scoreList2', m.m2 || []);
   fill('scoreList3', m.m3 || []);
@@ -2911,6 +2931,7 @@ function renderScores(m){
   fill('scoreList7', m.m7 || []);
   fill('scoreList8', m.m8 || []);
   fill('scoreList9', m.m9 || []);
+  setDailyMeta();   // refresh the countdown + device best when server times land
 }
 function updateMission(dt){
   var now = performance.now();
@@ -3328,6 +3349,444 @@ function updateWeather(dt){
   } else _nextThunder = 0;
   if (wxFlash > 0.01) wxFlash -= dt * 4; else wxFlash = 0;
 }
+
+// ---------- RIDE THE BUS (F1) ----------
+// A LexTran loop bus whose position is a pure function of wall-clock time — the
+// same determinism trick as the weather above. Every client computes
+// busStateAt(Date.now()), so the bus is bit-identical everywhere (private rooms
+// included) and survives a reload mid-route, with ZERO new network protocol. It
+// runs a legal downtown loop (Main St E → MLK S → Vine St W → Broadway N) in the
+// correct lane offset, dwells 14s with the doors open at four stops, and you ride
+// it by standing at a stop and pressing E (it rides the m:4 passenger channel).
+var BUS_SPEED = 8.5;      // m/s along the route polyline (under the server h:38 cap)
+var BUS_DWELL = 14000;    // ms stopped, doors open, at each stop
+var BUS_LANE = 3.6;       // lane offset from centerline — matches ambient traffic
+var BUS_FLOOR = 0.95;     // seated-avatar foot height above the road inside the bus
+var BUS_CURB = 4.6;       // lateral hop-out distance (drops you onto the sidewalk)
+// Stops in route order. sx/sz is where the bus halts (on the travel lane); th is
+// the road heading there. The board/shelter/curb points all sit on the +lateral
+// (curb) side, which is the correct kerb for both legs given the one-way tables.
+var BUS_STOPS = [
+  {name: 'VICTORIAN SQUARE', sx: -155, sz: BUS_LANE, th: 0},        // Main St, just east of Broadway
+  {name: 'PHOENIX PARK',     sx: 80,  sz: BUS_LANE, th: 0},        // Main St, just west of Limestone
+  {name: 'LIBRARY',          sx: 178, sz: 100 - BUS_LANE, th: Math.PI},  // Vine St WB, MLK/Rose end
+  {name: 'TRANSIT CENTER',   sx: -85, sz: 100 - BUS_LANE, th: Math.PI}   // Vine St WB, near Mill (real hub: 220 W Vine)
+];
+BUS_STOPS.forEach(function(s){
+  var lx = Math.sin(s.th), lz = Math.cos(s.th);   // +lateral unit = curb side
+  s.bx = s.sx + lx * 3.4; s.bz = s.sz + lz * 3.4;   // board point (bus door → curb gap)
+  s.shx = s.sx + lx * 6.4; s.shz = s.sz + lz * 6.4;  // shelter point, on the sidewalk
+  s.cbx = lx * BUS_CURB; s.cbz = lz * BUS_CURB;      // hop-out curb vector
+});
+// Seat grid inside the bus (bus-local: +lf forward along heading, +ll lateral).
+var BUS_SEATS = [
+  {lf: 3.0, ll: -0.8}, {lf: 3.0, ll: 0.8},
+  {lf: 0.6, ll: -0.8}, {lf: 0.6, ll: 0.8},
+  {lf: -1.8, ll: -0.8}, {lf: -1.8, ll: 0.8}
+];
+function busSeatFor(id){   // stable seat index from a player id (remote seat snap)
+  var h = 0, i; id = '' + id;
+  for (i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return h % BUS_SEATS.length;
+}
+function busSeatWorld(bs, idx){
+  var s = BUS_SEATS[idx % BUS_SEATS.length];
+  var c = Math.cos(bs.th), sn = Math.sin(bs.th);
+  var x = bs.x + s.lf * c + s.ll * sn;
+  var z = bs.z - s.lf * sn + s.ll * c;
+  return {x: x, y: groundY(x, z) + BUS_FLOOR, z: z, ry: bs.th};
+}
+// Piecewise timeline built once at boot: move segments (constant BUS_SPEED along
+// the polyline) alternating with 14s dwells at the stops. Corners are rounded
+// with a short quadratic-Bézier arc (3 interpolated points) so the bus swings the
+// turn instead of pivoting; heading falls out of each short segment's direction.
+var busPhases = [], BUS_PERIOD = 0, busStopArrive = [];
+(function(){
+  var R = 7;
+  function arc(cx, cz, dix, diz, dox, doz){   // p0 (approach end) → 3 mids → p2 (exit start)
+    var p0x = cx - dix * R, p0z = cz - diz * R, p2x = cx + dox * R, p2z = cz + doz * R;
+    var out = [[p0x, p0z]], i, t, mt;
+    for (i = 1; i <= 3; i++){
+      t = i / 4; mt = 1 - t;
+      out.push([mt * mt * p0x + 2 * mt * t * cx + t * t * p2x,
+                mt * mt * p0z + 2 * mt * t * cz + t * t * p2z]);
+    }
+    out.push([p2x, p2z]);
+    return out;
+  }
+  var zN = BUS_LANE, zS = 100 - BUS_LANE, xW = -196.4, xE = 196.4;
+  var neA = arc(xE, zN, 1, 0, 0, 1);   // Main E → MLK S
+  var seA = arc(xE, zS, 0, 1, -1, 0);  // MLK S → Vine W
+  var swA = arc(xW, zS, -1, 0, 0, -1); // Vine W → Broadway N
+  var nwA = arc(xW, zN, 0, -1, 1, 0);  // Broadway N → Main E
+  var P = [];
+  function pt(x, z, stop){ P.push({x: x, z: z, stop: stop}); }
+  pt(nwA[4][0], nwA[4][1]);                       // start: just onto Main St eastbound
+  pt(BUS_STOPS[0].sx, BUS_STOPS[0].sz, 0);        // VICTORIAN SQUARE
+  pt(BUS_STOPS[1].sx, BUS_STOPS[1].sz, 1);        // PHOENIX PARK
+  for (var i = 0; i < 5; i++) pt(neA[i][0], neA[i][1]);
+  for (i = 0; i < 5; i++) pt(seA[i][0], seA[i][1]);
+  pt(BUS_STOPS[2].sx, BUS_STOPS[2].sz, 2);        // LIBRARY
+  pt(BUS_STOPS[3].sx, BUS_STOPS[3].sz, 3);        // TRANSIT CENTER
+  for (i = 0; i < 5; i++) pt(swA[i][0], swA[i][1]);
+  for (i = 0; i < 4; i++) pt(nwA[i][0], nwA[i][1]);  // p0..m3; loop closes to P[0] = nwA[4]
+  var acc = 0, n = P.length;
+  for (i = 0; i < n; i++){
+    var a = P[i], b = P[(i + 1) % n];
+    var th = Math.atan2(-(b.z - a.z), b.x - a.x);
+    if (a.stop !== undefined){
+      busStopArrive[a.stop] = acc;
+      busPhases.push({kind: 'dwell', dur: BUS_DWELL, t0: acc, x: a.x, z: a.z, th: th, stopIdx: a.stop});
+      acc += BUS_DWELL;
+    }
+    var d = Math.hypot(b.x - a.x, b.z - a.z);
+    if (d > 0.01){
+      busPhases.push({kind: 'move', dur: d / BUS_SPEED * 1000, t0: acc, x0: a.x, z0: a.z, x1: b.x, z1: b.z, th: th});
+      acc += d / BUS_SPEED * 1000;
+    }
+  }
+  BUS_PERIOD = acc;
+  // heading continuity: a corner is 5 short constant-heading sub-segments, and
+  // busSeatWorld rotates seat offsets (up to 3.1m) by th — stepped headings pop
+  // a seated rider's camera ~1.2m per step. Give each move phase end headings
+  // equal to the circular mean of its neighbours' directions and lerp between
+  // them: a no-op on colinear straights, a smooth sweep through corners.
+  var mv = [];
+  for (i = 0; i < busPhases.length; i++) if (busPhases[i].kind === 'move') mv.push(busPhases[i]);
+  for (i = 0; i < mv.length; i++){
+    var pv = mv[(i - 1 + mv.length) % mv.length], nx = mv[(i + 1) % mv.length];
+    mv[i].th0 = mv[i].th + angDelta(mv[i].th, pv.th) / 2;
+    mv[i].th1 = mv[i].th + angDelta(mv[i].th, nx.th) / 2;
+  }
+})();
+function busStateAt(tMs){
+  var t = ((tMs % BUS_PERIOD) + BUS_PERIOD) % BUS_PERIOD;
+  var ph = busPhases[busPhases.length - 1], i;
+  for (i = 0; i < busPhases.length; i++){
+    if (t < busPhases[i].t0 + busPhases[i].dur){ ph = busPhases[i]; break; }
+  }
+  var x, z, th = ph.th, stopIdx = -1, doorOpen = false;
+  if (ph.kind === 'dwell'){ x = ph.x; z = ph.z; stopIdx = ph.stopIdx; doorOpen = true; }
+  else {
+    var f = ph.dur > 0 ? (t - ph.t0) / ph.dur : 0;
+    x = ph.x0 + (ph.x1 - ph.x0) * f; z = ph.z0 + (ph.z1 - ph.z0) * f;
+    th = ph.th0 + angDelta(ph.th0, ph.th1) * f;   // smooth corner sweep (see boot loop)
+  }
+  var best = 1e18, ns = 0;
+  for (i = 0; i < busStopArrive.length; i++){
+    var e = (busStopArrive[i] - t + BUS_PERIOD) % BUS_PERIOD;
+    if (doorOpen && i === stopIdx) e += BUS_PERIOD;   // skip the stop we're sitting at
+    if (e < best){ best = e; ns = i; }
+  }
+  return {x: x, z: z, th: th, stopIdx: stopIdx, doorOpen: doorOpen, nextStopIdx: ns, etaMs: best % BUS_PERIOD};
+}
+function busEtaToStop(tMs, si){
+  var t = ((tMs % BUS_PERIOD) + BUS_PERIOD) % BUS_PERIOD;
+  return (busStopArrive[si] - t + BUS_PERIOD) % BUS_PERIOD;
+}
+function busFmtEta(ms){ var s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2); }
+
+// bus + shelters + labels (drawn on canvas at boot, like everything else)
+var busMesh = new THREE.Group();
+(function(){
+  var busTex = makeTex(256, 64, function(g, w, h){
+    g.fillStyle = '#1f8f74'; g.fillRect(0, 0, w, h);                 // teal body
+    g.fillStyle = '#176b57'; g.fillRect(0, h * 0.66, w, h * 0.2);    // lower green band
+    g.fillStyle = '#0d2b28';                                         // window strip
+    for (var x = 8; x < w - 8; x += 30) g.fillRect(x, 12, 22, 20);
+    g.fillStyle = 'rgba(255,255,255,0.14)';
+    for (x = 8; x < w - 8; x += 30) g.fillRect(x, 12, 22, 3);
+  });
+  var bodyMat = new THREE.MeshStandardMaterial({map: busTex, roughness: 0.6, metalness: 0.15});
+  var body = new THREE.Mesh(new THREE.BoxGeometry(11, 2.6, 3), bodyMat);
+  body.position.y = 2.3; body.castShadow = true; busMesh.add(body);
+  var floor = new THREE.Mesh(new THREE.PlaneGeometry(10.4, 2.6),
+    new THREE.MeshStandardMaterial({color: 0x222a2c, roughness: 0.9}));
+  floor.rotation.x = -Math.PI / 2; floor.position.y = 1.02; busMesh.add(floor);
+  var wheelG = new THREE.CylinderGeometry(0.55, 0.55, 0.5, 10); wheelG.rotateX(Math.PI / 2);
+  var wheelMat = new THREE.MeshStandardMaterial({color: 0x14161a, roughness: 0.8});
+  [[3.6, 1.4], [3.6, -1.4], [-3.6, 1.4], [-3.6, -1.4]].forEach(function(w){
+    var wh = new THREE.Mesh(wheelG, wheelMat); wh.position.set(w[0], 0.55, w[1]); busMesh.add(wh);
+  });
+  // lit door strip on the +lateral (curb) side; brightens while dwelling
+  var doorMat = new THREE.MeshStandardMaterial({color: 0x0a1a16, emissive: 0x9ff4d0, emissiveIntensity: 0});
+  var door = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.0, 0.1), doorMat);
+  door.position.set(1.6, 1.6, 1.52); busMesh.add(door);
+  busMesh.userData.doorMat = doorMat;
+  // "THE LOOP" head sign on the front (+x end)
+  var signTex = makeTex(128, 32, function(g, w, h){
+    g.fillStyle = '#111'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#ffd24a'; g.font = 'bold 17px Helvetica, Arial, sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('THE LOOP', w / 2, h / 2 + 1);
+  });
+  var sign = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 0.85),
+    new THREE.MeshStandardMaterial({map: signTex, emissive: 0xffffff, emissiveMap: signTex, emissiveIntensity: 0.5}));
+  sign.rotation.y = Math.PI / 2; sign.position.set(5.51, 2.9, 0); busMesh.add(sign);
+  scene.add(busMesh);
+})();
+(function(){
+  var postMat = new THREE.MeshStandardMaterial({color: 0x3a4247, roughness: 0.7, metalness: 0.3});
+  var roofMat = new THREE.MeshStandardMaterial({color: 0x1f8f74, roughness: 0.6});
+  var benchMat = new THREE.MeshStandardMaterial({color: 0x5a4634, roughness: 0.9});
+  BUS_STOPS.forEach(function(s){
+    var g = new THREE.Group();
+    var postG = new THREE.BoxGeometry(0.16, 3.0, 0.16);
+    [-2, 2].forEach(function(dx){
+      var p = new THREE.Mesh(postG, postMat); p.position.set(dx, 1.5, -0.6); g.add(p);
+    });
+    var roof = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.18, 1.8), roofMat);
+    roof.position.set(0, 3.05, 0); roof.castShadow = true; g.add(roof);
+    var bench = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.16, 0.55), benchMat);
+    bench.position.set(0, 0.6, -0.6); g.add(bench);
+    var signTex = makeTex(256, 48, function(gc, w, h){
+      gc.fillStyle = '#0d2b28'; gc.fillRect(0, 0, w, h);
+      gc.strokeStyle = '#6ef7df'; gc.lineWidth = 3; gc.strokeRect(3, 3, w - 6, h - 6);
+      gc.fillStyle = '#eafffa'; gc.font = 'bold 13px Helvetica, Arial, sans-serif';
+      gc.textBaseline = 'middle';
+      gc.fillText('LEXTOWN TRANSIT', 12, 16);
+      gc.fillStyle = '#9adfd2'; gc.font = 'bold 15px Helvetica, Arial, sans-serif';
+      gc.fillText(s.name, 12, 34, w - 20);
+    });
+    var sign = new THREE.Mesh(new THREE.PlaneGeometry(3.8, 0.72),
+      new THREE.MeshStandardMaterial({map: signTex, roughness: 0.7, side: THREE.DoubleSide}));
+    sign.position.set(0, 2.4, 0.92); g.add(sign);
+    g.position.set(s.shx, 0, s.shz);
+    g.rotation.y = s.th + Math.PI;   // roof/bench span the street; sign + bench face the stop
+    scene.add(g);
+    // low collider so you can't walk through the shelter (jetpack still clears it)
+    colliders.push({x0: s.shx - 2.4, x1: s.shx + 2.4, z0: s.shz - 1.0, z1: s.shz + 1.0, h: 3.2});
+    labels.push({name: 'BUS — ' + s.name, x: s.shx, y: 5.4, z: s.shz});   // ambient, not mission gold
+  });
+})();
+var busBoardedT = 0;   // Date.now() at board — for the full-loop telemetry beacon
+function busBoardStop(){   // stopIdx you may board right now (doors open, within 6m), else -1
+  var bs = busStateAt(Date.now());
+  if (!bs.doorOpen) return -1;
+  var s = BUS_STOPS[bs.stopIdx];
+  var dx = player.x - s.bx, dz = player.z - s.bz;
+  return (dx * dx + dz * dz <= 36) ? bs.stopIdx : -1;
+}
+function canBoardBus(){
+  // the bus is legal locomotion during a DAILY DASH run, so allow boarding then too
+  return mode === 'player' && !player.veh && !player.heli && !player.ride && player.bus === null &&
+    !player.scoot && !isFrozen() && player.grounded && (allIdle() || missionD.stage === 'run') && busBoardStop() >= 0;
+}
+function boardBus(){
+  if (busBoardStop() < 0) return;
+  var bs = busStateAt(Date.now());
+  player.bus = busSeatFor(myId);
+  setPvp(false);   // holster the blaster — a passenger is not a tag target
+  rigP.r = Math.max(rigP.r, 17);
+  playClip('sfx_door', {gain: 0.6});
+  caption('THE LOOP', 'ALL ABOARD — NEXT: ' + BUS_STOPS[bs.nextStopIdx].name, 2400);
+  if (radio.st > 0) setTimeout(function(){ if (radioActive()) radioNext(true); }, 900);
+  busBoardedT = Date.now();
+  mev(60);
+}
+function leaveBus(){
+  if (player.bus === null) return;
+  var bs = busStateAt(Date.now());
+  // drop on the curb side relative to the bus's CURRENT heading (works mid-route too)
+  var lx = Math.sin(bs.th), lz = Math.cos(bs.th);
+  var px = bs.x + lx * BUS_CURB, pz = bs.z + lz * BUS_CURB;
+  player.bus = null;
+  radioStop();
+  playClip('sfx_door', {gain: 0.6});
+  player.av.g.visible = (mode !== 'player' || !camFP);
+  player.x = px; player.z = pz;
+  player.y = groundY(px, pz, player.y + 1); player.vy = 0; player.grounded = false;
+  collide(player, 0.55, player.y);
+  if (busBoardedT && Date.now() - busBoardedT >= BUS_PERIOD) mev(62);   // rode a full loop
+  busBoardedT = 0;
+  mev(61);
+}
+function busWaitHint(){   // 'BUS IN m:ss — NAME' when idling on foot within 25m of a stop
+  if (mode !== 'player' || player.veh || player.heli || player.ride || player.bus !== null || player.scoot) return '';
+  if (isFrozen() || !(allIdle() || missionD.stage === 'run')) return '';
+  var best = -1, bd = 625, i;   // 25m squared
+  for (i = 0; i < BUS_STOPS.length; i++){
+    var s = BUS_STOPS[i];
+    var dx = player.x - s.bx, dz = player.z - s.bz, d2 = dx * dx + dz * dz;
+    if (d2 < bd){ bd = d2; best = i; }
+  }
+  if (best < 0) return '';
+  var bs = busStateAt(Date.now());
+  if (bs.doorOpen && bs.stopIdx === best) return 'DOORS OPEN — ' + BUS_STOPS[best].name;
+  return 'BUS IN ' + busFmtEta(busEtaToStop(Date.now(), best)) + ' — ' + BUS_STOPS[best].name;
+}
+function updateBus(dt){   // wall-clock: animates even while the sim is paused
+  var bs = busStateAt(Date.now());
+  busMesh.position.set(bs.x, groundY(bs.x, bs.z), bs.z);
+  busMesh.rotation.y = bs.th;
+  busMesh.userData.doorMat.emissiveIntensity = bs.doorOpen ? 1.1 : 0;
+}
+function updateBusRide(dt){   // pin the rider to their deterministic seat BEFORE netTick/cam
+  if (player.bus === null || mode !== 'player') return;
+  var seat = busSeatWorld(busStateAt(Date.now()), player.bus);
+  player.x = seat.x; player.y = seat.y; player.z = seat.z; player.ry = seat.ry;
+  player.moving = 0; player.thrusting = false; player.grounded = true;
+  setSwing(player.av, 0, 0);
+  player.av.g.position.set(seat.x, seat.y, seat.z);
+  player.av.g.rotation.y = seat.ry;
+}
+
+// ---------- SCOOTER SHARE (F3) ----------
+// Kick-scooters racked around downtown: the missing rung between walking and
+// driving. On foot, press E within 2.2 m of a rack scooter to hop on, ride at
+// ~double walk speed (9.5 m/s), drop it anywhere with E. Scooters themselves are
+// LOCAL-ONLY (each client renders its own set, like ambient traffic) — riders are
+// synced over the new m:5 mode (server CAPS[5]); a remote rider gets a shared
+// scooter mesh drawn under their standing avatar. Mount stays visible + standing
+// (hands on the bars), unlike a car — so it rides through updateScoot, NOT the
+// passenger seat-pose path.
+var SCOOT_MAX = 9.5;        // top speed (m/s) — matches server CAPS[5] budget
+var SCOOT_GREEN = 0x3fce7a; // rental-green accent
+// deck + stem + handlebar + 2 wheels. Long axis = +x (forward at th=0, matching
+// the car body), origin at ground so wheels touch when g.position.y = groundY.
+function buildScooter(){
+  var g = new THREE.Group();
+  var deckMat = new THREE.MeshStandardMaterial({color: 0x2a2e33, roughness: 0.6, metalness: 0.3});
+  var accentMat = new THREE.MeshStandardMaterial({color: SCOOT_GREEN, roughness: 0.5, metalness: 0.2});
+  var wheelMat = new THREE.MeshStandardMaterial({color: 0x14161a, roughness: 0.8});
+  var deck = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.12, 0.34), accentMat);
+  deck.position.set(0, 0.3, 0); deck.castShadow = true; g.add(deck);
+  var stem = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.15, 8), deckMat);
+  stem.position.set(0.62, 0.86, 0); stem.rotation.z = 0.3; g.add(stem);
+  var bar = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.72, 8), deckMat);
+  bar.rotation.x = Math.PI / 2; bar.position.set(0.72, 1.36, 0); g.add(bar);
+  var grip = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.74, 8), accentMat);
+  grip.rotation.x = Math.PI / 2; grip.position.set(0.72, 1.36, 0); g.add(grip);
+  var wg = new THREE.CylinderGeometry(0.26, 0.26, 0.12, 12); wg.rotateX(Math.PI / 2);
+  [0.66, -0.66].forEach(function(wx){
+    var wh = new THREE.Mesh(wg, wheelMat); wh.position.set(wx, 0.26, 0); wh.castShadow = true; g.add(wh);
+  });
+  scene.add(g);
+  return g;
+}
+// Racks: a low bar on two posts + a SCOOTERS label; each spawns 2 scooters just
+// in front (fwd = cos a, -sin a; scooters line up along the lateral sin a, cos a).
+// `a` points the scooters at open ground so the mount approach is never blocked
+// by the rack's own (thin, low) collider.
+var scooters = [];
+var SCOOT_RACKS = [
+  {name: 'TRANSIT CENTER',   x: -72,  z: 86,  a: -Math.PI / 2},  // Vine St hub, near the LexTran shelter
+  {name: 'COURTHOUSE PLAZA', x: 56,   z: -18, a: -Math.PI / 2},  // Cheapside paver plaza, north of the old courthouse
+  {name: 'TRIANGLE PARK',    x: -158, z: 22,  a: Math.PI / 2},   // the wedge park green west of Big Blue
+  {name: 'UK CAMPUS',        x: 178,  z: 416, a: Math.PI / 2}    // the quad green, just off Euclid
+];
+(function(){
+  var postMat = new THREE.MeshStandardMaterial({color: 0x3a4247, roughness: 0.7, metalness: 0.3});
+  var railMat = new THREE.MeshStandardMaterial({color: SCOOT_GREEN, roughness: 0.5, metalness: 0.2});
+  SCOOT_RACKS.forEach(function(rk){
+    var fx = Math.cos(rk.a), fz = -Math.sin(rk.a);   // forward (toward open ground)
+    var lx = Math.sin(rk.a), lz = Math.cos(rk.a);    // lateral (along the rack bar)
+    var g = new THREE.Group();
+    [-0.8, 0.8].forEach(function(dl){
+      var p = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.9, 0.12), postMat);
+      p.position.set(lx * dl, 0.45, lz * dl); g.add(p);
+    });
+    var rail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 1.9), railMat);
+    rail.rotation.y = -rk.a; rail.position.y = 0.78; g.add(rail);
+    g.position.set(rk.x, groundY(rk.x, rk.z), rk.z);
+    scene.add(g);
+    // thin, low collider on the rack bar only (jetpack clears it; the scooters
+    // sit ~1.5 m forward on open ground so the 2.2 m mount reach isn't blocked)
+    colliders.push({x0: rk.x - Math.abs(lx) * 0.9 - 0.2, x1: rk.x + Math.abs(lx) * 0.9 + 0.2,
+                    z0: rk.z - Math.abs(lz) * 0.9 - 0.2, z1: rk.z + Math.abs(lz) * 0.9 + 0.2, h: 0.9});
+    labels.push({name: 'SCOOTERS — ' + rk.name, x: rk.x, y: 4.4, z: rk.z});   // ambient (cyan), not mission gold — like the bus stop labels
+    [-0.55, 0.55].forEach(function(dl){
+      var sx = rk.x + fx * 1.5 + lx * dl, sz = rk.z + fz * 1.5 + lz * dl;
+      var s = {g: buildScooter(), x: sx, z: sz, th: rk.a, taken: false, spd: 0};
+      s.g.position.set(sx, groundY(sx, sz), sz); s.g.rotation.y = rk.a;
+      scooters.push(s);
+    });
+  });
+})();
+function nearScooter(){
+  if (!player.grounded) return null;
+  var best = null, bd = 2.2 * 2.2, k;
+  for (k = 0; k < scooters.length; k++){
+    var s = scooters[k];
+    if (s.taken) continue;
+    var dx = s.x - player.x, dz = s.z - player.z, d2 = dx * dx + dz * dz;
+    if (d2 < bd){ bd = d2; best = s; }
+  }
+  return best;
+}
+function canMountScoot(){
+  // rideable mid-DAILY DASH run (like the bus) — legal locomotion during a dash.
+  // Do NOT loosen this gate to other missions without work elsewhere: the ghost
+  // recorder samples only m 0/2 and DEADLINE's checkpoint banking assumes a car.
+  return mode === 'player' && !player.veh && !player.heli && !player.ride && player.bus === null &&
+    !player.scoot && !isFrozen() && player.grounded &&
+    (allIdle() || missionD.stage === 'run') && nearScooter() !== null;
+}
+function mountScoot(){
+  var s = nearScooter();
+  if (!s) return;
+  player.scoot = s; s.taken = true; s.spd = 0;
+  setPvp(false);   // hands on the bars — a rider is not a tag target and can't fire
+  player.x = s.x; player.z = s.z; player.ry = s.th;
+  player.y = groundY(s.x, s.z, player.y + 1); player.vy = 0; player.grounded = true;
+  playClip('sfx_door', {gain: 0.4});
+  caption('SCOOTER', 'HOP ON — E TO HOP OFF', 2000);
+}
+function dismountScoot(){
+  var s = player.scoot;
+  if (!s) return;
+  s.x = player.x; s.z = player.z; s.th = player.ry; s.spd = 0; s.taken = false;   // park at the drop spot
+  s.g.position.set(s.x, groundY(s.x, s.z), s.z); s.g.rotation.y = s.th;
+  var lx = Math.sin(player.ry), lz = Math.cos(player.ry);   // step off to the side (mirrors the car exit-drop)
+  var px = player.x + lx * 1.4, pz = player.z + lz * 1.4;
+  player.scoot = null;
+  playClip('sfx_door', {gain: 0.4});
+  player.x = px; player.z = pz;
+  player.y = groundY(px, pz, player.y + 1); player.vy = 0; player.grounded = false;
+  collide(player, 0.55, player.y);
+  player.av.g.visible = (mode !== 'player' || !camFP);
+  player.av.armL.rotation.x = 0; player.av.armR.rotation.x = 0;   // drop the bar pose; walking takes over next frame
+}
+// physics — mirrors updateDrive's shape (accel/brake/steer/collide/crunch) but
+// grounded-only, avatar-visible, and livelier steering at low speed.
+function updateScoot(dt){
+  var s = player.scoot;
+  var fwd = keysDown.w || keysDown.arrowup, back = keysDown.s || keysDown.arrowdown;
+  var left = keysDown.a || keysDown.arrowleft, right = keysDown.d || keysDown.arrowright;
+  if (stick.active){ fwd = stick.y < -0.25; back = stick.y > 0.25;
+                     left = stick.x < -0.3; right = stick.x > 0.3; }
+  if (isFrozen()){ fwd = back = left = right = false; }
+  if (fwd) s.spd += 8 * dt;
+  else if (back) s.spd -= 12 * dt;
+  else s.spd -= Math.sign(s.spd) * Math.min(Math.abs(s.spd), (3 + Math.abs(s.spd) * 0.4) * dt);
+  s.spd = Math.max(-2, Math.min(SCOOT_MAX, s.spd));
+  // steer factor 1.9*dt like the car, but the low-speed floor (0.55) keeps it
+  // nimble at a crawl where the car (min speed/9) barely turns
+  var stt = (left ? 1 : 0) - (right ? 1 : 0);
+  s.th += stt * (0.55 + 0.45 * Math.min(1, Math.abs(s.spd) / 6)) * 1.9 * dt * (s.spd >= 0 ? 1 : -1);
+  var fx = Math.cos(s.th), fz = -Math.sin(s.th);
+  var p = {x: player.x + fx * s.spd * dt, z: player.z + fz * s.spd * dt};
+  var ox = p.x, oz = p.z;
+  collide(p, 0.6, player.y);
+  if (p.x !== ox || p.z !== oz) s.spd *= 0.3;   // crunch
+  p.x = Math.max(X0 - 20, Math.min(X1 + 20, p.x));
+  p.z = Math.max(Z0 - 20, Math.min(Z1 + 20, p.z));
+  var gy = groundY(p.x, p.z, player.y);
+  player.x = p.x; player.z = p.z; player.y = gy; player.vy = 0; player.grounded = true;
+  player.ry = s.th;
+  player.moving = Math.abs(s.spd);
+  player.thrusting = false;
+  player.fuel = Math.min(100, player.fuel + 30 * dt);
+  jumpQueued = false;   // no jump while mounted — don't let a queued jump fire on dismount
+  // scooter mesh rides under the standing rider; avatar stands, hands on the bars
+  s.g.position.set(player.x, gy, player.z); s.g.rotation.y = s.th;
+  setSwing(player.av, 0, 0);
+  player.av.armL.rotation.x = -1.1; player.av.armR.rotation.x = -1.1;
+  player.av.flames.forEach(function(fl){ fl.visible = false; });
+  player.av.g.position.set(player.x, player.y, player.z);
+  player.av.g.rotation.y = player.ry;
+}
+function buildRemoteScooter(){ return buildScooter(); }   // shared remote mesh, mirrors buildRemoteCar
+
 function m2ZonesDone(){
   for (var z = 0; z < zoneState.length; z++)
     if (zoneState[z].cleared < zoneState[z].total - 2) return false;
@@ -3977,7 +4436,8 @@ function updateHorse(h, dt, now){
   // spooks him, and he bolts a short 24-40m (F5: gentler after prod telemetry).
   g.position.y = groundY(g.position.x, g.position.z) + 0.05 + Math.sin(now * 0.002 + h.i) * 0.04;
   var pd = Math.hypot(player.x - g.position.x, player.z - g.position.z);
-  var rushing = (!player.veh && playerSpeed() > 12) || (player.veh && Math.abs(player.veh.spd) > 3);
+  var rushing = (!player.veh && playerSpeed() > 12) || (player.veh && Math.abs(player.veh.spd) > 3) ||
+                (player.scoot && Math.abs(player.scoot.spd) > 3);   // a scooter spooks like a car, not a walker
   if (pd < 10 && rushing){
     var ang = Math.atan2(g.position.x - player.x, g.position.z - player.z) + (Math.random() - 0.5) * 1.2;
     var dist = 24 + Math.random() * 16;
@@ -4763,7 +5223,8 @@ function updateFoal(f, dt, now){
   // loose: graze in place; bolt if rushed (F5-tuned spook: <10m, sprint 13.5 / car)
   g.position.y = groundY(g.position.x, g.position.z) + 0.05 + Math.sin(now * 0.002 + f.i) * 0.04;
   var pd = Math.hypot(player.x - g.position.x, player.z - g.position.z);
-  var rushing = (!player.veh && playerSpeed() > 12) || (player.veh && Math.abs(player.veh.spd) > 3);
+  var rushing = (!player.veh && playerSpeed() > 12) || (player.veh && Math.abs(player.veh.spd) > 3) ||
+                (player.scoot && Math.abs(player.scoot.spd) > 3);   // a scooter spooks like a car, not a walker
   if (pd < 10 && rushing){
     var ang = Math.atan2(g.position.x - player.x, g.position.z - player.z) + (Math.random() - 0.5) * 1.2;
     var dist = 24 + Math.random() * 16;
@@ -4984,12 +5445,188 @@ function updateMission9(dt){
   if (mission9.stage === 'fail'){ if (t > 5) m9Cleanup(); return; }
   if (mission9.stage === 'post'){ if (t > 20) m9Cleanup(); }
 }
+
+// ---------- DAILY DASH (mission D): one rotating checkpoint route per day ----
+// A daily challenge with its own global board: five checkpoints drawn
+// deterministically from a twelve-landmark pool by the EST day seed, so every
+// player worldwide runs the SAME course each day and it resets at the EST
+// midnight boundary. dayIndex() is byte-identical to the server's copy — any
+// drift would split-brain the reset. ANY locomotion is allowed once running
+// (foot, car, jetpack, bus); only the finish time touches the server, as a
+// numeric {t:'score', m:10}. Declared here — before the labels.push block and
+// allIdle() below read MD_TRIG / missionD — because statement order matters.
+function dayIndex(){ return Math.floor((Date.now() - 5 * 3600e3) / 86400e3); }
+var MD_TRIG = {x: 44, z: -22};        // Cheapside courthouse plaza, off Main — clear of M9(14,-9.5) + M5(60,14)
+var MD_N = 5;                          // checkpoints in a day's route
+var MD_MAX = 900;                      // seconds; past this a run can't rank (== server ceiling) so we abandon it
+// twelve real Lexington landmarks spread across the whole map (coords harvested
+// from existing labels), so a day's five span downtown to the horse farms
+var MD_POOL = [
+  {x: 250,  z: 50,    name: 'THOROUGHBRED PARK'},
+  {x: -370, z: 100,   name: 'RUPP ARENA'},
+  {x: -85,  z: 96,    name: 'TRANSIT CENTER'},
+  {x: 122,  z: 50,    name: 'PHOENIX PARK'},
+  {x: -171, z: 40,    name: 'TRIANGLE PARK'},
+  {x: 200,  z: 600,   name: 'UK CAMPUS'},
+  {x: -190, z: 660,   name: 'KROGER FIELD'},
+  {x: 500,  z: 428,   name: 'CHEVY CHASE'},
+  {x: 350,  z: 300,   name: 'WOODLAND PARK'},
+  {x: -520, z: -60,   name: 'DISTILLERY DISTRICT'},
+  {x: 150,  z: -535,  name: 'DUNCAN PARK'},
+  {x: -360, z: -1200, name: 'ELMENDORF FARM'}
+];
+// deterministic daily route: seeded Fisher-Yates over the pool with dayIndex()-
+// derived wxRand draws, first MD_N in order. Same day => same five for everyone.
+function mdRoute(day){
+  var pool = MD_POOL.slice(), seed = day * 40503, i, j, tmp;
+  for (i = pool.length - 1; i > 0; i--){
+    j = Math.floor(wxRand(seed + i) * (i + 1));
+    tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+  }
+  return pool.slice(0, MD_N);
+}
+// the day MD_CPS was built for. The local clock seeds it, but the server's
+// dDay (riding along in every scores broadcast) overrides on mismatch — a
+// spoofed/skewed clock or a tab left open across the EST flip would otherwise
+// run yesterday's (or an arbitrary day's) route against today's board.
+var mdDay = dayIndex();
+var mdServerDay = null;   // latest dDay seen in a scores broadcast; wins over the local clock
+var MD_CPS = mdRoute(mdDay);
+// device best for TODAY only ({day, ms}); a stale (yesterday) best reads as null
+var dailyBest = null;
+try {
+  var _db = JSON.parse(localStorage.getItem('lt_dailyBest') || 'null');
+  if (_db && _db.day === dayIndex() && typeof _db.ms === 'number') dailyBest = _db;
+} catch (e){}
+var missionD = {stage: 'idle', tStage: 0, t0: 0, ms: 0, cur: 0, capIdx: 0, day: 0, localDay: 0};
+var mdRings = [], mdTrig = null;
+(function(){
+  mdTrig = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.06, 6, 24),
+    new THREE.MeshBasicMaterial({color: 0xffd400, transparent: true, opacity: 0.85}));
+  mdTrig.rotation.x = Math.PI / 2;
+  mdTrig.position.set(MD_TRIG.x, 0.9, MD_TRIG.z);
+  scene.add(mdTrig);
+  for (var k = 0; k < MD_N; k++){
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(4.5, 0.12, 6, 28),
+      new THREE.MeshBasicMaterial({color: 0xffd400, transparent: true, opacity: 0.7}));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(MD_CPS[k].x, 1.2, MD_CPS[k].z);
+    ring.visible = false;
+    scene.add(ring);
+    mdRings.push(ring);
+  }
+})();
+function nearMDTrig(){
+  var dx = player.x - MD_TRIG.x, dz = player.z - MD_TRIG.z;
+  return dx * dx + dz * dz < 16;
+}
+// (re)build the course for a day: route, ring positions, and a device best
+// that no longer applies reads as null. Called at run start, on the mid-run
+// day-flip abandon, and when a scores broadcast carries a different dDay.
+function mdSetDay(day){
+  mdDay = day;
+  MD_CPS = mdRoute(day);
+  for (var k = 0; k < MD_N; k++) mdRings[k].position.set(MD_CPS[k].x, 1.2, MD_CPS[k].z);
+  if (dailyBest && dailyBest.day !== day) dailyBest = null;
+}
+function startMissionD(){
+  // recompute in case the EST day rolled while the tab stayed open; the
+  // server's day (when we've heard one) beats the local clock for the course
+  mdSetDay(mdServerDay !== null ? mdServerDay : dayIndex());
+  missionD.day = mdDay;
+  missionD.localDay = dayIndex();   // local-midnight stamp — the mid-run flip check
+  missionD.stage = 'run'; missionD.tStage = 0; missionD.capIdx = 0;
+  missionD.cur = 0; missionD.ms = 0; missionD.t0 = performance.now();
+  caption('THE DASH', 'TODAY\'S DAILY DASH - FIVE CHECKPOINTS, ANY WHEELS. FIRST: ' + MD_CPS[0].name + '.', 5200);
+  addChatLine('* DAILY', 'THE DASH - five checkpoints, new route daily', true);
+  mev(40);
+}
+function mdCleanup(){
+  missionD.stage = 'idle';
+  for (var k = 0; k < mdRings.length; k++) mdRings[k].visible = false;
+}
+function updateMissionD(dt){
+  if (mdTrig){
+    mdTrig.visible = allIdle();
+    if (mdTrig.visible) mdTrig.rotation.z += dt * 0.8;
+  }
+  if (missionD.stage === 'idle') return;
+  var now = performance.now();
+  missionD.tStage += dt;
+  var t = missionD.tStage;
+  if (missionD.stage === 'run'){
+    // only the current checkpoint ring is lit; it spins slowly
+    for (var k = 0; k < mdRings.length; k++){
+      var on = k === missionD.cur;
+      mdRings[k].visible = on;
+      if (on) mdRings[k].rotation.z += dt * 0.9;
+    }
+    // a run that can no longer rank (past the server ceiling) is abandoned, not
+    // left as a zombie that would submit an out-of-window time
+    if ((now - missionD.t0) / 1000 > MD_MAX){
+      caption('THE DASH', 'TOO LONG ON THE CLOCK - RUN ABANDONED. TRY AGAIN AT THE COURTHOUSE.', 4200);
+      mev(43);
+      mdCleanup();
+      return;
+    }
+    // the EST day flipped mid-run: rollDaily() has already emptied the server
+    // board for the NEW route, so finishing now would rank an old-route time
+    // (likely #1 on an empty board). Compared against the LOCAL day stamped at
+    // start (not mdDay, which may be an adopted server day that differs from
+    // this clock) so an adopted course doesn't insta-abandon. Abandon + rebuild.
+    if (missionD.localDay !== dayIndex()){
+      caption('THE DASH', 'MIDNIGHT - A NEW ROUTE JUST DROPPED. RUN ABANDONED. E TO RUN TODAY\'S.', 4600);
+      mev(43);
+      mdCleanup();
+      mdSetDay(mdServerDay !== null ? mdServerDay : dayIndex());
+      return;
+    }
+    // bank the current checkpoint on ANY locomotion (foot / car / jetpack / bus),
+    // horizontal distance only so a low chopper pass or a drive-through both count
+    var cp = MD_CPS[missionD.cur];
+    if (Math.hypot(cp.x - player.x, cp.z - player.z) < 8){
+      missionD.cur++;
+      mev(41);
+      if (missionD.cur >= MD_CPS.length){
+        missionD.ms = now - missionD.t0;
+        missionD.stage = 'won'; missionD.tStage = 0; missionD.capIdx = 0;
+        for (var w = 0; w < mdRings.length; w++) mdRings[w].visible = false;
+        sndWin(); sndApplause();
+        caption('THE DASH', 'THAT IS THE DASH. TODAY\'S ROUTE, DONE.', 4600);
+        try {
+          if (!dailyBest || missionD.ms < dailyBest.ms){
+            dailyBest = {day: dayIndex(), ms: Math.round(missionD.ms)};
+            localStorage.setItem('lt_dailyBest', JSON.stringify(dailyBest));
+          }
+        } catch (e){}
+        sendScore({t: 'score', ms: Math.round(missionD.ms), m: 10});   // numeric 10 — never a string
+        mev(42);
+      } else {
+        sndTone(880, 0.18, 0, 'square', 0.14);
+        // "N OF 5 BANKED" (count done), never "CHECKPOINT N/5" — the HUD timer
+        // and hint both show the NEXT target's ordinal, and the two disagreeing
+        // on screen at once reads as an off-by-one
+        caption('THE DASH', missionD.cur + ' OF ' + MD_N + ' BANKED. NEXT: ' + MD_CPS[missionD.cur].name + '.', 3200);
+      }
+    }
+    return;
+  }
+  if (missionD.stage === 'won'){
+    if (t > 4.8 && missionD.capIdx === 0){
+      missionD.capIdx = 1;
+      showScores(missionD.ms, 10);
+      missionD.stage = 'post'; missionD.tStage = 0;
+    }
+    return;
+  }
+  if (missionD.stage === 'post'){ if (t > 22) mdCleanup(); }
+}
 function allIdle(){
   return mission.stage === 'idle' && mission2.stage === 'idle' &&
          mission3.stage === 'idle' && mission4.stage === 'idle' &&
          mission5.stage === 'idle' && mission6.stage === 'idle' &&
          mission7.stage === 'idle' && mission8.stage === 'idle' &&
-         mission9.stage === 'idle';
+         mission9.stage === 'idle' && missionD.stage === 'idle';
 }
 // Everything mission-related on the overlay (start markers, target
 // brackets, edge arrow, timers, zone chips, the fight chopper tag) draws
@@ -5009,6 +5646,7 @@ labels.push({name: '★ MISSION: THE MELT', x: M6_TRIG.x, y: 9, z: M6_TRIG.z, co
 labels.push({name: '★ MISSION: TAILGATE COMPLIANCE', x: M7_TRIG.x, y: 9, z: M7_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: LOOSE IN THE PADDOCK', x: M8_TRIG.x, y: 9, z: M8_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: AIR MAIL', x: M9_TRIG.x, y: 9, z: M9_TRIG.z, col: MISSION_COL, mission: true});
+labels.push({name: '★ DAILY: THE DASH', x: MD_TRIG.x, y: 9, z: MD_TRIG.z, col: MISSION_COL, mission: true});
 // the gentle shove: when nothing else is going on, point at the next mission
 // bare next-unbeaten mission name, by the same best-gated chain ('' when all
 // beaten). Shared by the hint AND the F2 welcome-back so the two can't disagree.
@@ -5022,6 +5660,8 @@ function nextMissionName(){
   if (!m7Best) return 'TAILGATE COMPLIANCE';
   if (!m8Best) return 'LOOSE IN THE PADDOCK';
   if (!m9Best) return 'AIR MAIL';
+  // all nine beaten: point at today's DAILY DASH until it's run today
+  if (!dailyBest || dailyBest.day !== dayIndex()) return 'THE DASH';
   return '';
 }
 // each mission's on-screen where-to-go suffix (DOM-only text, em dashes kept)
@@ -5034,7 +5674,8 @@ var MISSION_HINT_SUFFIX = {
   'THE MELT': 'PINK RING, W MAIN AT THE DISTILLERY DISTRICT',
   'TAILGATE COMPLIANCE': 'BLUE RING, KROGER FIELD LOTS',
   'LOOSE IN THE PADDOCK': 'AMBER RING AT ELMENDORF (NORTH, PAST NEW CIRCLE)',
-  'AIR MAIL': 'VIOLET RING DOWNTOWN (JETPACK - HOLD SPACE)'
+  'AIR MAIL': 'VIOLET RING DOWNTOWN (JETPACK - HOLD SPACE)',
+  'THE DASH': 'GOLD RING AT THE COURTHOUSE — NEW ROUTE DAILY'
 };
 function nextMissionHint(){
   var nm = nextMissionName();
@@ -5091,6 +5732,9 @@ if (/debug=1/.test(hashStr)){
     clips: function(){ return Object.keys(clips).map(function(k){ return k + (clips[k].buf ? ':ok' : ':loading'); }); },
     pos: function(){ return {x: player.x, y: player.y, z: player.z}; },
     cam: function(){ return {az: rigP.az, el: rigP.el}; },
+    bus: function(){ return player.bus; },
+    busStateAt: function(t){ return busStateAt(t === undefined ? Date.now() : t); },
+    busPeriod: function(){ return BUS_PERIOD; },
     setCam: function(az, el){ rigP.az = az; if (el !== undefined) rigP.el = el; followPause = 3; },
     audioTap: function(){   // MediaStream of the game's synth audio (for capture rigs)
       pokeAudio();
@@ -5147,7 +5791,7 @@ function nearestVehicle(){
 }
 function fireAction(){
   if (player.heli) return;   // water cannon is hold-to-spray, handled in flight
-  if (player.ride) return;   // no firing from the shotgun seat
+  if (player.ride || player.bus !== null || player.scoot) return;   // no firing from a passenger seat / scooter bars
   if (mission3.stage === 'photo' && !player.veh){ takePhoto(); return; }
   if (missionFight() && !player.veh){ fireRocket(); return; }
   if (myRpg > 0 && heliActive() && !player.veh){ fireRocket(); return; }
@@ -5162,6 +5806,8 @@ function tryEnterExit(){
     return;
   }
   if (player.ride){ leaveRide(true); return; }   // hop out before any mission/enter gate
+  if (player.bus !== null){ leaveBus(); return; }   // bus hop-out first too, mirroring the shotgun seat
+  if (player.scoot){ dismountScoot(); return; }     // hop off the scooter before any mission/enter gate
   if (allIdle() && !player.veh && !isFrozen() && nearMissionTrig()){
     startMission();
     return;
@@ -5190,12 +5836,16 @@ function tryEnterExit(){
     startMission7();
     return;
   }
-  if (allIdle() && !player.veh && !player.ride && !isFrozen() && nearM8Trig()){
+  if (allIdle() && !player.veh && !player.ride && player.bus === null && !player.scoot && !isFrozen() && nearM8Trig()){
     startMission8();
     return;
   }
-  if (allIdle() && !player.veh && !player.ride && !isFrozen() && nearM9Trig()){
+  if (allIdle() && !player.veh && !player.ride && player.bus === null && !player.scoot && !isFrozen() && nearM9Trig()){
     startMission9();
+    return;
+  }
+  if (allIdle() && !player.veh && !player.ride && player.bus === null && !player.scoot && !isFrozen() && nearMDTrig()){
+    startMissionD();
     return;
   }
   if (!player.veh && !isFrozen()){
@@ -5216,6 +5866,8 @@ function tryEnterExit(){
     collide(player, 0.55, player.y);
     return;
   }
+  if (canBoardBus()){ boardBus(); return; }         // catch the LexTown loop bus at a stop
+  if (canMountScoot()){ mountScoot(); return; }     // grab a racked scooter (after bus, before the car-enter fallthrough)
   if (canRideShotgun()){ requestRide(); return; }   // board a friend's moving car
   if (!player.grounded) return;
   var nv = nearestVehicle();
@@ -5267,9 +5919,10 @@ function updatePlayer(dt){
   if (wasFrozen && !frozenNow){ sndThaw(); frozenByName = ''; }
   wasFrozen = frozenNow;
   player.av.ice.visible = frozenNow;
-  if (player.ride && mode === 'player') return;   // seat pose is written by updateRideAlong
+  if ((player.ride || player.bus !== null) && mode === 'player') return;   // seat pose is written by updateRideAlong / updateBusRide
   if (player.heli && mode === 'player'){ updateHeliFlight(dt); return; }
   if (player.veh && mode === 'player'){ updateDrive(dt); return; }
+  if (player.scoot && mode === 'player'){ updateScoot(dt); return; }   // grounded, avatar-visible ride — its own pose, NOT the seat-pose skip
   var f = 0, r = 0;
   if (mode === 'player' && !isFrozen()){
     if (keysDown.w || keysDown.arrowup) f += 1;
@@ -5384,7 +6037,7 @@ function updatePlayerCam(dt){
       var vg = player.veh.g.position;
       ex = vg.x + Math.cos(player.veh.th) * 0.4; ey = vg.y + 1.95;
       ez = vg.z - Math.sin(player.veh.th) * 0.4;
-    } else if (player.ride){
+    } else if (player.ride || player.bus !== null){
       ex = player.x; ey = player.y + 0.95; ez = player.z;   // seated eye height (player.y is already the seat)
     } else {
       ex = player.x; ey = player.y + 2.35; ez = player.z;
@@ -5403,18 +6056,18 @@ function updatePlayerCam(dt){
       tAz = Math.atan2(Math.cos(heli.th), -Math.sin(heli.th)) + Math.PI;
     else if (player.veh)
       tAz = Math.atan2(Math.cos(player.veh.th), -Math.sin(player.veh.th)) + Math.PI;
-    else if (player.ride)
-      tAz = player.ry + Math.PI;   // settle behind the car heading (player.ry carries it)
+    else if (player.ride || player.bus !== null)
+      tAz = player.ry + Math.PI;   // settle behind the vehicle heading (player.ry carries it)
     else if (player.moving > 0)
       tAz = player.ry + Math.PI;
     if (tAz !== null)
-      rigP.az += angDelta(rigP.az, tAz) * Math.min(1, dt * (player.veh || player.heli || player.ride ? 1.7 : 2.1));
+      rigP.az += angDelta(rigP.az, tAz) * Math.min(1, dt * (player.veh || player.heli || player.ride || player.bus !== null ? 1.7 : 2.1));
   }
   rigP.r = Math.max(4, Math.min(90, rigP.r));
   camR += ((aiming ? (player.heli ? 9 : 4.4) : rigP.r) - camR) * Math.min(1, dt * 9);
   // over-the-shoulder framing: a light constant offset on foot (the avatar
   // rides left-of-center instead of blocking the view), stronger while aiming
-  var onFoot = !player.veh && !player.heli && !player.ride;
+  var onFoot = !player.veh && !player.heli && !player.ride && player.bus === null;
   var offAmt = 1.25 * aimBlend + (onFoot ? 0.55 * (1 - aimBlend) : 0);
   var offX = Math.cos(rigP.az) * offAmt;
   var offZ = -Math.sin(rigP.az) * offAmt;
@@ -5441,6 +6094,7 @@ function removeRemote(id){
   if (r){
     scene.remove(r.av.g);
     if (r.carG) scene.remove(r.carG);
+    if (r.scootG) scene.remove(r.scootG);
     if (heli.pilot === id) heli.pilot = null;   // server broadcasts the crash
     delete remotes[id]; setNetChip();
   }
@@ -5494,8 +6148,8 @@ function nearestDriver(){
   return best;
 }
 function canRideShotgun(){
-  return mode === 'player' && !player.veh && !player.heli && !player.ride &&
-    !isFrozen() && player.grounded && nearestDriver() !== null;
+  return mode === 'player' && !player.veh && !player.heli && !player.ride && player.bus === null &&
+    !player.scoot && !isFrozen() && player.grounded && nearestDriver() !== null;
 }
 function requestRide(){
   var drv = nearestDriver();
@@ -5560,7 +6214,7 @@ function handleNet(m){
     var r = remotes[m.id];
     if (!r){
       r = remotes[m.id] = {av: makeAvatar(m.c || 0x3a76c4, 0x555a63), name: m.n || m.id,
-        c: m.c || 0x3a76c4, m: 0, carG: null,
+        c: m.c || 0x3a76c4, m: 0, carG: null, scootG: null,
         buf: [], phase: Math.random() * 6, swing: 0, lx: m.x, lz: m.z, ry: m.ry || 0};
       setNetChip();
     }
@@ -5606,7 +6260,12 @@ function handleNet(m){
   } else if (m.t === 'ride'){
     handleRideMsg(m);
   } else if (m.t === 'pushed'){
-    if (m.id === myId){   // caught in the water cannon jet
+    // the cannon only shoves players whose movement branch actually consumes
+    // kx/kz (on foot / jetpack). Vehicle/seat/scooter branches skip that block,
+    // so accumulating here would bank invisible impulse that bursts as a
+    // teleport the frame after dismount.
+    if (m.id === myId && !player.veh && !player.heli && !player.ride &&
+        player.bus === null && !player.scoot){
       player.kx += m.vx || 0; player.kz += m.vz || 0;
       if (m.vy){ player.vy = Math.max(player.vy, m.vy); player.grounded = false; }
     }
@@ -5617,6 +6276,21 @@ function handleNet(m){
     if (m.id !== myId)
       sprayBurst(m.ox, m.oy, m.oz, m.dx, m.dy, m.dz);
   } else if (m.t === 'scores'){
+    // the server's day wins: a scores broadcast carrying a dDay we don't match
+    // means a skewed/spoofed local clock or the EST day flipping under an open
+    // tab — rebuild the course on the server's day (abandoning any live run,
+    // whose banked checkpoints belong to a route the board no longer holds)
+    if (typeof m.dDay === 'number'){
+      mdServerDay = m.dDay;
+      if (m.dDay !== mdDay){
+        if (missionD.stage === 'run'){
+          caption('THE DASH', 'THE BOARD ROLLED TO A NEW ROUTE. RUN ABANDONED. E TO RUN TODAY\'S.', 4600);
+          mev(43);
+          mdCleanup();
+        }
+        mdSetDay(m.dDay);
+      }
+    }
     renderScores(m);
   } else if (m.t === 'sys'){
     addChatLine('⚙ SERVER', String(m.msg || ''), false);
@@ -5675,10 +6349,12 @@ function updateRemotes(dt){
     if (r.m === 2){        // driving: render their car, hide the avatar
       if (!r.carG) r.carG = buildRemoteCar(r.c);
       r.carG.visible = true; r.av.g.visible = false;
+      if (r.scootG) r.scootG.visible = false;
       r.carG.position.set(x, y + 0.15, z);
       r.carG.rotation.y = r.ry;
     } else if (r.m === 3){ // flying the news chopper: the one heli follows them
       if (r.carG) r.carG.visible = false;
+      if (r.scootG) r.scootG.visible = false;
       r.av.g.visible = false;
       r.av.g.position.set(x, y, z);   // tag/dart anchor
       heli.pilot = id;
@@ -5690,6 +6366,7 @@ function updateRemotes(dt){
       }
     } else if (r.m === 4){ // riding shotgun: seat the avatar on the bound driver's car
       if (r.carG) r.carG.visible = false;
+      if (r.scootG) r.scootG.visible = false;
       r.av.g.visible = true;
       setSwing(r.av, 0, 0);   // at-rest pose - a passenger isn't walking
       r.av.flames.forEach(function(fl){ fl.visible = false; });
@@ -5697,9 +6374,36 @@ function updateRemotes(dt){
       r.av.ice.visible = false;
       var drv = ridePairs[id], seat = drv ? seatWorldPos(drv) : null;
       if (seat){ r.av.g.position.set(seat.x, seat.y, seat.z); r.av.g.rotation.y = seat.ry; }
-      else { r.av.g.position.set(x, y, z); r.av.g.rotation.y = r.ry; }   // binding unknown: fall back to their own packets
+      else if (!drv){
+        // no shotgun binding AT ALL: if they're netted onto the loop bus, snap them
+        // into a deterministic seat so they don't trail 1.4m out the back of a moving
+        // bus. A known binding whose driver car hasn't resolved yet must NOT fall in
+        // here — a shotgun passenger driven along the bus's own streets would get
+        // snapped into the bus during the join race.
+        var bs = busStateAt(Date.now()), dbx = x - bs.x, dbz = z - bs.z;
+        if (dbx * dbx + dbz * dbz < 20.25){   // within 4.5m of the local bus → a passenger
+          var bseat = busSeatWorld(bs, busSeatFor(id));
+          r.av.g.position.set(bseat.x, bseat.y, bseat.z); r.av.g.rotation.y = bseat.ry;
+        } else { r.av.g.position.set(x, y, z); r.av.g.rotation.y = r.ry; }   // fall back to their own packets
+      }
+      else { r.av.g.position.set(x, y, z); r.av.g.rotation.y = r.ry; }   // binding known, car not built yet — their packets already mirror the seat
+    } else if (r.m === 5){ // riding a scooter: standing avatar + a scooter mesh under them
+      if (r.carG) r.carG.visible = false;
+      if (!r.scootG) r.scootG = buildRemoteScooter();
+      r.scootG.visible = true;
+      r.av.g.visible = true;
+      setSwing(r.av, 0, 0);   // standing, no walk swing
+      r.av.armL.rotation.x = -1.1; r.av.armR.rotation.x = -1.1;   // hands forward on the bars
+      r.av.flames.forEach(function(fl){ fl.visible = false; });
+      r.av.gun.visible = false;
+      r.av.ice.visible = !!(r.frozenUntil && now < r.frozenUntil);
+      r.av.g.position.set(x, y, z);
+      r.av.g.rotation.y = r.ry;
+      r.scootG.position.set(x, y, z);
+      r.scootG.rotation.y = r.ry;
     } else {
       if (r.carG) r.carG.visible = false;
+      if (r.scootG) r.scootG.visible = false;
       r.av.g.visible = true;
       setSwing(r.av, r.phase, r.swing);
       r.av.flames.forEach(function(fl){ fl.visible = r.m === 1; });
@@ -5786,7 +6490,7 @@ function netTick(dt){
     var sry = player.heli ? heli.th : player.veh ? player.veh.th : player.ry;
     sry = Math.atan2(Math.sin(sry), Math.cos(sry));
     ws.send(JSON.stringify({t: 'state', n: myName, c: myColor,
-      m: player.ride ? 4 : player.heli ? 3 : player.veh ? 2 : (player.thrusting ? 1 : 0),
+      m: (player.ride || player.bus !== null) ? 4 : player.heli ? 3 : player.veh ? 2 : player.scoot ? 5 : (player.thrusting ? 1 : 0),
       p: player.pvp ? 1 : 0,
       x: +player.x.toFixed(2), y: +player.y.toFixed(2), z: +player.z.toFixed(2),
       ry: +sry.toFixed(3)}));
@@ -6655,6 +7359,10 @@ function chip(x, y, text, col){
 // mission objective tracker: gold brackets on the live target, edge arrow
 // with bearing + distance when it's off-screen
 function missionTarget(){
+  if (missionD.stage === 'run' && missionD.cur < MD_CPS.length){
+    var cpd = MD_CPS[missionD.cur];
+    return {x: cpd.x, y: 3, z: cpd.z, label: 'CHECKPOINT ' + (missionD.cur + 1) + '/' + MD_CPS.length};
+  }
   if (mission5.stage === 'driving' && mission5.cur < M5_CPS.length){
     var cp5 = M5_CPS[mission5.cur];
     return {x: cp5.x, y: 3, z: cp5.z, label: 'CHECKPOINT ' + (mission5.cur + 1) + '/' + M5_CPS.length};
@@ -6779,6 +7487,8 @@ function currentObjective(){
     return {x: M8_TRIG.x, y: 9, z: M8_TRIG.z, label: 'LOOSE IN THE PADDOCK'};
   if (typeof m9Best !== 'undefined' && !m9Best && typeof M9_TRIG !== 'undefined')
     return {x: M9_TRIG.x, y: 9, z: M9_TRIG.z, label: 'AIR MAIL'};
+  if (typeof missionD !== 'undefined' && (!dailyBest || dailyBest.day !== dayIndex()))
+    return {x: MD_TRIG.x, y: 9, z: MD_TRIG.z, label: 'THE DASH'};
   return null;
 }
 // F1: persistent gold diamond pointing at the current objective plus a
@@ -6910,6 +7620,9 @@ function drawOverlay(){
   else if (mission5.stage === 'driving')
     tTxt = 'DEADLINE · CP ' + Math.min(mission5.cur + 1, M5_CPS.length) + '/' + M5_CPS.length + ' · ' +
       Math.max(0, Math.ceil(M5_BUDGET - (performance.now() - mission5.t0) / 1000)) + 's';
+  else if (missionD.stage === 'run')
+    tTxt = 'DAILY DASH · CP ' + Math.min(missionD.cur + 1, MD_N) + '/' + MD_N + ' · ' +
+      ((performance.now() - missionD.t0) / 1000).toFixed(1) + 's';
   if (tTxt){   // mission timer, top center
     ov.font = '12px ui-monospace, Menlo, Consolas, monospace';
     var tw3 = ov.measureText(tTxt).width;
@@ -7265,11 +7978,13 @@ function frameStep(now){
     updatePeds(dt, simT);
   }
   updateWeather(dt);   // wall-clock ambient weather - deliberately runs while paused too
+  updateBus(dt);       // wall-clock loop bus - deterministic, also runs while paused
   updatePlayer(dt);
   updateDarts(dt);
   runBots(dt);
   updateRemotes(dt);
   updateRideAlong(dt);   // pin the passenger to the bound driver's seat BEFORE netTick/cam read player pos
+  updateBusRide(dt);     // same, for a loop-bus passenger's deterministic seat
   updateHeli(dt);
   updateMission(dt);
   updateMission2(dt);
@@ -7280,6 +7995,7 @@ function frameStep(now){
   updateMission7(dt);
   updateMission8(dt);
   updateMission9(dt);
+  updateMissionD(dt);
   updateRouteRibbon(dt);
   updateRockets(dt);
   updateDrops(dt);
@@ -7345,7 +8061,9 @@ function frameStep(now){
   var hint = '';
   if (mode === 'player'){
     if (isFrozen()) hint = 'FROZEN' + (frozenByName ? ' BY ' + frozenByName : '') + ' — ' + Math.ceil((player.frozenUntil - performance.now()) / 1000) + 's';
+    else if (player.bus !== null) hint = 'THE LOOP — NEXT: ' + BUS_STOPS[busStateAt(Date.now()).nextStopIdx].name + ' · E — HOP OUT · R — RADIO';
     else if (player.ride) hint = 'E — HOP OUT · R — RADIO · C — VIEW';
+    else if (player.scoot) hint = 'E — HOP OFF · W/S THROTTLE · A/D STEER · ' + Math.round(Math.abs(player.scoot.spd) * 3.6) + ' KM/H';
     else if (missionFight()) hint = 'SHOOT DOWN THE CHOPPER · F/CLICK — FIRE · RMB — AIM · CHOPPER HP ' + mh.hp + '/3';
     else if (player.heli) hint = 'W/S A/D FLY · SPACE UP · SHIFT DOWN · HOLD F/CLICK — WATER CANNON · E — EXIT · HP ' + heli.hp + '/3';
     else if (player.veh && player.veh.plow) hint = 'BLADE: ' + (bladeDown ? 'DOWN' : 'UP') + ' · SPACE — RAISE/LOWER · CLEAR THE SNOWY STREETS · E — EXIT';
@@ -7356,6 +8074,7 @@ function frameStep(now){
       if (ghost && ghostEnabled && ghostDelta !== null) hint += ' · ' + (ghostDelta <= 0 ? 'AHEAD ' : 'BEHIND ') + Math.abs(ghostDelta).toFixed(1) + 's';
     }
     else if (mission6.stage === 'drive') hint = 'THE MELT · STOP ' + (mission6.cur + 1) + '/' + M6_CPS.length + ' · MELT ' + Math.min(99, Math.max(0, Math.round(m6MeltSec() / M6_BUDGET * 100))) + '% · CRASHES MELT IT FASTER';
+    else if (missionD.stage === 'run') hint = 'DAILY DASH · CHECKPOINT ' + (missionD.cur + 1) + '/' + MD_N + ' · NEXT: ' + MD_CPS[missionD.cur].name + ' · ' + ((performance.now() - missionD.t0) / 1000).toFixed(1) + 's · ANY WHEELS';
     else if (player.veh) hint = 'E — EXIT · W/S DRIVE · A/D STEER · ' + Math.round(Math.abs(player.veh.spd) * 3.6) + ' KM/H';
     else if (mission2.stage === 'plow' && plowVeh) hint = 'GET TO THE PLOW — MAIN ST BY CITY HALL (E TO BOARD)';
     else if (mission3.stage === 'tail') hint = 'TAIL THE COUNCILMAN — STAY BACK, STAY CLOSE ENOUGH';
@@ -7378,14 +8097,20 @@ function frameStep(now){
     else if (allIdle() && nearM7Trig()) hint = 'E — START MISSION: TAILGATE COMPLIANCE';
     else if (allIdle() && nearM8Trig()) hint = 'E — START MISSION: LOOSE IN THE PADDOCK';
     else if (allIdle() && nearM9Trig()) hint = 'E — START MISSION: AIR MAIL';
+    else if (allIdle() && nearMDTrig()) hint = 'E — START THE DAILY DASH';
     else if (canEnterHeli()) hint = 'E — FLY THE NEWS CHOPPER';
     else if (!heliUnlocked && canEnterHeliBase()) hint = 'LOCKED — BEAT "THE RIBBON CUTTING" AT CITY HALL TO FLY';
+    else if (canBoardBus()) hint = 'DOORS OPEN — E TO BOARD THE LOOP';
     else if (player.grounded && canRideShotgun()) hint = 'E — RIDE SHOTGUN';
     else if (player.grounded && nearestVehicle()) hint = 'E — ENTER CAR';
     else if (!player.grounded && player.thrusting) hint = 'JETPACK · FUEL ' + Math.round(player.fuel) + '%';
     else if (myRpg > 0 && heliActive()) hint = 'RPG ×' + myRpg + ' · F/CLICK — FIRE AT THE CHOPPER · RMB — AIM';
     else if (player.pvp) hint = 'CLICK/F — FIRE · RMB — AIM · G — HOLSTER';
-    else if (allIdle()) hint = nextMissionHint();
+    else {
+      var bwh = busWaitHint();   // one call per frame — it rescans stops + the timeline
+      if (bwh) hint = bwh;       // 'BUS IN m:ss — NAME' at a stop
+      else if (allIdle()) hint = nextMissionHint();
+    }
   }
   // one-time discoverability tip, fired only when the feature is actually usable
   // (a live human is driving within range) - never repeats across sessions

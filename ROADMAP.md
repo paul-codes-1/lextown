@@ -45,18 +45,26 @@ the clock) · **Ghost racers** (your best DEADLINE run rides beside you) ·
 **Photo mode** (frame it, letterbox it, download a stamped postcard). Specs
 in `PHASE2-SPEC.md` §F7 + `PHASE3-SPEC.md`; suite at 56 checks.
 
+**Phase 4 — the comeback release** (July 2026): reasons to come back
+tomorrow. **Ride the bus** (THE LOOP circles Main→MLK→Vine→Broadway on a
+real schedule — a pure function of the clock, so every player sees the same
+bus with zero new protocol) · **Daily Dash** (one seeded checkpoint route a
+day, any wheels, its own board that rolls at midnight — and the server's day
+beats a spoofed clock) · **Scooter share** (racked kick-scooters, the
+missing rung between walking and driving, new net mode `m:5`). Spec in
+`PHASE4-SPEC.md`; suite at 62 checks.
+
 ---
 
 ## NEXT — depth and reasons to return
 
-- **Ride the bus.** A LexTran route through downtown you can actually board —
-  the passenger seat tech, pointed at an NPC driver on a loop.
-- **Daily challenge.** One rotating objective a day with its own board —
-  a reason to check back in that isn't a friend.
-- **Scooter share.** Rentable kick-scooters scattered downtown — the missing
-  rung between walking and driving.
 - **Mobile that feels native.** Tighter touch controls, a cleaner first-touch
   onboarding, performance headroom on mid-range phones.
+- **Ride the bus, together.** The LOOP is deterministic — next: bus-stop
+  social hooks (a bench you can actually sit on, a schedule board, a second
+  crosstown route past Rupp and the campus).
+- **Daily Dash seasons.** Weekly recap in chat, streak tracking on the
+  device, a monthly hall of fame for most dailies won.
 
 ---
 

@@ -566,3 +566,170 @@ first (`node --check web/app.js && node --check server.js`, then `npm test`).
       Network tab) — the only output is the saved file.
 - [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
       pass and `npm test` (`node test/smoke.mjs`) is all green (56/56, no server change).
+
+## F11 — RIDE THE BUS (Phase 4 F1: the deterministic loop bus)
+
+The bus position is a pure function of `Date.now()` (like the weather), so no new
+network protocol — but the *remote-rider seat snap* only shows with 2+ clients, so
+run the seat check with **Tab A** riding and **Tab B** watching. It is a
+**client-only** feature (no server surface, no smoke-suite change). Standing gate
+first (`node --check web/app.js && node --check server.js`, then `npm test`).
+
+Tip: `#debug=1` exposes `__lt.busStateAt(t)` (defaults to now), `__lt.busPeriod()`
+(~169 000 ms), and `__lt.bus()` (your seat index or `null`). Stop board points are
+in `web/app.js` `BUS_STOPS`: VICTORIAN SQUARE `x:-155`, PHOENIX PARK `x:80` (both
+on Main St, z≈3.6), LIBRARY `x:178`, TRANSIT CENTER `x:-85` (both on Vine St,
+z≈96.4). `#x=..&z=..` deep-links you next to one.
+
+- [ ] **Same bus, same place (determinism).** Load two tabs; the bus (teal "THE
+      LOOP") is at the **identical** spot in both at any instant, and stays synced
+      as it loops. Reload one tab mid-route — it snaps back onto the shared bus, no
+      drift. `__lt.busStateAt()` returns the same `{x,z,stopIdx}` in both consoles.
+- [ ] **Countdown never lies.** Stand within 25 m of a stop, on foot, all missions
+      idle: the `#hint` reads `BUS IN m:ss — <STOP>` and ticks down; when the bus
+      arrives it flips to `DOORS OPEN — <STOP>` (and `DOORS OPEN — E TO BOARD THE
+      LOOP` inside 6 m). The countdown matches the bus actually pulling in
+      (cross-check against `__lt.busStateAt().etaMs`).
+- [ ] **Board when the doors are open.** With the doors open and you within 6 m of
+      the board point, `E` (or the touch **E-VEH** button) boards: the `ALL ABOARD —
+      NEXT: <STOP>` caption fires, the blaster holsters, the radio chip appears, and
+      the `#hint` becomes `THE LOOP — NEXT: <STOP> · E — HOP OUT · R — RADIO`. `E`
+      does **nothing** while the doors are closed / you're too far.
+- [ ] **Ride past 2+ stops, seated + glued.** Stay aboard through at least two stops:
+      your avatar sits in a fixed seat, no `WASD` movement leaks, the camera follows
+      the bus, and the `NEXT:` stop name updates each time it departs. Dwells 14 s
+      with the door strip lit at each stop.
+- [ ] **Remote rider renders in the seat (2 tabs).** Tab A boards; in **Tab B** A's
+      avatar sits *inside* the moving bus (snapped to a deterministic seat by id
+      hash), not trailing out the back. A stale/older client without the snap shows A
+      sliding along at the netted position (acceptable fallback) — no crash either way.
+- [ ] **Radio on board.** `R` cycles the radio while riding (bus has a radio); the
+      dial chip shows the station, `lt_snd` mute silences it — same behavior as a car.
+- [ ] **Hop out at the curb.** `E` drops you on the sidewalk beside the bus at its
+      current position (`groundY` placement, `collide` settle), the on-foot prompt
+      returns, and `player.bus` is `null` again. Works mid-route, not only at a stop.
+- [ ] **No mission / heli / fire from the bus.** While riding, `E` at a mission ring
+      or the helipad hops you **out** first (never starts a mission or boards the
+      heli); RPG crates don't grab; the blaster won't fire; you're not a freeze-tag
+      target. Boarding is blocked while a mission is running or while frozen.
+- [ ] **Shelters + labels.** Each of the four stops has a shelter (posts + roof +
+      bench + "LEXTOWN TRANSIT — <NAME>" sign) you can't walk through, and toggling
+      **LBL** shows an ambient (cyan, not gold) `BUS — <NAME>` label over it.
+- [ ] **Telemetry (log-only).** Boarding logs `mev k:60`, hopping out `k:61`, and
+      completing a full loop before exit `k:62` (visible in the server's
+      `logs/events-*.jsonl`, never chat, never persisted). No new localStorage key.
+- [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
+      pass and `npm test` (`node test/smoke.mjs`) is all green (client-only; unchanged
+      count).
+
+## F12 — DAILY DASH (Phase 4 F2: the rotating daily checkpoint route)
+
+**Precondition:** m1–m9 beaten (so the hint chain reaches the daily), every
+mission idle, `lt_dailyBest` cleared. Extend the Setup fast-forward recipe:
+
+```js
+localStorage.setItem('lt_heli_unlock','1');
+['lt_m2_best','lt_m3_best','lt_m4_best','lt_m5_best','lt_m6_best','lt_m7_best','lt_m8_best','lt_m9_best']
+  .forEach(k => localStorage.setItem(k, '90000'));
+localStorage.removeItem('lt_dailyBest');
+location.reload();
+```
+
+Standing gate first (`node --check web/app.js && node --check server.js`, then
+`npm test` — the server half adds the `d` board and the suite is **60/60**). Two
+tabs for the announce check — **Tab A** plays, **Tab B** observes. Tip:
+`#debug=1` + `__lt.tp(x,z)` to hop between checkpoints while testing.
+
+- [ ] **Deterministic route, shared by all.** Both tabs (same day) show the **same
+      five checkpoints in the same order**. Reload → identical route. The route is the
+      first 5 of a seeded Fisher–Yates over the 12-landmark pool keyed on `dayIndex()`.
+- [ ] **Day seed matches the server.** Client `dayIndex()` is
+      `Math.floor((Date.now() - 5*3600e3) / 86400e3)` — byte-identical to server.js, so
+      the board and the reset flip at the same instant everywhere.
+- [ ] **Waypoint closes the chain.** With all nine missions beaten and no run today,
+      F1's gold marker + route ribbon point to `MD_TRIG` (courthouse plaza off Main);
+      `nextMissionHint()` reads `NEXT MISSION: THE DASH — GOLD RING AT THE COURTHOUSE …`;
+      the `★ DAILY: THE DASH` label renders at the ring and hides during any mission.
+- [ ] **Start gate is `allIdle` + on-foot + not-riding.** On foot at the gold ring,
+      `E` starts it only when every mission is idle and you're not driving/riding/on the
+      bus/frozen (`missionD.stage` is now in `allIdle()`); the brief fires and the clock
+      starts. `E` does nothing during another mission, as a passenger, or while frozen.
+- [ ] **Any locomotion banks a checkpoint.** Each of the five banks on **horizontal
+      proximity (<8 m)** regardless of mode — walk, car, jetpack, or the Loop bus all
+      count. Only the current checkpoint ring is lit; the next lights on arrival. The
+      HUD reads `DAILY DASH · CHECKPOINT n/5 · NEXT: <NAME> · <s>s · ANY WHEELS` and the
+      top-center timer reads `DAILY DASH · CP n/5 · <s>s`.
+- [ ] **Bus stays usable mid-dash.** During a run, boarding the Loop bus still works
+      (`canBoardBus()` / `busWaitHint()` allow `missionD.stage === 'run'`), and riding it
+      through a checkpoint banks it.
+- [ ] **Win → board + announce + device best.** Finish all five → win; the scores modal
+      opens with the **DAILY DASH** section at the **top** (`#scoreListD`, `THE DASH IN …`),
+      `lt_dailyBest = {day, ms}` saves for today, and Tab B's chat shows
+      `* MISSION  <name> won the DAILY DASH in <t>s`. Verify the time lands on the `d`
+      board, NOT the ribbon board (client sent numeric `m:10`).
+- [ ] **Modal meta.** The DAILY section shows `NEW ROUTE IN xH yM` (counts down to the
+      next EST boundary) and the device best (`YOUR BEST TODAY …` / `NO RUN TODAY YET`).
+- [ ] **Best gates the hint.** After a run today, `dailyBest.day === dayIndex()` removes
+      the daily from the objective chain (`nextMissionName()` returns `''`, no marker).
+- [ ] **Abandon past the ceiling.** A run that exceeds `MD_MAX` (900 s, the server
+      ceiling) is abandoned — caption fires, `mev k:43`, mission resets to `idle`, no
+      submit — so a stale run never sends an out-of-window time.
+- [ ] **Private-room run doesn't rank.** Play the dash in a `#room=` private room → it
+      plays and `lt_dailyBest` still saves, but there's no global-board write and no chat
+      announce (inherits the score gate). In PUBLIC it ranks normally.
+- [ ] **Server plumbing complete.** `d`/`dDay` seeded in the `scores` literal + loaded
+      explicitly, `rollDaily()` empties the board on the EST day flip, `10:'d'` in the
+      score map, `WIN` `d:[20000,900000]`, the announce line, and `topScores()` returns
+      `d` + `dDay`. Smoke checks D1–D4 cover it (suite 60/60).
+- [ ] **Telemetry (log-only).** Start logs `mev k:40`, each checkpoint `k:41`, finish
+      `k:42`, abandon `k:43` (server `logs/events-*.jsonl`, never chat).
+- [ ] **Surfaces updated together.** README (mission list blurb + controls row + the
+      leaderboards note), the intro copy ("Nine timed missions … plus a Daily Dash"),
+      the `#tut` DAILY DASH grid block, and the `#scoreListD` modal block are all present.
+- [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
+      pass and `npm test` (`node test/smoke.mjs`) is 60/60.
+
+## F13 — SCOOTER SHARE (Phase 4 F3: racked kick-scooters, new m:5 mode)
+
+Scooters are **local-only** meshes (each client its own set, like ambient traffic),
+but *riders* are synced over the new **m:5** mode — so the remote-rider scooter mesh
+only shows with 2+ clients: run it with **Tab A** riding and **Tab B** watching.
+Server surface is one line (`CAPS[5]`) plus smoke checks F13a/F13b. Standing gate
+first (`node --check web/app.js && node --check server.js`, then `npm test`).
+
+Tip: `#debug=1` exposes `__lt.tp(x,z)` and `__lt.pos()`. Racks (`SCOOT_RACKS` in
+`web/app.js`): TRANSIT CENTER `x:-72,z:86`, COURTHOUSE PLAZA `x:56,z:-18`, TRIANGLE
+PARK `x:-158,z:22`, UK CAMPUS `x:178,z:416` — `#x=..&z=..` deep-links you next to one.
+
+- [ ] **Mount within reach.** On foot within ~2.2 m of a rack scooter, `E` (or the
+      touch **E-VEH** button) hops on: the `SCOOTER — HOP ON` caption fires, the blaster
+      holsters, and the `#hint` becomes `E — HOP OFF · W/S THROTTLE · A/D STEER · <km/h>`.
+      `E` does nothing if no scooter is in reach. Each rack shows a `SCOOTERS — <PLACE>`
+      ambient label under **LBL**.
+- [ ] **Speed vs. walk.** Ride open street: the scooter clearly out-paces walking,
+      tops out ~34 km/h (9.5 m/s), and is **nimble at a crawl** (tighter turn than a car
+      at low speed). Avatar stays **visible and standing**, hands forward on the bars, no
+      walk swing. Rides across grass, not just pavement.
+- [ ] **Crunch on contact.** Steer into a building/wall: `collide` stops you and speed
+      drops hard (crunch), no clipping through. No jumping while mounted (`Space` does
+      nothing); frozen (freeze-tag) zeroes throttle/steer just like a car.
+- [ ] **Dismount + remount.** `E` parks the scooter at the drop spot (`taken=false`) and
+      steps you off to the side (`groundY` + `collide` settle); the on-foot prompt
+      returns and `player.scoot` is `null`. Walk back and `E` re-mounts the same scooter
+      from where it was left.
+- [ ] **Remote rider shows a scooter (2 tabs).** Tab A rides; in **Tab B**, A stands on a
+      green scooter mesh that glides under them at real speed (no walk swing), and it
+      **disappears** the instant A hops off / drives / flies. A stale client without m:5
+      shows A sliding standing (walk fallback) — no crash either way.
+- [ ] **No firing / not a target while mounted.** `G`/fire won't draw or shoot on a
+      scooter (hands on the bars); you're `pvp:0`, so not a freeze-tag target; RPG crates
+      don't grab. `E` at a mission ring or the helipad hops you **off** first (never
+      starts a mission or boards). No car radio (a scooter is **not** `inCar()`).
+- [ ] **DAILY DASH on a scooter.** During a dash run (`missionD.stage==='run'`), you can
+      mount/dismount a scooter mid-run (legal locomotion, like the bus); checkpoints bank
+      while riding.
+- [ ] **Server plumbing + smoke.** `CAPS[5] = { h:13, v:12 }` present (9.5 top + jitter
+      slack); an m:5 run at scooter speed is never move-rejected and relays with `m===5`
+      preserved (not rewritten to 0). Smoke checks **F13a/F13b** cover it.
+- [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
+      pass and `npm test` (`node test/smoke.mjs`) is **62/62**.
