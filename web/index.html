@@ -149,15 +149,17 @@
       font:inherit;color:#eafffa;background:rgba(110,247,223,.08)}
   #tutClose{position:absolute;top:10px;right:10px}
   .name-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  #nameIn{background:rgba(110,247,223,.07);border:1px solid var(--teal-dim);color:#eafffa;
+  #nameIn,#roomIn{background:rgba(110,247,223,.07);border:1px solid var(--teal-dim);color:#eafffa;
           font:13px ui-monospace,'SF Mono',Menlo,Consolas,monospace;letter-spacing:.14em;
           padding:8px 10px;width:170px;outline:none;text-transform:uppercase}
-  #nameIn:focus{border-color:var(--teal)}
+  #roomIn{width:120px}
+  #nameIn:focus,#roomIn:focus{border-color:var(--teal)}
   .name-note{color:#7fbfb2;font-size:10px}
   .swatch-row{display:flex;gap:8px;margin-top:10px}
   .swatch{width:26px;height:26px;border-radius:4px;border:2px solid transparent;cursor:pointer;padding:0}
   .swatch.on{border-color:var(--teal)}
   .swatch:focus-visible{outline:1px solid var(--teal);outline-offset:1px}
+  .room-row{display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap}
   #tutPlay{margin-top:18px;width:100%;padding:10px;font-size:12px}
   .tut-links{margin-top:12px;text-align:center;font-size:10.5px;color:#7fbfb2}
   .tut-links a{color:#9adfd2}
@@ -293,6 +295,11 @@
       <span class="name-note">shown over your head + in chat · letters, numbers, - _</span>
     </div>
     <div class="swatch-row" id="swatches" aria-label="Avatar color"></div>
+    <div class="room-row">
+      <input id="roomIn" maxlength="12" autocomplete="off" spellcheck="false" placeholder="PUBLIC" aria-label="Private room code">
+      <button id="copyRoom" class="tbtn">COPY ROOM LINK</button>
+    </div>
+    <span class="name-note">a room code is a code, not a password — share the link and friends join your own Lexington</span>
     <h2>ON FOOT</h2>
     <div class="tut-grid">
       <b><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></b><span>walk (arrows work too) · <kbd>Shift</kbd> run</span>

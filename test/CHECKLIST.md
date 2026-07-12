@@ -289,3 +289,63 @@ localStorage.removeItem('lt_ride_seen'); location.reload();
       stored. `web/privacy.html` remains true.
 - [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
       pass and `npm test` (`node test/smoke.mjs`) is all green.
+
+---
+
+## F6 — Private rooms
+
+Phase 2 F4. **Three tabs:** A and B share a room code, C stays in the PUBLIC
+commons. Standing gate first (`node --check web/app.js && node --check
+server.js`, then `npm test`), then work the list by hand. Keep all three
+consoles open.
+
+```bash
+ADMIN_TOKEN=qa-admin NPC_TOKEN=qa-npc PORT=8080 node server.js
+```
+
+- Tab A: `http://localhost:8080/?v=1#room=DERBY&name=ALICE`
+- Tab B: `http://localhost:8080/?v=1#room=DERBY&name=BOB`
+- Tab C: `http://localhost:8080/?v=1#name=CAROL` (PUBLIC commons)
+
+- [ ] **Isolation — presence.** A and B see each other move; C sees neither, and
+      C's movement never reaches A or B. Each net chip's peer count reflects only
+      same-room peers.
+- [ ] **Isolation — chat.** A chat line typed in DERBY shows for A and B only; a
+      line typed in PUBLIC (Tab C) shows for C only. Nothing crosses rooms.
+- [ ] **Isolation — heli.** A boards the chopper in DERBY and B sees A fly; C sees
+      the PUBLIC chopper still parked and can board it independently. Two rooms,
+      two choppers, no interference — downing one doesn't touch the other.
+- [ ] **Isolation — leave.** Close Tab A → B sees ALICE leave; C sees no change. If
+      A was DERBY's pilot, DERBY's heli crashes/resets while PUBLIC's is untouched.
+- [ ] **Net chip shows the room.** A and B show `ROOM DERBY`; C shows the PUBLIC
+      `NET: ONLINE · PEERS …` (no room, or `COMMONS`).
+- [ ] **Reconnect keeps the room.** Restart the server (or drop A's socket) → A
+      auto-reconnects into DERBY, not PUBLIC, re-syncing B and the room's heli.
+- [ ] **COPY ROOM LINK works and excludes the name.** In Tab B's tutorial, click
+      **COPY ROOM LINK**, then open the copied URL in a fresh tab with a different
+      name → it lands in DERBY (room preserved, `#name=` not carried over so the
+      invitee names themselves).
+- [ ] **Private scores don't rank.** Beat a mission in DERBY → no global-board
+      write, no chat announce in any tab, the WIN modal shows
+      `PRIVATE ROOM · TIMES DON'T RANK`, and `lt_mN_best` still updates locally.
+      Beat the same mission in PUBLIC (Tab C) → it *does* hit the board and
+      announce. Also confirm a raw `{t:'score'}` forced from a DERBY client's
+      console is ignored server-side (no board write).
+- [ ] **`/room` switches via reload.** In Tab C, type `/room DERBY` in chat → the
+      hash rewrites and the tab reloads into DERBY alongside A and B; `/room` with
+      no code (or an empty one) returns to the PUBLIC commons.
+- [ ] **NPCs are PUBLIC-only.** With `bots/npcs.mjs` running (see the F3 setup
+      above), NPC chatter and walkers appear in PUBLIC (Tab C) only — never in
+      DERBY.
+- [ ] **Implicit + sanitized.** `#room=derby`, `#room=DERBY`, and `#room=Derby!!`
+      all resolve to the same sanitized `DERBY` (one shared world); an absent room
+      is PUBLIC and behaves exactly like a current URL.
+- [ ] **Admin sees rooms.** `/list` (as admin) shows a room column — ALICE/BOB in
+      DERBY, CAROL in PUBLIC; `/announce hi` reaches all three tabs; a `/ban`
+      persists globally (the target can't rejoin via a different room code).
+- [ ] **Privacy honest.** `web/privacy.html` states a room code is handled like a
+      player name — visible to others in the room and possibly in the short-lived
+      server logs, not a password, nothing about rooms stored permanently. No new
+      localStorage key (the room rides the URL hash); no new persisted server data.
+- [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
+      pass and `npm test` (`node test/smoke.mjs`) is all green.

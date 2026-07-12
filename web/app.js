@@ -1597,6 +1597,14 @@ var savedName = '';
 try { savedName = localStorage.getItem('lt_name') || ''; } catch (e){}
 var myName = cleanName(nameM ? decodeURIComponent(nameM[1]) : savedName)
           || 'LEX-' + (100 + ((Math.random() * 900) | 0));
+// private-room code (F4): #room=<code> routes you to an isolated world. Empty = PUBLIC.
+function cleanRoom(s){ return (s || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 12).toUpperCase(); }
+var roomM = /(?:^|[#&])room=([^&#]+)/.exec(hashStr);
+var roomCode = '';
+if (roomM){
+  try { roomCode = cleanRoom(decodeURIComponent(roomM[1])); }
+  catch (e){ roomCode = cleanRoom(roomM[1]); }   // malformed % escapes: use the raw match
+}
 var myColorIdx = (Math.random() * PLAYER_COLS.length) | 0;
 try {
   var _sc = localStorage.getItem('lt_color');
@@ -2791,6 +2799,13 @@ function missionFail(why){
     ? 'THE PRESS CONFERENCE CONTINUES WITHOUT YOU.'
     : 'WE WILL DO THIS INDOORS NEXT YEAR.', 4200);
 }
+// leaderboards are PUBLIC-only: a private room keeps its times off the boards
+// (the server also drops them, but gating here saves the round-trip). Device
+// bests still persist locally.
+function sendScore(obj){
+  if (roomCode) return;
+  if (online && ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+}
 function submitScore(ms){
   try {
     if (!missionBest || ms < missionBest){
@@ -2798,8 +2813,7 @@ function submitScore(ms){
       localStorage.setItem('lt_mission_best', String(Math.round(ms)));
     }
   } catch (e){}
-  if (online && ws && ws.readyState === 1)
-    ws.send(JSON.stringify({t: 'score', ms: Math.round(ms)}));
+  sendScore({t: 'score', ms: Math.round(ms)});
 }
 function fmtMs(ms){ return (ms / 1000).toFixed(1) + 's'; }
 function missionPoints(ms){ return Math.max(100, 1000 - Math.round(ms / 100)); }
@@ -2818,6 +2832,7 @@ function showScores(myMs, board){
     var best = board === 2 ? m2Best : board === 3 ? m3Best : board === 4 ? m4Best :
                board === 5 ? m5Best : board === 6 ? m6Best : board === 7 ? m7Best : missionBest;
     if (best) you += ' · DEVICE BEST ' + fmtMs(best);
+    if (roomCode) you += ' · PRIVATE ROOM · TIMES DON\'T RANK';
   } else {
     you = (missionBest ? 'RIBBON: ' + fmtMs(missionBest) : 'RIBBON: —') +
       ' · ' + (m2Best ? 'SNOW: ' + fmtMs(m2Best) : 'SNOW: —') +
@@ -3405,8 +3420,7 @@ function updateMission2(dt){
           localStorage.setItem('lt_m2_best', String(Math.round(mission2.ms)));
         }
       } catch (e){}
-      if (online && ws && ws.readyState === 1)
-        ws.send(JSON.stringify({t: 'score', ms: Math.round(mission2.ms), m: 2}));
+      sendScore({t: 'score', ms: Math.round(mission2.ms), m: 2});
     }
     return;
   }
@@ -3723,8 +3737,7 @@ function updateMission3(dt){
           localStorage.setItem('lt_m3_best', String(Math.round(mission3.ms)));
         }
       } catch (e){}
-      if (online && ws && ws.readyState === 1)
-        ws.send(JSON.stringify({t: 'score', ms: Math.round(mission3.ms), m: 3}));
+      sendScore({t: 'score', ms: Math.round(mission3.ms), m: 3});
     }
     return;
   }
@@ -3990,8 +4003,7 @@ function updateMission4(dt){
           localStorage.setItem('lt_m4_best', String(Math.round(mission4.ms)));
         }
       } catch (e){}
-      if (online && ws && ws.readyState === 1)
-        ws.send(JSON.stringify({t: 'score', ms: Math.round(mission4.ms), m: 4}));
+      sendScore({t: 'score', ms: Math.round(mission4.ms), m: 4});
     }
     return;
   }
@@ -4099,8 +4111,7 @@ function updateMission5(dt){
               localStorage.setItem('lt_m5_best', String(Math.round(mission5.ms)));
             }
           } catch (e){}
-          if (online && ws && ws.readyState === 1)
-            ws.send(JSON.stringify({t: 'score', ms: Math.round(mission5.ms), m: 5}));
+          sendScore({t: 'score', ms: Math.round(mission5.ms), m: 5});
         } else {
           sndTone(880, 0.18, 0, 'square', 0.14);
           caption('THE BLOCK', 'GOT IT. NEXT: ' + M5_CPS[mission5.cur].name + '.', 3200);
@@ -4267,8 +4278,7 @@ function updateMission6(dt){
               localStorage.setItem('lt_m6_best', String(Math.round(mission6.ms)));
             }
           } catch (e){}
-          if (online && ws && ws.readyState === 1)
-            ws.send(JSON.stringify({t: 'score', ms: Math.round(mission6.ms), m: 6}));
+          sendScore({t: 'score', ms: Math.round(mission6.ms), m: 6});
         } else {
           sndTone(880, 0.18, 0, 'square', 0.14);
           caption('CRANK & BOOM', 'SCOOPS AWAY. NEXT: ' + M6_CPS[mission6.cur].name + '.', 3200);
@@ -4413,8 +4423,7 @@ function updateMission7(dt){
                 localStorage.setItem('lt_m7_best', String(Math.round(mission7.ms)));
               }
             } catch (e){}
-            if (online && ws && ws.readyState === 1)
-              ws.send(JSON.stringify({t: 'score', ms: Math.round(mission7.ms), m: 7}));
+            sendScore({t: 'score', ms: Math.round(mission7.ms), m: 7});
             return;
           }
         }
@@ -4867,8 +4876,9 @@ var ridePairs = {};   // passengerId -> driverId (seat bindings, from 'ride' bro
 var ws = null, online = false;
 function peerCount(){ return Object.keys(remotes).length; }
 function setNetChip(){
+  var base = 'NET: ' + (online ? 'ONLINE' : 'LOCAL-SIM') + ' · PEERS ' + peerCount();
   document.getElementById('netchip').textContent =
-    'NET: ' + (online ? 'ONLINE' : 'LOCAL-SIM') + ' · PEERS ' + peerCount();
+    roomCode ? 'ROOM ' + roomCode + ' · ' + base : base;
 }
 function removeRemote(id){
   var r = remotes[id];
@@ -5076,6 +5086,12 @@ function sendChat(){
   chatIn.value = '';
   chatIn.blur();
   if (!msg) return;
+  if (/^\/room\b/i.test(msg)){   // /room <code> switches worlds; never sent to the server
+    var rc = cleanRoom(msg.replace(/^\/room\b\s*/i, ''));
+    location.hash = rc ? 'room=' + rc : '';
+    location.reload();
+    return;
+  }
   if (online && ws && ws.readyState === 1){
     ws.send(JSON.stringify({t: 'chat', msg: msg}));   // server echoes it back
   } else {
@@ -5152,6 +5168,8 @@ function updateRemotes(dt){
   else if (location.protocol === 'http:' || location.protocol === 'https:')
     url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
   if (!url) return;
+  // route to a private room (F4); baked once so reconnects keep the room
+  if (url && roomCode) url += (url.indexOf('?') >= 0 ? '&' : '?') + 'room=' + encodeURIComponent(roomCode);
   var retryMs = 2000;
   function connectWS(){
     try { ws = new WebSocket(url); } catch (e){ ws = null; scheduleReconnect(); return; }
@@ -5801,6 +5819,23 @@ var _pendColor = myColorIdx;
     })(i);
   }
 })();
+// room field (F4): seed the current room + wire the share-link copy. Both live
+// in the tutorial CALL SIGN block (index.html); guard absence (dev-2 parallel).
+(function(){
+  var roomIn = document.getElementById('roomIn');
+  if (roomIn) roomIn.value = roomCode;
+  var copyBtn = document.getElementById('copyRoom');
+  if (!copyBtn) return;
+  copyBtn.onclick = function(){
+    var code = roomIn ? cleanRoom(roomIn.value) : roomCode;
+    // deliberately excludes #name= so a shared link doesn't rename the invitee
+    var link = location.origin + location.pathname + location.search + (code ? '#room=' + code : '');
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link);
+    var was = copyBtn.textContent;
+    copyBtn.textContent = 'LINK COPIED';
+    setTimeout(function(){ copyBtn.textContent = was; }, 1500);
+  };
+})();
 function applyName(){
   // color first, so a color-only change still applies past the name early-return
   if (_pendColor !== myColorIdx){
@@ -5831,6 +5866,20 @@ function welcomeBackLine(){
 }
 function tutClose(){
   applyName();
+  // room switch (F4): applyName already persisted name/color, so a reload keeps
+  // them. Changing rooms means a fresh ws connection, so just reload the page.
+  var _roomIn = document.getElementById('roomIn');
+  if (_roomIn){
+    var nr = cleanRoom(_roomIn.value);
+    if (nr !== roomCode){
+      // mark the tutorial seen BEFORE the reload or a first-run player who
+      // typed a room code gets the modal a second time on the other side
+      try { localStorage.setItem('lt_tut_seen', '1'); } catch (e){}
+      location.hash = nr ? 'room=' + nr : '';
+      location.reload();
+      return;   // page is navigating away - nothing else should run
+    }
+  }
   els.tut.hidden = true;
   try { localStorage.setItem('lt_tut_seen', '1'); } catch (e){}
   // first-session shove toward the missions

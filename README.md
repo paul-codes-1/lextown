@@ -113,6 +113,7 @@ jq 'select(.e=="metrics") | {ts,online,rssMb}' logs/events-*.jsonl    # 5-min he
 - `#name=YOURNAME` — set your player name (default: random `LEX-###`)
 - `#h=7.5` — start the day cycle at a given hour (default: dusk)
 - `#wx=rain` — pin the weather state: `clear`, `rain`, `fog`, `overcast`, or `off` (default: the shared real-world schedule)
+- `#room=DERBY` — join (or create) a private room by code; share the link and friends land in the same world (default: the public commons)
 - `#ws=ws://host:8080` — connect to a specific relay (default: same origin when served over http/https)
 
 ## How multiplayer works
@@ -127,7 +128,9 @@ jq 'select(.e=="metrics") | {ts,online,rssMb}' logs/events-*.jsonl    # 5-min he
 
 The client renders remote players through a small interpolation buffer (~160 ms), so movement is smooth at any reasonable latency, and auto-reconnects with backoff if the relay drops. There is no world persistence — only the mission leaderboards survive a server restart.
 
-Ideas for where to take it: spatial interest management, persistence, private worlds.
+**Private rooms:** add a `#room=CODE` to your link (or type a code in the tutorial) and you get your own instance of the city — only players with the same code are in it, each room with its own chopper and chat, while the public commons keeps running without you. A room code is a code, not a password. Times you set in a private room don't rank on the public leaderboards (they still save as your local device best), and an empty or absent code drops you into the public commons, exactly like every link works today.
+
+Ideas for where to take it: spatial interest management, persistence.
 
 ## Ambient NPCs
 

@@ -30,7 +30,7 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify({
       stats, humans: humanCount(), total: clients.size,
       online: [...clients.values()].map((c) => ({
-        id: c.id, name: c.name, ip: c.ip, pvp: c.pvp, npc: c.npc ? 1 : 0,
+        id: c.id, name: c.name, room: c.room || 'PUBLIC', ip: c.ip, pvp: c.pvp, npc: c.npc ? 1 : 0,
         secs: Math.round((Date.now() - c.joinedAt) / 1000),
       })),
     }, null, 2));
@@ -129,7 +129,15 @@ function statsLine() {
     ` · heli flights ${stats.heliFlights} · heli downs ${stats.heliDowns}` +
     ` · rockets ${stats.rockets} · pushes ${stats.pushes} · missions ${stats.missions}` +
     ` · move-rejects ${stats.corrections} · client-errs ${stats.clientErrs}` +
-    ` · kicks ${stats.kicks} · bans ${stats.bans}`;
+    ` · kicks ${stats.kicks} · bans ${stats.bans}` + roomsLine();
+}
+// per-room population, private rooms only (the global counts above are the
+// PUBLIC-plus-everything baseline)
+function roomsLine() {
+  const counts = new Map();
+  for (const c of clients.values()) if (c.room) counts.set(c.room, (counts.get(c.room) || 0) + 1);
+  if (!counts.size) return '';
+  return ' · rooms ' + [...counts.entries()].map(([r, n]) => `${r}:${n}`).join(' ');
 }
 setInterval(() => {
   logEvent('metrics', {
@@ -197,40 +205,69 @@ function isBanned(ip, name) {
 const CAPS = { 0: { h: 18, v: 14 }, 1: { h: 20, v: 16 }, 2: { h: 38, v: 12 }, 3: { h: 42, v: 20 }, 4: { h: 38, v: 12 } };
 const MAX_FALL = 34;   // client terminal velocity is 30
 
-// --- the news chopper -----------------------------------------------------
-// One shared helicopter; the server arbitrates who flies it, tracks its hp,
-// and validates shoot-down claims. Position rides along on the pilot's state
-// packets (m=3). Pad = the helipad on Big Blue.
+// --- the news chopper (one per room) --------------------------------------
+// Each room has its own helicopter; the server arbitrates who flies it, tracks
+// its hp, and validates shoot-down claims. Position rides along on the pilot's
+// state packets (m=3). Pad = the helipad on Big Blue. Rooms create their heli
+// lazily via getHeli() and the empty-room GC in ws-close drops it.
 const HELI_PAD = { x: -127, y: 129.8, z: 11, th: 1.5708 };
-const HELI = { pilot: null, hp: 3, x: HELI_PAD.x, y: HELI_PAD.y, z: HELI_PAD.z, th: HELI_PAD.th };
+const helis = new Map();   // room -> { pilot, hp, x, y, z, th }
+function getHeli(room) {
+  let h = helis.get(room);
+  if (!h) {
+    h = { pilot: null, hp: 3, x: HELI_PAD.x, y: HELI_PAD.y, z: HELI_PAD.z, th: HELI_PAD.th };
+    helis.set(room, h);
+  }
+  return h;
+}
 // ride shotgun: the passenger seat is a server-arbitrated mutex keyed on the
-// driver's id, exactly like HELI.pilot — cars aren't server objects, so the
-// pairing lives here for the duration of the ride (never persisted or logged).
+// driver's id — cars aren't server objects, so the pairing lives here for the
+// duration of the ride (never persisted or logged). Seats stay keyed by global
+// player id; room-scoped state means you only ever see/board a same-room driver.
 const seats = new Map();   // driverId -> passengerId
 const seatOf = new Map();  // passengerId -> driverId
 const RIDE_RANGE = 12;     // looser than the client's 8m UX gate — absorbs the ~160ms interp trail
-function heliSnap() {
-  return { t: 'heli', a: 'snap', pilot: HELI.pilot, hp: HELI.hp,
-    x: HELI.x, y: HELI.y, z: HELI.z, th: HELI.th };
+function heliSnap(room) {
+  const h = getHeli(room);
+  return { t: 'heli', a: 'snap', pilot: h.pilot, hp: h.hp,
+    x: h.x, y: h.y, z: h.z, th: h.th };
 }
-function heliDown(by) {
+function heliDown(room, by) {
+  const h = helis.get(room);   // get, NOT getHeli: never resurrect a GC'd room
+  if (!h) return;
   stats.heliDowns++;
-  logEvent('heli_down', { by });
-  broadcast({ t: 'heli', a: 'down', by }, null);
-  HELI.pilot = null; HELI.hp = 3;
-  HELI.x = HELI_PAD.x; HELI.y = HELI_PAD.y; HELI.z = HELI_PAD.z; HELI.th = HELI_PAD.th;
+  logEvent('heli_down', { by, room });
+  broadcast({ t: 'heli', a: 'down', by }, null, room);
+  h.pilot = null; h.hp = 3;
+  h.x = HELI_PAD.x; h.y = HELI_PAD.y; h.z = HELI_PAD.z; h.th = HELI_PAD.th;
 }
 const MAX_STATE_HZ = 15;   // packets/sec before we start dropping
 const NAME_RE = /[^A-Za-z0-9 _-]/g;
+// room codes: sanitized like names but no spaces, case-folded up, <=12 chars.
+// PUBLIC (empty string) is the commons sentinel — "no room" and "commons" share
+// one code path. A code becomes a room the instant someone connects with it.
+const ROOM_RE = /[^A-Za-z0-9_-]/g;
+const PUBLIC = '';
+function cleanRoom(s) { return String(s || '').replace(ROOM_RE, '').slice(0, 12).toUpperCase(); }
 
 const wss = new WebSocketServer({ server });
 const clients = new Map(); // ws -> client record
 let nextId = 1;
 
-function broadcast(msg, except) {
+// scoped fan-out: only clients in `room` receive the message. `room` is
+// REQUIRED at every call site — an omitted room would match only clients whose
+// room is undefined (i.e. nobody). Iterate entries so we can read each client's
+// room. broadcastAll (global) is the /announce-only escape hatch.
+function broadcast(msg, except, room) {
+  const s = JSON.stringify(msg);
+  for (const [ws, c] of clients) {
+    if (ws !== except && c.room === room && ws.readyState === ws.OPEN) ws.send(s);
+  }
+}
+function broadcastAll(msg) {
   const s = JSON.stringify(msg);
   for (const ws of clients.keys()) {
-    if (ws !== except && ws.readyState === ws.OPEN) ws.send(s);
+    if (ws.readyState === ws.OPEN) ws.send(s);
   }
 }
 
@@ -299,7 +336,7 @@ function handleCommand(ws, client, text) {
       break;
     case 'list': {
       const lines = [...clients.values()].map((c) =>
-        `${c.id} ${c.name || '?'} ${c.ip || '?'}${c.admin ? ' [admin]' : ''}`);
+        `${c.id} ${c.name || '?'} [${c.room || 'PUBLIC'}] ${c.ip || '?'}${c.admin ? ' [admin]' : ''}`);
       sys(ws, 'online: ' + (lines.join(' | ') || 'nobody'));
       break;
     }
@@ -336,15 +373,30 @@ function handleCommand(ws, client, text) {
       const [, tc] = findByName(arg);
       if (!tc) { sys(ws, `no player "${arg}"`); break; }
       tc.frozenUntil = 0;
-      broadcast({ t: 'frozen', id: tc.id, dur: 0 }, null);
+      broadcast({ t: 'frozen', id: tc.id, dur: 0 }, null, tc.room);   // the target's room
       sys(ws, `unfroze ${tc.name}`);
       break;
     }
-    case 'announce':
-      broadcast({ t: 'chat', id: 'SERVER', n: '⚙ ANNOUNCE', msg: arg.slice(0, 120) }, null);
+    case 'announce': {
+      // global by default; "@ROOM msg" scopes the announce to one room
+      let target = null, body = arg;
+      if (arg[0] === '@') {
+        const sp = arg.indexOf(' ');
+        target = cleanRoom(sp === -1 ? arg.slice(1) : arg.slice(1, sp));
+        body = sp === -1 ? '' : arg.slice(sp + 1);
+        // a fat-fingered "@" or empty body should error loudly, not hit PUBLIC
+        if (!target || !body.trim()) { sys(ws, 'usage: /announce [@ROOM] <msg>'); break; }
+      }
+      const m = { t: 'chat', id: 'SERVER', n: '⚙ ANNOUNCE', msg: body.slice(0, 120) };
+      if (target !== null) {
+        const n = [...clients.values()].filter((c) => c.room === target).length;
+        broadcast(m, null, target);
+        sys(ws, `announced to ${target} (${n} online)`);   // typo'd/empty rooms aren't silent
+      } else broadcastAll(m);
       break;
+    }
     default:
-      sys(ws, 'commands: /stats /list /kick <name> /ban <name> /unban <name|ip> /unfreeze <name> /announce <msg>');
+      sys(ws, 'commands: /stats /list /kick <name> /ban <name> /unban <name|ip> /unfreeze <name> /announce [@room] <msg>');
   }
 }
 
@@ -364,9 +416,16 @@ wss.on('connection', (ws, req) => {
     try { isNpc = new URL(req.url, 'http://x').searchParams.get('npc') === NPC_TOKEN; }
     catch (e) { isNpc = false; }
   }
+  // room scoping: same crash-safe parse as ?npc above (an unguarded URL throw
+  // would hit uncaughtException -> process.exit and drop everyone). Absent or
+  // malformed room = PUBLIC commons. NPCs are always PUBLIC (bots pass no room).
+  let room = PUBLIC;
+  try { room = cleanRoom(new URL(req.url, 'http://x').searchParams.get('room') || ''); }
+  catch (e) { room = PUBLIC; }
+  if (isNpc) room = PUBLIC;
   const id = 'P' + nextId++;
   const client = {
-    id, ip, npc: isNpc,
+    id, ip, npc: isNpc, room,
     state: null,          // last accepted state (relayed to new joiners)
     pos: null, posAt: 0,  // last accepted position for speed checks
     name: null,
@@ -385,13 +444,18 @@ wss.on('connection', (ws, req) => {
   // could churn, so counting them would inflate the retention KPIs. They stay
   // visible in-world and in the /admin/stats roster (tagged npc:1).
   if (!isNpc) { stats.joins++; stats.peak = Math.max(stats.peak, humanCount()); }
-  logEvent('join', { id, ip, npc: isNpc ? 1 : 0, online: clients.size,
+  logEvent('join', { id, ip, npc: isNpc ? 1 : 0, room, online: clients.size,
     ua: String(req.headers['user-agent'] || '').slice(0, 120) });
+  // welcome is room-scoped: peers, the heli snapshot, and seat pairs are all
+  // filtered to the joiner's room (seat pairs by the DRIVER's room).
   const peers = [...clients.values()]
-    .filter((c) => c.id !== id && c.state)
+    .filter((c) => c.id !== id && c.state && c.room === room)
     .map((c) => c.state);
-  ws.send(JSON.stringify({ t: 'welcome', id, peers, heli: heliSnap(),
-    seats: [...seats.entries()].map(([drv, pax]) => ({ drv, pax })) }));
+  const roomSeats = [...seats.entries()].filter(([drv]) => {
+    const d = [...clients.values()].find((c) => c.id === drv);
+    return d && d.room === room;
+  }).map(([drv, pax]) => ({ drv, pax }));
+  ws.send(JSON.stringify({ t: 'welcome', id, peers, heli: heliSnap(room), seats: roomSeats }));
   console.log(`[join] ${id} (${clients.size} online)`);
 
   ws.on('message', (data) => {
@@ -411,7 +475,7 @@ wss.on('connection', (ws, req) => {
         const nm = msg.n.replace(NAME_RE, '').slice(0, 14);
         if (nm && nm !== client.name) {
           if (isBanned(null, nm)) { ws.close(4003, 'banned'); return; }
-          logEvent(client.name === null ? 'name' : 'rename', { id, n: nm });
+          logEvent(client.name === null ? 'name' : 'rename', { id, n: nm, room: client.room });
           client.name = nm;
         }
       }
@@ -425,7 +489,7 @@ wss.on('connection', (ws, req) => {
           ws.send(JSON.stringify({ t: 'correct', x: client.pos.x, y: client.pos.y, z: client.pos.z }));
         if (client.strikes === 20 && !client.npc) {
           console.log(`[cheat?] ${id}/${client.name} ${client.strikes} rejected moves`);
-          logEvent('cheat_suspect', { id, n: client.name, strikes: client.strikes });
+          logEvent('cheat_suspect', { id, n: client.name, room: client.room, strikes: client.strikes });
         }
         return; // rejected: not relayed
       }
@@ -438,7 +502,7 @@ wss.on('connection', (ws, req) => {
       if (seats.has(id) && cleanM !== 2) {
         const pax = seats.get(id);
         seats.delete(id); seatOf.delete(pax);
-        broadcast({ t: 'ride', a: 'eject', drv: id, pax }, null);
+        broadcast({ t: 'ride', a: 'eject', drv: id, pax }, null, client.room);
       }
       // a seated passenger must self-report m:4 — a raw client that boards and
       // then reports another mode would squat the seat forever. Grace window
@@ -446,7 +510,7 @@ wss.on('connection', (ws, req) => {
       if (seatOf.has(id) && cleanM !== 4 && now - client.seatAt > 1200) {
         const sdrv = seatOf.get(id);
         seatOf.delete(id); seats.delete(sdrv);
-        broadcast({ t: 'ride', a: 'exit', drv: sdrv, pax: id }, null);
+        broadcast({ t: 'ride', a: 'exit', drv: sdrv, pax: id }, null, client.room);
       }
       const clean = { t: 'state', id, n: client.name || id,
         c: typeof msg.c === 'number' ? msg.c : 0x3a76c4,
@@ -454,10 +518,11 @@ wss.on('connection', (ws, req) => {
         p: client.pvp,
         x: msg.x, y: msg.y, z: msg.z, ry: msg.ry };
       client.state = clean;
-      if (HELI.pilot === id && cleanM === 3) {   // heli rides the pilot's state
-        HELI.x = msg.x; HELI.y = msg.y + 1.2; HELI.z = msg.z; HELI.th = msg.ry;
+      const rh = helis.get(client.room);   // get, NOT getHeli: never resurrect a GC'd room from a late packet
+      if (rh && rh.pilot === id && cleanM === 3) {   // heli rides the pilot's state
+        rh.x = msg.x; rh.y = msg.y + 1.2; rh.z = msg.z; rh.th = msg.ry;
       }
-      broadcast(clean, ws);
+      broadcast(clean, ws, client.room);
       return;
     }
 
@@ -471,14 +536,14 @@ wss.on('connection', (ws, req) => {
       stats.shots++;
       if (![msg.ox, msg.oy, msg.oz, msg.dx, msg.dy, msg.dz].every((v) => num(v, -1000, 1000))) return;
       broadcast({ t: 'shot', id, ox: msg.ox, oy: msg.oy, oz: msg.oz,
-        dx: msg.dx, dy: msg.dy, dz: msg.dz }, ws);
+        dx: msg.dx, dy: msg.dy, dz: msg.dz }, ws, client.room);
       return;
     }
 
     if (msg.t === 'hit') {
-      // freeze tag: both opted in, in range, target not already frozen
+      // freeze tag: both opted in, same room, in range, target not already frozen
       if (!client.pvp || !client.pos) return;
-      const target = [...clients.values()].find((c) => c.id === msg.target);
+      const target = [...clients.values()].find((c) => c.id === msg.target && c.room === client.room);
       if (!target || !target.pvp || !target.pos) return;
       if (now < target.frozenUntil) return;
       const d = Math.hypot(client.pos.x - target.pos.x, client.pos.z - target.pos.z);
@@ -486,33 +551,34 @@ wss.on('connection', (ws, req) => {
       target.frozenUntil = now + FREEZE_MS;
       client.tagCount++;
       stats.hits++;
-      logEvent('freeze', { by: id, target: target.id });
-      broadcast({ t: 'frozen', id: target.id, dur: FREEZE_MS, by: id }, null);
+      logEvent('freeze', { by: id, target: target.id, room: client.room });
+      broadcast({ t: 'frozen', id: target.id, dur: FREEZE_MS, by: id }, null, client.room);
       return;
     }
 
     if (msg.t === 'heli') {
+      const h = getHeli(client.room);
       if (msg.a === 'enter') {
-        if (HELI.pilot) { ws.send(JSON.stringify({ t: 'heli', a: 'deny' })); return; }
+        if (h.pilot) { ws.send(JSON.stringify({ t: 'heli', a: 'deny' })); return; }
         if (!client.pos ||
-            Math.hypot(client.pos.x - HELI.x, client.pos.z - HELI.z) > 12 ||
-            Math.abs(client.pos.y - HELI.y) > 8) return;
-        HELI.pilot = id;
+            Math.hypot(client.pos.x - h.x, client.pos.z - h.z) > 12 ||
+            Math.abs(client.pos.y - h.y) > 8) return;
+        h.pilot = id;
         stats.heliFlights++;
-        logEvent('heli_enter', { id, n: client.name });
-        broadcast({ t: 'heli', a: 'enter', id }, null);
+        logEvent('heli_enter', { id, n: client.name, room: client.room });
+        broadcast({ t: 'heli', a: 'enter', id }, null, client.room);
         return;
       }
       if (msg.a === 'exit') {
-        if (HELI.pilot !== id) return;
-        HELI.pilot = null;
-        if (msg.crash) { heliDown(id); return; }
+        if (h.pilot !== id) return;
+        h.pilot = null;
+        if (msg.crash) { heliDown(client.room, id); return; }
         if (num(msg.x, WORLD.x0, WORLD.x1) && num(msg.y, 0, WORLD.y1) &&
             num(msg.z, WORLD.z0, WORLD.z1)) {
-          HELI.x = msg.x; HELI.y = msg.y; HELI.z = msg.z;
-          if (num(msg.th, -10, 10)) HELI.th = msg.th;
+          h.x = msg.x; h.y = msg.y; h.z = msg.z;
+          if (num(msg.th, -10, 10)) h.th = msg.th;
         }
-        broadcast({ t: 'heli', a: 'exit', id, x: HELI.x, y: HELI.y, z: HELI.z, th: HELI.th }, ws);
+        broadcast({ t: 'heli', a: 'exit', id, x: h.x, y: h.y, z: h.z, th: h.th }, ws, client.room);
         return;
       }
       return;
@@ -528,12 +594,13 @@ wss.on('connection', (ws, req) => {
       if (msg.a === 'enter') {
         const drv = msg.drv;
         const driver = [...clients.values()].find((c) => c.id === drv);
-        // deny if: driver gone or not driving; seat taken; requester is already
-        // a passenger / has a passenger / pilots the heli / is driving-or-flying;
-        // requester frozen; either side lacks a position; or out of range
-        // (horizontal AND vertical — no boarding from a bridge or rooftop)
-        if (!driver || driver.lastM !== 2 || seats.has(drv) || seatOf.has(drv) ||
-            seatOf.has(id) || seats.has(id) || HELI.pilot === id ||
+        // deny if: driver gone / in another room / not driving; seat taken;
+        // requester is already a passenger / has a passenger / pilots the heli /
+        // is driving-or-flying; requester frozen; either side lacks a position;
+        // or out of range (horizontal AND vertical — no boarding from a rooftop)
+        if (!driver || driver.room !== client.room || driver.lastM !== 2 ||
+            seats.has(drv) || seatOf.has(drv) ||
+            seatOf.has(id) || seats.has(id) || getHeli(client.room).pilot === id ||
             client.lastM === 1 || client.lastM === 2 || client.lastM === 3 ||
             now < client.frozenUntil ||
             !client.pos || !driver.pos ||
@@ -544,14 +611,14 @@ wss.on('connection', (ws, req) => {
         }
         seats.set(drv, id); seatOf.set(id, drv);
         client.seatAt = now;
-        broadcast({ t: 'ride', a: 'enter', drv, pax: id }, null);
+        broadcast({ t: 'ride', a: 'enter', drv, pax: id }, null, client.room);
         return;
       }
       if (msg.a === 'exit') {
         if (seatOf.has(id)) {
           const drv = seatOf.get(id);
           seats.delete(drv); seatOf.delete(id);
-          broadcast({ t: 'ride', a: 'exit', drv, pax: id }, null);
+          broadcast({ t: 'ride', a: 'exit', drv, pax: id }, null, client.room);
         }
         return;
       }
@@ -566,53 +633,59 @@ wss.on('connection', (ws, req) => {
       stats.rockets++;
       if (![msg.ox, msg.oy, msg.oz, msg.dx, msg.dy, msg.dz].every((v) => num(v, -1000, 1000))) return;
       broadcast({ t: 'rocket', id, ox: msg.ox, oy: msg.oy, oz: msg.oz,
-        dx: msg.dx, dy: msg.dy, dz: msg.dz }, ws);
+        dx: msg.dx, dy: msg.dy, dz: msg.dz }, ws, client.room);
       return;
     }
 
     if (msg.t === 'rhit') {
       // rocket hit the chopper: only while piloted, not by the pilot, ranged,
       // and at most one claimed hit per shooter per rocket cooldown
-      if (!HELI.pilot || HELI.pilot === id) return;
+      const h = getHeli(client.room);
+      if (!h.pilot || h.pilot === id) return;
       if (now - client.lastRhit < 1100) return;
       client.lastRhit = now;
-      if (!client.pos || Math.hypot(client.pos.x - HELI.x, client.pos.z - HELI.z) > 320) return;
-      HELI.hp--;
-      logEvent('heli_hit', { by: id, hp: HELI.hp });
-      if (HELI.hp > 0) broadcast({ t: 'heli', a: 'hp', hp: HELI.hp }, null);
-      else heliDown(id);
+      if (!client.pos || Math.hypot(client.pos.x - h.x, client.pos.z - h.z) > 320) return;
+      h.hp--;
+      logEvent('heli_hit', { by: id, hp: h.hp, room: client.room });
+      if (h.hp > 0) broadcast({ t: 'heli', a: 'hp', hp: h.hp }, null, client.room);
+      else heliDown(client.room, id);
       return;
     }
 
     if (msg.t === 'spray') {
       // cosmetic water-cannon relay: pilot only, max 6/s
-      if (HELI.pilot !== id) return;
+      if (getHeli(client.room).pilot !== id) return;
       client.sprayTimes = client.sprayTimes.filter((t) => now - t < 1000);
       if (client.sprayTimes.length >= 6) return;
       client.sprayTimes.push(now);
       if (![msg.ox, msg.oy, msg.oz, msg.dx, msg.dy, msg.dz].every((v) => num(v, -1000, 1000))) return;
       broadcast({ t: 'spray', id, ox: msg.ox, oy: msg.oy, oz: msg.oz,
-        dx: msg.dx, dy: msg.dy, dz: msg.dz }, ws);
+        dx: msg.dx, dy: msg.dy, dz: msg.dz }, ws, client.room);
       return;
     }
 
     if (msg.t === 'push') {
-      // water-cannon shove: pilot only, bounded impulse, target near the heli
-      if (HELI.pilot !== id) return;
+      // water-cannon shove: pilot only, bounded impulse, same-room target near the heli
+      const h = getHeli(client.room);
+      if (h.pilot !== id) return;
       client.pushTimes = client.pushTimes.filter((t) => now - t < 1000);
       if (client.pushTimes.length >= 10) return;
       client.pushTimes.push(now);
       if (!num(msg.vx, -16, 16) || !num(msg.vz, -16, 16) || !num(msg.vy, 0, 8)) return;
-      const target = [...clients.values()].find((c) => c.id === msg.target);
+      const target = [...clients.values()].find((c) => c.id === msg.target && c.room === client.room);
       if (!target || !target.pos) return;
-      if (Math.hypot(HELI.x - target.pos.x, HELI.z - target.pos.z) > 55 ||
-          Math.abs(HELI.y - target.pos.y) > 45) return;
+      if (Math.hypot(h.x - target.pos.x, h.z - target.pos.z) > 55 ||
+          Math.abs(h.y - target.pos.y) > 45) return;
       stats.pushes++;
-      broadcast({ t: 'pushed', id: target.id, vx: msg.vx, vy: msg.vy, vz: msg.vz }, null);
+      broadcast({ t: 'pushed', id: target.id, vx: msg.vx, vy: msg.vy, vz: msg.vz }, null, client.room);
       return;
     }
 
     if (msg.t === 'score') {
+      // private rooms never touch the global board (no write, no reply, no
+      // announce) — they're a farming/pollution vector. DEVICE BEST still saves
+      // client-side; the client also suppresses the submit (defense-in-depth).
+      if (client.room !== PUBLIC) return;
       // mission completion: plausible time window per board, 1 per 15s per client
       const board = { 2: 'm2', 3: 'm3', 4: 'm4', 5: 'm5', 6: 'm6', 7: 'm7' }[msg.m] || 'm1';
       const WIN = { m1: [3000, 600000], m2: [20000, 900000],
@@ -628,7 +701,7 @@ wss.on('connection', (ws, req) => {
       scores[board] = scores[board].slice(0, 50);
       saveScores();
       stats.missions++;
-      logEvent('mission_score', { id, n, m: board, ms: Math.round(msg.ms) });
+      logEvent('mission_score', { id, n, room: client.room, m: board, ms: Math.round(msg.ms) });
       const sec = (msg.ms / 1000).toFixed(1);
       broadcast({ t: 'chat', id: 'SERVER', n: '* MISSION',
         msg: { m1: `${n} downed the chopper in ${sec}s`,
@@ -637,7 +710,7 @@ wss.on('connection', (ws, req) => {
                m4: `${n} got the horses home in ${sec}s`,
                m5: `${n} beat the deadline in ${sec}s`,
                m6: `${n} delivered the scoops still frozen in ${sec}s`,
-               m7: `${n} tagged the whole tailgate in ${sec}s` }[board] }, null);
+               m7: `${n} tagged the whole tailgate in ${sec}s` }[board] }, null, client.room);
       ws.send(JSON.stringify(Object.assign({ t: 'scores' }, topScores())));
       return;
     }
@@ -652,7 +725,7 @@ wss.on('connection', (ws, req) => {
       if (client.errCount >= 3) return;
       client.errCount++;
       stats.clientErrs++;
-      logEvent('client_err', { id, n: client.name,
+      logEvent('client_err', { id, n: client.name, room: client.room,
         msg: String(msg.msg || '').slice(0, 200), src: String(msg.src || '').slice(0, 100) });
       return;
     }
@@ -661,7 +734,7 @@ wss.on('connection', (ws, req) => {
       // periodic client perf beacon (fps etc.), max ~1/min enforced client-side
       if (!client.lastDiag || now - client.lastDiag > 45000) {
         client.lastDiag = now;
-        logEvent('diag', { id, fps: num(msg.fps, 0, 1000) ? msg.fps : null,
+        logEvent('diag', { id, room: client.room, fps: num(msg.fps, 0, 1000) ? msg.fps : null,
           coarse: msg.coarse ? 1 : 0, dpr: num(msg.dpr, 0, 10) ? msg.dpr : null,
           peers: num(msg.peers, 0, 1000) ? msg.peers : null });
       }
@@ -680,31 +753,37 @@ wss.on('connection', (ws, req) => {
       if (text[0] === '/') { handleCommand(ws, client, text); return; }
       client.chatCount++;
       stats.chats++;   // volume only — content is never logged
-      broadcast({ t: 'chat', id, n: client.name || id, msg: text }, null); // echo to sender too
+      broadcast({ t: 'chat', id, n: client.name || id, msg: text }, null, client.room); // echo to sender too
       return;
     }
   });
 
   ws.on('close', () => {
     clients.delete(ws);
-    if (HELI.pilot === id) heliDown(null);   // pilot vanished: chopper crashes
+    const h = helis.get(client.room);   // get, NOT getHeli: don't resurrect a dying room
+    if (h && h.pilot === id) heliDown(client.room, null);   // pilot vanished: chopper crashes
     // a driver leaving drops their passenger (gentle eject); a passenger
     // leaving frees the driver's seat for a new boarder
     if (seats.has(id)) {
       const pax = seats.get(id);
       seats.delete(id); seatOf.delete(pax);
-      broadcast({ t: 'ride', a: 'eject', drv: id, pax }, null);
+      broadcast({ t: 'ride', a: 'eject', drv: id, pax }, null, client.room);
     }
     if (seatOf.has(id)) {
       const drv = seatOf.get(id);
       seats.delete(drv); seatOf.delete(id);
-      broadcast({ t: 'ride', a: 'exit', drv, pax: id }, null);
+      broadcast({ t: 'ride', a: 'exit', drv, pax: id }, null, client.room);
     }
-    broadcast({ t: 'leave', id });
-    logEvent('leave', { id, n: client.name, secs: Math.round((Date.now() - client.joinedAt) / 1000),
+    broadcast({ t: 'leave', id }, null, client.room);
+    logEvent('leave', { id, n: client.name, room: client.room, secs: Math.round((Date.now() - client.joinedAt) / 1000),
       chats: client.chatCount, shots: client.shotCount, tags: client.tagCount,
       strikes: client.strikes, online: clients.size });
     console.log(`[leave] ${id} (${clients.size} online)`);
+    // empty-room GC: a non-PUBLIC room with no clients left drops its heli entry
+    // so rooms don't accumulate. PUBLIC (the commons) is never GC'd.
+    if (client.room !== PUBLIC && ![...clients.values()].some((c) => c.room === client.room)) {
+      helis.delete(client.room);
+    }
   });
   ws.on('error', () => ws.close());
 });

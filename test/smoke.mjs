@@ -10,7 +10,11 @@
 // score), NPC tagging in /admin/stats, and out-of-bounds move correction.
 // A second cast then exercises "Ride Shotgun" — the server-arbitrated passenger
 // seat ({t:'ride'} enter/exit/deny/eject, welcome.seats snapshot, CAPS[4] relay
-// integrity) over more real ws connections (see runRideAssertions).
+// integrity) over more real ws connections (see runRideAssertions). A third cast
+// exercises "Private Worlds / Rooms" — ?room=<code> partitioning: presence /
+// chat / leave isolation, welcome.peers filtering, per-room heli independence,
+// the private-room score gate, sanitization equivalence, and NPC-forced-PUBLIC
+// (see runRoomAssertions).
 // PASS/FAIL per check; exits non-zero if any check fails. Uses only `ws`
 // (already a dependency) + node builtins. Re-runnable.
 //
@@ -43,6 +47,13 @@ let passed = 0, failed = 0;
 function check(name, cond, detail) {
   if (cond) { passed++; console.log(`PASS  ${name}`); }
   else { failed++; console.log(`FAIL  ${name}${detail ? '  — ' + detail : ''}`); }
+}
+// soft assertion for OPTIONAL coverage: a miss prints SKIP and does NOT fail the
+// suite (used for R9, the admin /list room column, which the contract lists as
+// optional). A pass still counts toward the total.
+function softCheck(name, cond, detail) {
+  if (cond) { passed++; console.log(`PASS  ${name}`); }
+  else { console.log(`SKIP  ${name} (optional)${detail ? '  — ' + detail : ''}`); }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -300,6 +311,139 @@ async function runRideAssertions() {
   RB.ws.close(); RC.ws.close(); RD.ws.close(); RF.ws.close();
 }
 
+// --- Private Worlds / Rooms: ?room=<code> partitioning (task #29) ------------
+// A third cast verifies room isolation. The relay partitions on a per-connection
+// room derived from `?room=<code>` (sanitized to [A-Z0-9_-], <=12, uppercased;
+// absent/invalid -> PUBLIC = the commons). Nothing about the message SHAPES
+// changes — only WHO receives each broadcast — so these assertions reuse the
+// same state/chat/heli/leave/score envelopes as the rest of the suite and check
+// cross-room leakage with the existing negative-window pattern (mark, trigger,
+// sleep, scan). Heli tests stand a client on HELI_PAD (x:-127, y:129.8, z:11 in
+// server.js) so the proximity gate passes; a client's FIRST state packet fixes
+// its spawn anywhere in-bounds, so we place pilots on the pad directly.
+//   Names deliberately avoid the substring "DERBY"/"ROSE" so R9's room-column
+//   probe can't false-positive off a player name.
+async function runRoomAssertions() {
+  const want = async (c, pred, opts) => {
+    try { return await expect(c, pred, { timeout: 1500, ...(opts || {}) }); }
+    catch { return null; }
+  };
+  const st = (cl, m, x, y, z, n) => send(cl, { t: 'state', n, c: 0x3a76c4, m, p: 0, x, y, z, ry: 0 });
+  const isState = (id) => (m) => m.t === 'state' && m.id === id;
+  const isChat = (id) => (m) => m.t === 'chat' && m.id === id;
+  // HELI_PAD from server.js — the only spot a heli `enter` is accepted.
+  const PADX = -127, PADY = 129.8, PADZ = 11;
+
+  // cast: A & B share room DERBY; C is PUBLIC (the commons).
+  const A_ = connect('?room=DERBY'); await opened(A_); const A = (await expect(A_, (m) => m.t === 'welcome')).id;
+  const B_ = connect('?room=DERBY'); await opened(B_); const B = (await expect(B_, (m) => m.t === 'welcome')).id;
+  const C_ = connect();              await opened(C_); const C = (await expect(C_, (m) => m.t === 'welcome')).id;
+
+  // R1 presence isolation: A's state reaches DERBY peer B, never PUBLIC C.
+  const r1b = B_.msgs.length, r1c = C_.msgs.length;
+  st(A_, 0, 14, 1, -9.5, 'ALPHA');
+  const r1pos = await want(B_, isState(A), { from: r1b });
+  await sleep(300);
+  const r1leak = C_.msgs.slice(r1c).some(isState(A));
+  check('R1a. state relays to a same-room peer (DERBY->DERBY)', !!r1pos, JSON.stringify(r1pos));
+  check('R1b. state does NOT cross into PUBLIC', !r1leak, 'leaked=' + r1leak);
+
+  // R2 welcome filtering: A now has state in DERBY. A fresh DERBY joiner sees A
+  // in welcome.peers; a fresh PUBLIC joiner does not.
+  const D2 = connect('?room=DERBY'); await opened(D2); const wD2 = await expect(D2, (m) => m.t === 'welcome');
+  const P2 = connect();              await opened(P2); const wP2 = await expect(P2, (m) => m.t === 'welcome');
+  check('R2a. new DERBY joiner welcome.peers includes DERBY player A', (wD2.peers || []).some((p) => p.id === A), 'peers=' + JSON.stringify(wD2.peers));
+  check('R2b. new PUBLIC joiner welcome.peers excludes DERBY player A', !(wP2.peers || []).some((p) => p.id === A), 'peers=' + JSON.stringify(wP2.peers));
+  D2.ws.close(); P2.ws.close();
+
+  // R3 chat isolation: A's chat reaches DERBY peer B, never PUBLIC C.
+  const r3b = B_.msgs.length, r3c = C_.msgs.length;
+  send(A_, { t: 'chat', msg: 'derby only' });
+  const r3pos = await want(B_, (m) => isChat(A)(m) && m.msg === 'derby only', { from: r3b });
+  await sleep(300);
+  const r3leak = C_.msgs.slice(r3c).some(isChat(A));
+  check('R3a. chat relays to a same-room peer', !!r3pos, JSON.stringify(r3pos));
+  check('R3b. chat does NOT cross into PUBLIC', !r3leak, 'leaked=' + r3leak);
+
+  // R4 per-room heli: a DERBY pilot's enter is seen in DERBY only; the PUBLIC
+  // heli is then independently pilotable (two simultaneous pilots, two rooms).
+  const HA = connect('?room=DERBY'); await opened(HA); const H = (await expect(HA, (m) => m.t === 'welcome')).id;
+  st(HA, 0, PADX, PADY, PADZ, 'HAPILOT');   // stand on the pad
+  await sleep(140);
+  const r4b = B_.msgs.length, r4c = C_.msgs.length;
+  send(HA, { t: 'heli', a: 'enter' });
+  const r4derby = await want(B_, (m) => m.t === 'heli' && m.a === 'enter' && m.id === H, { from: r4b });
+  await sleep(300);
+  const r4leak = C_.msgs.slice(r4c).some((m) => m.t === 'heli' && m.a === 'enter' && m.id === H);
+  st(C_, 0, PADX, PADY, PADZ, 'CHARLIE');   // C's first state, on the PUBLIC pad
+  await sleep(140);
+  const r4c2 = C_.msgs.length;
+  send(C_, { t: 'heli', a: 'enter' });
+  const r4pub = await want(C_, (m) => m.t === 'heli' && m.a === 'enter' && m.id === C, { from: r4c2 });
+  const r4deny = C_.msgs.slice(r4c2).some((m) => m.t === 'heli' && m.a === 'deny');
+  check('R4a. heli enter broadcasts inside the room (DERBY sees it)', !!r4derby, JSON.stringify(r4derby));
+  check('R4b. heli enter does NOT cross into PUBLIC', !r4leak, 'leaked=' + r4leak);
+  check('R4c. PUBLIC heli is independently pilotable (granted, not denied)', !!r4pub && !r4deny,
+    `grant=${JSON.stringify(r4pub)} deny=${r4deny}`);
+
+  // R5 leave scoped: closing A tells DERBY peer B, not PUBLIC C.
+  const r5b = B_.msgs.length, r5c = C_.msgs.length;
+  A_.ws.close();
+  const r5pos = await want(B_, (m) => m.t === 'leave' && m.id === A, { from: r5b });
+  await sleep(300);
+  const r5leak = C_.msgs.slice(r5c).some((m) => m.t === 'leave' && m.id === A);
+  check('R5a. leave broadcasts to a same-room peer', !!r5pos, JSON.stringify(r5pos));
+  check('R5b. leave does NOT cross into PUBLIC', !r5leak, 'leaked=' + r5leak);
+
+  // R6 score gate: a private-room {t:score} is silently dropped — no {t:scores}
+  // reply to the scorer, no MISSION announce to anyone. (PUBLIC score checks in
+  // runAssertions remain the positive control.)
+  const r6b = B_.msgs.length, r6c = C_.msgs.length;
+  send(B_, { t: 'score', m: 5, ms: 120000 });
+  await sleep(400);
+  const r6reply = B_.msgs.slice(r6b).some((m) => m.t === 'scores');
+  const r6announceB = B_.msgs.slice(r6b).some((m) => m.t === 'chat' && m.n === '* MISSION');
+  const r6announceC = C_.msgs.slice(r6c).some((m) => m.t === 'chat' && m.n === '* MISSION');
+  check('R6a. private-room score gets no {t:scores} reply', !r6reply, 'reply=' + r6reply);
+  check('R6b. private-room score fires no MISSION announce', !r6announceB && !r6announceC, `B=${r6announceB} C=${r6announceC}`);
+
+  // R7 sanitization equivalence: 'rose' and 'ROSE!!' both sanitize to ROSE and
+  // land together (G1's state reaches G2).
+  const G1 = connect('?room=rose');   await opened(G1); const g1 = (await expect(G1, (m) => m.t === 'welcome')).id;
+  const G2 = connect('?room=ROSE!!'); await opened(G2); await expect(G2, (m) => m.t === 'welcome');
+  const r7g2 = G2.msgs.length;
+  st(G1, 0, 14, 1, -9.5, 'GEEONE');
+  const r7 = await want(G2, isState(g1), { from: r7g2 });
+  check('R7. room-code sanitization equivalence (rose === ROSE!!)', !!r7, JSON.stringify(r7));
+  G1.ws.close(); G2.ws.close();
+
+  // R8 NPC forced PUBLIC: ?npc=<token>&room=DERBY ignores the room — a PUBLIC
+  // client sees its state, a DERBY client does not.
+  const N = connect('?npc=' + NPC_TOKEN + '&room=DERBY'); await opened(N); const nId = (await expect(N, (m) => m.t === 'welcome')).id;
+  const P3 = connect(); await opened(P3); await expect(P3, (m) => m.t === 'welcome');
+  const r8p3 = P3.msgs.length, r8b = B_.msgs.length;
+  st(N, 0, 14, 1, -9.5, 'NPCBOT');
+  const r8pos = await want(P3, isState(nId), { from: r8p3 });
+  await sleep(300);
+  const r8leak = B_.msgs.slice(r8b).some(isState(nId));
+  check('R8a. NPC token forces PUBLIC despite ?room (PUBLIC sees it)', !!r8pos, JSON.stringify(r8pos));
+  check('R8b. NPC ?room=DERBY does NOT reach the DERBY room', !r8leak, 'leaked=' + r8leak);
+  N.ws.close(); P3.ws.close();
+
+  // R9 (optional): admin /list carries a room column. Soft — the contract lists
+  // this as optional, so a miss SKIPs rather than failing the suite.
+  const ADM = connect(); await opened(ADM); await expect(ADM, (m) => m.t === 'welcome');
+  send(ADM, { t: 'chat', msg: '/admin ' + ADMIN_TOKEN });
+  await want(ADM, (m) => m.t === 'sys' && /admin: granted/.test(m.msg || ''));
+  send(ADM, { t: 'chat', msg: '/list' });
+  const listMsg = await want(ADM, (m) => m.t === 'sys' && /online:/.test(m.msg || ''));
+  softCheck('R9. admin /list includes a room column', !!listMsg && /derby/i.test(listMsg.msg || ''),
+    listMsg ? listMsg.msg : 'no /list response');
+  ADM.ws.close();
+
+  B_.ws.close(); C_.ws.close(); HA.ws.close();
+}
+
 async function main() {
   // snapshot the real scores.json (gitignored) so the m5 submit can't clobber it
   let scoresBackup = null, scoresExisted = false;
@@ -310,6 +454,7 @@ async function main() {
     child = await bootServer();
     await runAssertions();
     await runRideAssertions();
+    await runRoomAssertions();
   } catch (e) {
     check('harness ran to completion', false, String((e && e.stack) || e));
   } finally {
