@@ -4136,7 +4136,9 @@ var _ghostMeshes = null;
 // checkpoint fingerprint (+ format version): a checkpoint or format change
 // invalidates old ghosts so a ghost never plays against a course it didn't run
 function m5CpsHash(){
-  var s = GHOST_FMT + ':', h = 2166136261;
+  // world extents join the hash: qX/uX bake X0..Z1 into the fixed-point
+  // encoding, so a map growth must invalidate old ghosts, not distort them
+  var s = GHOST_FMT + ':' + X0 + ',' + X1 + ',' + Z0 + ',' + Z1 + ':', h = 2166136261;
   for (var k = 0; k < M5_CPS.length; k++) s += M5_CPS[k].x + ',' + M5_CPS[k].z + ';';
   for (var i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = (h * 16777619) >>> 0; }
   return h & 0xffff;
@@ -4217,10 +4219,12 @@ function loadGhost(){
   if (!data || data.samples.length < 2) return;
   ghost = {samples: data.samples, splits: data.splits, dur: (data.samples.length - 1) * 0.1};
   ensureGhostMeshes();
-  if (!ghostSeen){   // one-shot discovery; slight delay so it lands after the mission brief
+  if (!ghostSeen){   // one-shot discovery, AFTER the brief's 7s caption window
     ghostSeen = true;
     try { localStorage.setItem('lt_ghost_seen', '1'); } catch (e){}
-    setTimeout(function(){ if (mission5.stage === 'driving') caption('DISPATCH', 'YOUR BEST RUN RIDES WITH YOU', 3600); }, 2500);
+    // caption() is single-slot — firing inside the brief's computed 7s
+    // display window would clobber it 4.5s early (review catch)
+    setTimeout(function(){ if (mission5.stage === 'driving') caption('DISPATCH', 'YOUR BEST RUN RIDES WITH YOU', 3600); }, 7600);
   }
 }
 function updateGhost(){
