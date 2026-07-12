@@ -3446,6 +3446,18 @@ var busPhases = [], BUS_PERIOD = 0, busStopArrive = [];
     }
   }
   BUS_PERIOD = acc;
+  // heading continuity: a corner is 5 short constant-heading sub-segments, and
+  // busSeatWorld rotates seat offsets (up to 3.1m) by th — stepped headings pop
+  // a seated rider's camera ~1.2m per step. Give each move phase end headings
+  // equal to the circular mean of its neighbours' directions and lerp between
+  // them: a no-op on colinear straights, a smooth sweep through corners.
+  var mv = [];
+  for (i = 0; i < busPhases.length; i++) if (busPhases[i].kind === 'move') mv.push(busPhases[i]);
+  for (i = 0; i < mv.length; i++){
+    var pv = mv[(i - 1 + mv.length) % mv.length], nx = mv[(i + 1) % mv.length];
+    mv[i].th0 = mv[i].th + angDelta(mv[i].th, pv.th) / 2;
+    mv[i].th1 = mv[i].th + angDelta(mv[i].th, nx.th) / 2;
+  }
 })();
 function busStateAt(tMs){
   var t = ((tMs % BUS_PERIOD) + BUS_PERIOD) % BUS_PERIOD;
@@ -3455,7 +3467,11 @@ function busStateAt(tMs){
   }
   var x, z, th = ph.th, stopIdx = -1, doorOpen = false;
   if (ph.kind === 'dwell'){ x = ph.x; z = ph.z; stopIdx = ph.stopIdx; doorOpen = true; }
-  else { var f = ph.dur > 0 ? (t - ph.t0) / ph.dur : 0; x = ph.x0 + (ph.x1 - ph.x0) * f; z = ph.z0 + (ph.z1 - ph.z0) * f; }
+  else {
+    var f = ph.dur > 0 ? (t - ph.t0) / ph.dur : 0;
+    x = ph.x0 + (ph.x1 - ph.x0) * f; z = ph.z0 + (ph.z1 - ph.z0) * f;
+    th = ph.th0 + angDelta(ph.th0, ph.th1) * f;   // smooth corner sweep (see boot loop)
+  }
   var best = 1e18, ns = 0;
   for (i = 0; i < busStopArrive.length; i++){
     var e = (busStopArrive[i] - t + BUS_PERIOD) % BUS_PERIOD;
@@ -6139,15 +6155,19 @@ function updateRemotes(dt){
       r.av.ice.visible = false;
       var drv = ridePairs[id], seat = drv ? seatWorldPos(drv) : null;
       if (seat){ r.av.g.position.set(seat.x, seat.y, seat.z); r.av.g.rotation.y = seat.ry; }
-      else {
-        // no shotgun binding: if they're netted onto the loop bus, snap them into a
-        // deterministic seat so they don't trail 1.4m out the back of a moving bus
+      else if (!drv){
+        // no shotgun binding AT ALL: if they're netted onto the loop bus, snap them
+        // into a deterministic seat so they don't trail 1.4m out the back of a moving
+        // bus. A known binding whose driver car hasn't resolved yet must NOT fall in
+        // here — a shotgun passenger driven along the bus's own streets would get
+        // snapped into the bus during the join race.
         var bs = busStateAt(Date.now()), dbx = x - bs.x, dbz = z - bs.z;
         if (dbx * dbx + dbz * dbz < 20.25){   // within 4.5m of the local bus → a passenger
           var bseat = busSeatWorld(bs, busSeatFor(id));
           r.av.g.position.set(bseat.x, bseat.y, bseat.z); r.av.g.rotation.y = bseat.ry;
         } else { r.av.g.position.set(x, y, z); r.av.g.rotation.y = r.ry; }   // fall back to their own packets
       }
+      else { r.av.g.position.set(x, y, z); r.av.g.rotation.y = r.ry; }   // binding known, car not built yet — their packets already mirror the seat
     } else {
       if (r.carG) r.carG.visible = false;
       r.av.g.visible = true;
@@ -7851,8 +7871,11 @@ function frameStep(now){
     else if (!player.grounded && player.thrusting) hint = 'JETPACK · FUEL ' + Math.round(player.fuel) + '%';
     else if (myRpg > 0 && heliActive()) hint = 'RPG ×' + myRpg + ' · F/CLICK — FIRE AT THE CHOPPER · RMB — AIM';
     else if (player.pvp) hint = 'CLICK/F — FIRE · RMB — AIM · G — HOLSTER';
-    else if (busWaitHint()) hint = busWaitHint();   // 'BUS IN m:ss — NAME' at a stop
-    else if (allIdle()) hint = nextMissionHint();
+    else {
+      var bwh = busWaitHint();   // one call per frame — it rescans stops + the timeline
+      if (bwh) hint = bwh;       // 'BUS IN m:ss — NAME' at a stop
+      else if (allIdle()) hint = nextMissionHint();
+    }
   }
   // one-time discoverability tip, fired only when the feature is actually usable
   // (a live human is driving within range) - never repeats across sessions
