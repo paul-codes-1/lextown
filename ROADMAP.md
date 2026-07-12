@@ -54,12 +54,20 @@ beats a spoofed clock) · **Scooter share** (racked kick-scooters, the
 missing rung between walking and driving, new net mode `m:5`). Spec in
 `PHASE4-SPEC.md`; suite at 62 checks.
 
+**Phase 5 — the pocket release** (July 2026): mobile that feels native,
+grounded in telemetry (46% of joins are touch). **Full-tilt sprint** (speed
+blends to a desktop-parity 13.5 across the outer stick throw — phones were
+permanently 44% slower) · **a context E button** that relabels live to what
+it will do (DRIVE / BOARD / SCOOT / START / HOP OFF) · **adaptive render
+quality** (sub-30fps devices step resolution down instead of stuttering,
+reported in telemetry) · Android **haptics** on freezes, checkpoints, and
+wins · a **touch-first tutorial** and a one-shot landscape tip. Spec in
+`PHASE5-SPEC.md`.
+
 ---
 
 ## NEXT — depth and reasons to return
 
-- **Mobile that feels native.** Tighter touch controls, a cleaner first-touch
-  onboarding, performance headroom on mid-range phones.
 - **Ride the bus, together.** The LOOP is deterministic — next: bus-stop
   social hooks (a bench you can actually sit on, a schedule board, a second
   crosstown route past Rupp and the campus).
