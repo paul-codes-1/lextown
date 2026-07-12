@@ -6,6 +6,8 @@ An open-source, browser-based multiplayer block simulator of **downtown Lexingto
 
 Built with [Three.js](https://threejs.org/) (vendored, no build step) and a small Node WebSocket relay. No accounts, no database, no build tooling — clone it and run it.
 
+LEXTOWN remembers your name, color, and best times on your device (no account; nothing leaves your browser).
+
 ## The city
 
 The map runs from the horse farms north of New Circle Road down through NoLi, the downtown core, the UK campus, and Chevy Chase, stylized:

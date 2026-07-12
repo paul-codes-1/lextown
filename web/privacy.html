@@ -46,21 +46,24 @@ amount of data that passes through it.</p>
   relayed to other connected players in real time so they can see you.</li>
   <li><strong>Chat messages</strong> — relayed to everyone connected.
   Chat is public and unmoderated; do not share personal information.</li>
-  <li><strong>Mission high scores</strong> — if you finish the City Hall
-  mission, your chosen player name and completion time are added to the
-  public high-score board. That board is the one thing that persists on the
-  server: the fastest 50 times are kept until displaced by faster ones.
-  Use a name you're happy to see on a leaderboard.</li>
+  <li><strong>Mission high scores</strong> — if you finish one of the timed
+  missions, your chosen player name and completion time are added to the
+  mission high-score boards. Those boards are the one thing that persists on
+  the server: the fastest 50 times on each are kept until displaced by faster
+  ones. Use a name you're happy to see on a leaderboard.</li>
 </ul>
 <p>Everything else lives in server memory only while you are connected and
 is discarded when you disconnect. There is no database, no account system,
 and no chat history — a message that has scrolled away is gone.</p>
 
 <h2>WHAT WE STORE ON YOUR DEVICE</h2>
-<p>A few localStorage values: a flag that remembers you've dismissed the
-tutorial, the player name you chose, your sound on/off preference, and your
-mission progress (best time + whether you've unlocked the helicopter). No
-advertising, no fingerprinting.</p>
+<p>A small set of localStorage values, all kept on your device and never sent
+up as an account: the <strong>name and avatar color</strong> you chose, your
+<strong>preference toggles</strong> (sound, radio station, and the objective
+waypoint), a few <strong>flags that remember what you've already seen</strong>
+(the tutorial and one-time tips), and your <strong>mission progress</strong> —
+your best times and which missions and vehicles you've unlocked. No advertising,
+no fingerprinting; clearing your browser storage resets all of it.</p>
 
 <h2>ANALYTICS</h2>
 <p>We use Google Analytics 4 to understand aggregate usage (page views,

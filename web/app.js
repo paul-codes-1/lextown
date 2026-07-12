@@ -1494,7 +1494,7 @@ function makeAvatar(torsoCol, legCol){
     m.position.y = -0.5; m.castShadow = true; pivot.add(m); g.add(pivot);
     return pivot;
   }
-  var av = {g: g,
+  var av = {g: g, torso: torso,   // torso material kept as a recolor handle (F2 color persist)
     armL: limb(0.45, -0.9, 2.05, skin), armR: limb(0.45, 0.9, 2.05, skin),
     legL: limb(0.55, -0.35, 1.0, leg),  legR: limb(0.55, 0.35, 1.0, leg)};
   // nerf blaster in the right hand (visible only when PvP is on)
@@ -1595,7 +1595,13 @@ var savedName = '';
 try { savedName = localStorage.getItem('lt_name') || ''; } catch (e){}
 var myName = cleanName(nameM ? decodeURIComponent(nameM[1]) : savedName)
           || 'LEX-' + (100 + ((Math.random() * 900) | 0));
-var myColor = PLAYER_COLS[(Math.random() * PLAYER_COLS.length) | 0];
+var myColorIdx = (Math.random() * PLAYER_COLS.length) | 0;
+try {
+  var _sc = localStorage.getItem('lt_color');
+  if (_sc !== null){ var _ci = parseInt(_sc, 10); if (_ci >= 0 && _ci < PLAYER_COLS.length) myColorIdx = _ci; }
+  else localStorage.setItem('lt_color', String(myColorIdx));   // lock the first random pick in - THE stranger-bug fix
+} catch (e){}
+var myColor = PLAYER_COLS[myColorIdx];
 var myId = 'ME';
 
 // ---------- local player ----------
@@ -4358,15 +4364,34 @@ labels.push({name: '★ MISSION: DEADLINE', x: M5_TRIG.x, y: 9, z: M5_TRIG.z, co
 labels.push({name: '★ MISSION: THE MELT', x: M6_TRIG.x, y: 9, z: M6_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: TAILGATE COMPLIANCE', x: M7_TRIG.x, y: 9, z: M7_TRIG.z, col: MISSION_COL, mission: true});
 // the gentle shove: when nothing else is going on, point at the next mission
-function nextMissionHint(){
-  if (!heliUnlocked) return 'FIRST MISSION: THE RIBBON CUTTING — GOLD RING BY CITY HALL';
-  if (!m2Best) return 'NEXT MISSION: SNOW EMERGENCY — E AT THE CITY HALL DOOR';
-  if (!m3Best) return 'NEXT MISSION: THE DATA CENTER — TEAL RING, PHOENIX PARK';
-  if (!m4Best) return 'NEXT MISSION: HORSEPOWER — GREEN RING, THOROUGHBRED PARK';
-  if (!m5Best) return 'NEXT MISSION: DEADLINE — GOLD RING, THE BLOCK NEWSROOM (MAIN ST)';
-  if (!m6Best) return 'NEXT MISSION: THE MELT — PINK RING, W MAIN AT THE DISTILLERY DISTRICT';
-  if (!m7Best) return 'NEXT MISSION: TAILGATE COMPLIANCE — BLUE RING, KROGER FIELD LOTS';
+// bare next-unbeaten mission name, by the same best-gated chain ('' when all
+// beaten). Shared by the hint AND the F2 welcome-back so the two can't disagree.
+function nextMissionName(){
+  if (!heliUnlocked) return 'THE RIBBON CUTTING';
+  if (!m2Best) return 'SNOW EMERGENCY';
+  if (!m3Best) return 'THE DATA CENTER';
+  if (!m4Best) return 'HORSEPOWER';
+  if (!m5Best) return 'DEADLINE';
+  if (!m6Best) return 'THE MELT';
+  if (!m7Best) return 'TAILGATE COMPLIANCE';
   return '';
+}
+// each mission's on-screen where-to-go suffix (DOM-only text, em dashes kept)
+var MISSION_HINT_SUFFIX = {
+  'THE RIBBON CUTTING': 'GOLD RING BY CITY HALL',
+  'SNOW EMERGENCY': 'E AT THE CITY HALL DOOR',
+  'THE DATA CENTER': 'TEAL RING, PHOENIX PARK',
+  'HORSEPOWER': 'GREEN RING, THOROUGHBRED PARK',
+  'DEADLINE': 'GOLD RING, THE BLOCK NEWSROOM (MAIN ST)',
+  'THE MELT': 'PINK RING, W MAIN AT THE DISTILLERY DISTRICT',
+  'TAILGATE COMPLIANCE': 'BLUE RING, KROGER FIELD LOTS'
+};
+function nextMissionHint(){
+  var nm = nextMissionName();
+  if (!nm) return '';
+  // the ribbon cutting is the FIRST mission; everything after it is NEXT
+  return (nm === 'THE RIBBON CUTTING' ? 'FIRST MISSION: ' : 'NEXT MISSION: ') +
+    nm + ' — ' + MISSION_HINT_SUFFIX[nm];
 }
 
 // dev hook, only with #debug=1: poke the mission from the console
@@ -4879,6 +4904,7 @@ function handleNet(m){
     r.m = m.m | 0;
     r.p = m.p | 0;
     if (m.n && m.n !== r.name) r.name = m.n;   // live rename
+    if (typeof m.c === 'number' && m.c !== r.c){ r.c = m.c; if (r.av.torso) r.av.torso.color.setHex(m.c); }   // live recolor (F2)
     r.buf.push({t: performance.now(), x: m.x, y: m.y, z: m.z, ry: m.ry || 0});
     if (r.buf.length > 12) r.buf.shift();
     r.lastSeen = performance.now();
@@ -5497,7 +5523,7 @@ window.addEventListener('keydown', function(e){
     e.preventDefault();
     return;
   }
-  if (e.key === 'Escape' && !els.tut.hidden){ tutClose(); return; }
+  if ((e.key === 'Escape' || e.key === 'Enter') && !els.tut.hidden){ tutClose(); return; }
   if (e.key === '?'){ if (els.tut.hidden) tutOpen(); else tutClose(); return; }
   if (e.key === 'Enter'){
     e.preventDefault();
@@ -5647,7 +5673,39 @@ syncBtns();
 // ---------- tutorial / about ----------
 var nameIn = document.getElementById('nameIn');
 nameIn.value = myName;
+// CALL SIGN color picker: one swatch per PLAYER_COLS entry. The container
+// (#swatches, .swatch/.swatch.on) is built in index.html; if it isn't there
+// yet this no-ops. The pick is staged in _pendColor and committed by applyName.
+var _pendColor = myColorIdx;
+(function(){
+  var box = document.getElementById('swatches');
+  if (!box) return;   // container not present - graceful no-op
+  var i;
+  for (i = 0; i < PLAYER_COLS.length; i++){
+    (function(idx){
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'swatch' + (idx === myColorIdx ? ' on' : '');
+      b.style.background = '#' + ('000000' + PLAYER_COLS[idx].toString(16)).slice(-6);
+      b.setAttribute('aria-label', 'call sign color ' + (idx + 1));
+      b.onclick = function(){
+        _pendColor = idx;
+        var kids = box.children, k;
+        for (k = 0; k < kids.length; k++) kids[k].className = 'swatch' + (k === idx ? ' on' : '');
+      };
+      box.appendChild(b);
+    })(i);
+  }
+})();
 function applyName(){
+  // color first, so a color-only change still applies past the name early-return
+  if (_pendColor !== myColorIdx){
+    myColorIdx = _pendColor;
+    myColor = PLAYER_COLS[myColorIdx];
+    try { localStorage.setItem('lt_color', String(myColorIdx)); } catch (e){}
+    if (player.av.torso) player.av.torso.color.setHex(myColor);
+    syncBtns();
+  }
   var n = cleanName(nameIn.value);
   if (!n || n === myName){ nameIn.value = myName; return; }
   myName = n;
@@ -5660,6 +5718,13 @@ function tutOpen(){
   if (document.exitPointerLock) document.exitPointerLock();
 }
 var _welcomed = false;
+var welcomeBackAt = 0;   // >0 arms the returning-player greeting window
+// returning-player greeting; names the next unbeaten mission (or all-beaten)
+function welcomeBackLine(){
+  var nm = nextMissionName();
+  return nm ? 'WELCOME BACK, ' + myName + '. ' + nm + ' IS STILL OPEN - FOLLOW THE GOLD MARKER.'
+            : 'WELCOME BACK, ' + myName + '. YOU BEAT EVERY MISSION - CHASE A FASTER TIME.';
+}
 function tutClose(){
   applyName();
   els.tut.hidden = true;
@@ -5683,6 +5748,14 @@ els.tut.addEventListener('pointerdown', function(e){ if (e.target === els.tut) t
   var seen = false;
   try { seen = localStorage.getItem('lt_tut_seen') === '1'; } catch (e){}
   if (!seen && !CINE) tutOpen();   // cinematic capture never pops the tutorial
+  // returning player: the tutorial never opens, so greet them by name once
+  // (_welcomed is shared with tutClose's first-time shove = mutually exclusive).
+  // Armed as a window, not a one-shot timer: a player who starts a mission
+  // right away still gets greeted once things go idle (frameStep polls).
+  else if (seen && !CINE && !_welcomed){
+    _welcomed = true;
+    welcomeBackAt = performance.now() + 3500;
+  }
 })();
 
 function dayName(h){
@@ -6421,6 +6494,17 @@ function frameStep(now){
     rideTipShown = true;
     try { localStorage.setItem('lt_ride_seen', '1'); } catch (e){}
     caption('TIP', "walk up to a car someone's driving and press E to ride along", 4000);
+  }
+  // returning-player greeting: polls (like the ride tip) instead of a one-shot
+  // timer so a player who dives straight into a mission still gets greeted
+  // when things go idle; gives up quietly after ~20s
+  if (welcomeBackAt){
+    var wbNow = performance.now();
+    if (wbNow > welcomeBackAt + 20000) welcomeBackAt = 0;
+    else if (wbNow > welcomeBackAt && allIdle()){
+      welcomeBackAt = 0;
+      caption('DISPATCH', welcomeBackLine(), 6500);
+    }
   }
   els.hint.textContent = hint;
   els.hint.style.display = hint ? 'block' : 'none';
