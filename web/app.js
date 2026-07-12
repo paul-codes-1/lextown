@@ -6,6 +6,8 @@
 // ---------- renderer / scene ----------
 var glCanvas = document.getElementById('gl');
 var IS_COARSE = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+// deterministic integer hash (F3 weather) needs Math.imul; polyfill for old engines
+if (!Math.imul) Math.imul = function(a, b){ var ah = (a >>> 16) & 0xffff, al = a & 0xffff, bh = (b >>> 16) & 0xffff, bl = b & 0xffff; return ((al * bl) + (((ah * bl + al * bh) << 16) >>> 0)) | 0; };
 var renderer = new THREE.WebGLRenderer({canvas: glCanvas, antialias: !IS_COARSE});
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, IS_COARSE ? 1.5 : 2));
 renderer.outputEncoding = THREE.sRGBEncoding;
@@ -2240,7 +2242,7 @@ function updatePuffs(dt){
 // ---------- sound (WebAudio, fully synthesized — no audio assets) ----------
 var sndOn = true;
 try { sndOn = localStorage.getItem('lt_snd') !== '0'; } catch (e){}
-var AC = null, sndMaster = null, rotorGain = null, noiseBuf = null;
+var AC = null, sndMaster = null, rotorGain = null, noiseBuf = null, rainGain = null;
 function pokeAudio(){
   if (!window.AudioContext && !window.webkitAudioContext) return;
   if (!AC){
@@ -2263,7 +2265,12 @@ function pokeAudio(){
     var hum = AC.createOscillator(); hum.type = 'triangle'; hum.frequency.value = 52;
     var humG = AC.createGain(); humG.gain.value = 0.22;
     hum.connect(humG); humG.connect(rotorGain);
-    rn.start(); lfo.start(); hum.start();
+    // rain hiss (F3): bandpassed noise loop, gain-steered by wxRain in updateAssetAudio
+    rainGain = AC.createGain(); rainGain.gain.value = 0; rainGain.connect(sndMaster);
+    var rns = AC.createBufferSource(); rns.buffer = noiseBuf; rns.loop = true;
+    var rbp = AC.createBiquadFilter(); rbp.type = 'bandpass'; rbp.frequency.value = 1200; rbp.Q.value = 0.7;
+    rns.connect(rbp); rbp.connect(rainGain);
+    rn.start(); lfo.start(); hum.start(); rns.start();
   }
   if (AC.state === 'suspended') AC.resume();
 }
@@ -2513,6 +2520,7 @@ function updateAssetAudio(dt){
   updateRadioChip();   // cheap (text-guarded); tracks vehicle enter/exit + mode
   if (!AC) return;
   assetAudioInit();
+  if (rainGain) rainGain.gain.setTargetAtTime(wxRain * 0.35, AC.currentTime, 0.5);   // rain hiss steer (F3)
   // mission stingers on stage transitions (one watcher, no per-mission hooks)
   var prevM2 = aw.m2;
   aw.m1 = stinger(mission.stage, aw.m1);
@@ -3025,7 +3033,7 @@ var snowCells = [];        // {m, zone, cleared}
 var zoneState = [];        // per SNOW_ZONES: {total, cleared, done}
 var redditCells = [];
 var plowVeh = null, bladeDown = false, m2Npcs = [];
-var snowPts = null, snowGeo = null, m2Sky = 0;
+var snowPts = null, m2Sky = 0;
 var mayorAv2 = null;
 var snowTex = makeTex(64, 64, function(g){
   g.fillStyle = '#eef2f5'; g.fillRect(0, 0, 64, 64);
@@ -3160,32 +3168,117 @@ function spawnRedditCrowd(){
     m2Npcs.push(g);
   }
 }
-function ensureSnowPts(){
-  if (snowPts) { snowPts.visible = true; return; }
-  var N = 1300;
-  snowGeo = new THREE.BufferGeometry();
+// generalized precipitation rig - snow and rain are two instances of one system.
+// Box 260x260, height 0..90, camera-locked and wrapping. Built hidden.
+function makePrecip(opts){
+  var N = opts.count;
+  var geo = new THREE.BufferGeometry();
   var pos = new Float32Array(N * 3);
   for (var i = 0; i < N; i++){
     pos[i * 3] = (Math.random() - 0.5) * 260;
     pos[i * 3 + 1] = Math.random() * 90;
     pos[i * 3 + 2] = (Math.random() - 0.5) * 260;
   }
-  snowGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  snowPts = new THREE.Points(snowGeo, new THREE.PointsMaterial({
-    color: 0xffffff, size: 0.55, transparent: true, opacity: 0.85, sizeAttenuation: true}));
-  scene.add(snowPts);
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  var p = new THREE.Points(geo, new THREE.PointsMaterial({
+    color: opts.color, size: opts.size, transparent: true, opacity: opts.opacity, sizeAttenuation: true}));
+  p.visible = false;
+  p.userData = {fall: opts.fall, drift: opts.drift};
+  scene.add(p);
+  return p;
 }
-function updateSnowPts(dt){
-  if (!snowPts || !snowPts.visible) return;
-  var pos = snowGeo.attributes.position.array;
+function updatePrecip(p, dt){
+  if (!p || !p.visible) return;
+  var pos = p.geometry.attributes.position.array;
   var t = performance.now() * 0.001;
+  var fall = p.userData.fall, drift = p.userData.drift;
   for (var i = 0; i < pos.length; i += 3){
-    pos[i + 1] -= (6.5 + (i % 7)) * dt * 0.7;
-    pos[i] += Math.sin(t + i) * dt * 1.2;
+    pos[i + 1] -= (fall + (i % 7) * 0.7) * dt;   // base fall + per-index variation
+    if (drift) pos[i] += Math.sin(t + i) * dt * drift;   // sin skipped when drift is 0
     if (pos[i + 1] < 0) pos[i + 1] = 90;
   }
-  snowGeo.attributes.position.needsUpdate = true;
-  snowPts.position.set(camera.position.x, 0, camera.position.z);
+  p.geometry.attributes.position.needsUpdate = true;
+  p.position.set(camera.position.x, 0, camera.position.z);
+}
+// snow (mission-2 storm) - thin wrappers with the EXACT prior constants so
+// SNOW EMERGENCY renders identically: fall 4.55 = 6.5*0.7, drift 1.2, i%7 shape.
+function ensureSnowPts(){
+  if (!snowPts){ snowPts = makePrecip({count: 1300, color: 0xffffff, size: 0.55, opacity: 0.85, fall: 4.55, drift: 1.2}); }
+  snowPts.visible = true;
+}
+function updateSnowPts(dt){ updatePrecip(snowPts, dt); }
+// ---------- ambient weather (F3): deterministic, wall-clock scheduled ----------
+// Weather is a pure function of Date.now(), so every client with a roughly
+// correct clock paints the same sky for the same real minute - no relay, no
+// server field, works offline. The mission-2 snowstorm (m2Sky) always wins:
+// ambient scalars fade to 0 whenever the storm is up, so snow and rain are
+// never on screen together. Runs on real wall-clock time, decoupled from simH.
+var rainP = null;
+function ensureRain(){
+  if (!rainP) rainP = makePrecip({count: IS_COARSE ? 500 : 1300, color: 0xbcd4ff,
+    size: 0.35, opacity: 0.6, fall: 22, drift: IS_COARSE ? 0 : 0.35});
+  return rainP;
+}
+var PERIOD_MS = 480000;   // ~8 min real-time weather periods
+// mulberry32-style integer hash - bit-identical across engines (the shared-world promise)
+function wxRand(s){ s = (s + 0x6D2B79F5) | 0; var t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }
+function wxAt(period){
+  var r = wxRand(period), st;
+  if (r < 0.60) st = 'clear'; else if (r < 0.80) st = 'rain'; else if (r < 0.92) st = 'fog'; else st = 'overcast';
+  return { state: st, intensity: 0.4 + wxRand(period ^ 0x9e3779b9) * 0.6 };
+}
+// preference + overrides
+var wxEnabled = true;
+try { if (localStorage.getItem('lt_wx') === '0') wxEnabled = false; } catch (e){}
+var wxPin = null;   // #wx=<state> pins one state; #wx=off disables weather
+(function(){
+  var m = /wx=([a-z]+)/.exec(hashStr);
+  if (!m) return;
+  var v = m[1];
+  if (v === 'off') wxEnabled = false;
+  else if (v === 'clear' || v === 'rain' || v === 'fog' || v === 'overcast') wxPin = v;
+})();
+var wxOverride = null;   // set by __lt.wx(state, intensity) for scripted capture
+// blend scalars, eased ~25s toward target; color scratch for the grey/blue tint
+var wxRain = 0, wxFog = 0, wxGrey = 0, wxSun = 1, wxFlash = 0;
+var _wxGreyC = new THREE.Color(0x9aa3ad), _wxRainC = new THREE.Color(0x8393a8), _wxCol = new THREE.Color(0x9aa3ad);
+var wxCurState = 'clear', wxCurIntensity = 0, _nextThunder = 0, _wxWord = '';
+function updateWeather(dt){
+  // resolve this tick's target (mission storm and the off switch force clear)
+  var tgt;
+  if (m2Sky > 0.01 || !wxEnabled) tgt = {state: 'clear', intensity: 0};
+  else if (wxOverride) tgt = wxOverride;
+  else if (wxPin) tgt = {state: wxPin, intensity: 0.85};
+  else if (CINE) tgt = {state: 'clear', intensity: 0};   // no random rain in a trailer take
+  else tgt = wxAt(Math.floor(Date.now() / PERIOD_MS));
+  wxCurState = tgt.state; wxCurIntensity = tgt.intensity;
+  var i = tgt.intensity, tR = 0, tF = 0, tG = 0, tSun = 1, bluish = 0;
+  if (tgt.state === 'rain'){ tR = i; tF = 0.4; tG = 0.55; tSun = 1 - 0.55 * i; bluish = 1; }
+  else if (tgt.state === 'fog'){ tF = 1; tG = 0.7; tSun = 1 - 0.3; }
+  else if (tgt.state === 'overcast'){ tF = 0.25; tG = 0.6; tSun = 1 - 0.4; }
+  var k = Math.min(1, dt * 0.15);   // ~25s settle, same easing shape as m2Sky
+  wxRain += (tR - wxRain) * k;
+  wxFog += (tF - wxFog) * k;
+  wxGrey += (tG - wxGrey) * k;
+  wxSun += (tSun - wxSun) * k;
+  // sky/fog tint: grey, drifting toward a cool blue while it's actually raining
+  _wxCol.copy(_wxGreyC);
+  if (bluish) _wxCol.lerp(_wxRainC, wxRain);
+  // rain particles (camera-locked); opacity + visibility track intensity
+  ensureRain();
+  rainP.material.opacity = 0.6 * wxRain;
+  rainP.visible = wxRain > 0.01;
+  updatePrecip(rainP, dt);
+  // thunder: only in heavy rain - a low noise rumble + a one-frame sun flash
+  if (wxCurState === 'rain' && wxRain > 0.7){
+    if (_nextThunder === 0) _nextThunder = performance.now() + 20000 + Math.random() * 40000;
+    else if (performance.now() > _nextThunder){
+      sndNoise(0.8, 400, 60, 0.5);
+      wxFlash = 1;
+      _nextThunder = performance.now() + 20000 + Math.random() * 40000;
+    }
+  } else _nextThunder = 0;
+  if (wxFlash > 0.01) wxFlash -= dt * 4; else wxFlash = 0;
 }
 function m2ZonesDone(){
   for (var z = 0; z < zoneState.length; z++)
@@ -4429,6 +4522,10 @@ if (/debug=1/.test(hashStr)){
     },
     audio: function(){ pokeAudio(); return AC ? AC.state : 'none'; },
     radio: function(){ return {st: radio.st, name: RADIO_STATIONS[radio.st].name, playing: !!radio.cur, last: radio.last}; },
+    wx: function(state, intensity){
+      if (state === undefined) return {state: wxCurState, intensity: wxCurIntensity, rain: +wxRain.toFixed(2), fog: +wxFog.toFixed(2)};
+      wxOverride = state === null ? null : {state: state, intensity: intensity || 0.85};
+    },
     aud: function(){
       var g = {};
       for (var k in ambLoops) g[k] = Math.round(ambLoops[k].h.g.gain.value * 100) / 100;
@@ -5606,6 +5703,7 @@ var els = {
   bSnd: document.getElementById('bSnd'), bRadio: document.getElementById('bRadio'),
   bScores: document.getElementById('bScores'),
   scores: document.getElementById('scores'),
+  bWx: document.getElementById('bWx'), wx: document.getElementById('wx'),
   s1: document.getElementById('s1'), s60: document.getElementById('s60'), s300: document.getElementById('s300')
 };
 els.ncars.textContent = cars.length; els.npeds.textContent = peds.length;
@@ -5626,6 +5724,7 @@ function syncBtns(){
   els.bSnd.classList.toggle('on', sndOn);
   els.bSnd.textContent = sndOn ? 'SND ON' : 'SND OFF';
   els.bRadio.classList.toggle('on', radio.st > 0);
+  if (els.bWx) els.bWx.classList.toggle('on', wxEnabled);
   els.camlabel.textContent = mode === 'player'
     ? (camFP ? 'CAM-FP · ' : 'CAM-FOLLOW · ') + myName
     : 'CAM-ORBIT · ' + (autoCam ? 'AUTO' : 'MANUAL');
@@ -5643,6 +5742,11 @@ els.bFP.onclick = function(){
 els.bMenu.onclick = function(){ els.tray.hidden = !els.tray.hidden; syncBtns(); };
 els.bSnd.onclick = function(){ pokeAudio(); setSnd(!sndOn); };
 els.bRadio.onclick = cycleRadio;
+if (els.bWx) els.bWx.onclick = function(){   // WX tray toggle: off forces clear, persisted
+  wxEnabled = !wxEnabled;
+  try { localStorage.setItem('lt_wx', wxEnabled ? '1' : '0'); } catch (e){}
+  syncBtns();
+};
 document.getElementById('radiochip').onclick = cycleRadio;
 els.bScores.onclick = function(){ showScores(0); };
 document.getElementById('scoreClose').onclick = function(){ els.scores.hidden = true; };
@@ -6388,6 +6492,7 @@ function frameStep(now){
     updateCars(dt, simT);
     updatePeds(dt, simT);
   }
+  updateWeather(dt);   // wall-clock ambient weather - deliberately runs while paused too
   updatePlayer(dt);
   updateDarts(dt);
   runBots(dt);
@@ -6425,13 +6530,23 @@ function frameStep(now){
     env.sun *= 1 - 0.75 * m2Sky;
     env.hemi = env.hemi * (1 - m2Sky) + 0.55 * m2Sky;
   }
+  if (wxGrey > 0.01){   // ambient weather blend (idle whenever the storm is up)
+    // scaled by (1 - m2Sky) so the mission storm's sky WINS during the ~15s
+    // overlap while weather eases out — multiplying both cuts over-darkens
+    var wxW = 1 - m2Sky;
+    skyC.lerp(_wxCol, wxGrey * wxW);
+    fogC.lerp(_wxCol, wxGrey * wxW);
+    env.sun *= 1 - (1 - wxSun) * wxW;
+    env.hemi += (0.5 - env.hemi) * (0.35 * wxGrey * wxW);
+  }
   renderer.setClearColor(skyC);
   scene.fog.color.copy(fogC);
-  scene.fog.density = 0.0007 + env.night * 0.00045 + m2Sky * 0.0012;
+  scene.fog.density = Math.min(0.003, 0.0007 + env.night * 0.00045 + m2Sky * 0.0012 + wxFog * 0.0016);
   hemi.color.copy(skyC); hemi.intensity = env.hemi;
   var sa = (simH - 6) / 12 * Math.PI;
   sun.position.set(-Math.cos(sa) * 600, Math.max(30, Math.sin(sa) * 500), 220);
   sun.intensity = env.sun;
+  if (wxFlash > 0.01) sun.intensity += wxFlash * 2.5;   // lightning flash (F3)
   sun.visible = env.sun > 0.04;
   var n = env.night;
   for (var k = 0; k < nightMats.length; k++)
@@ -6452,6 +6567,7 @@ function frameStep(now){
     : 'DAY CYCLE ' + speed + '× · ' + dayName(simH);
   els.elapsed.textContent = fmtElapsed((now - t0) / 1000);
   els.fuel.textContent = Math.round(player.fuel);
+  if (els.wx){ var ww = wxCurState.toUpperCase(); if (ww !== _wxWord){ _wxWord = ww; els.wx.textContent = ww; } }
   var hint = '';
   if (mode === 'player'){
     if (isFrozen()) hint = 'FROZEN' + (frozenByName ? ' BY ' + frozenByName : '') + ' — ' + Math.ceil((player.frozenUntil - performance.now()) / 1000) + 's';
