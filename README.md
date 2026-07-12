@@ -83,7 +83,7 @@ The HUD keeps just chat, status, and a `?` help button on screen; everything els
 
 A persistent **gold objective marker** always points to your next unbeaten mission — an on-screen diamond with its label and range, or a screen-edge arrow when the objective is behind you — and a **gold route line follows the real streets to it**, turning at the intersections, with a tall light beacon marking the destination over the skyline. A one-time onboarding banner shows for first-timers; toggle it all with **WAYPT** in the SIM menu (or force it off with `#wp=0`).
 
-Touch: left half of the screen is a virtual movement stick, right half orbits the camera, JUMP/FIRE/NERF buttons in the control rail.
+Touch: left half of the screen is a virtual movement stick (**push to the rim to sprint**), right half orbits the camera, JUMP/FIRE/NERF buttons in the control rail. The **E button relabels live** to whatever it will do — DRIVE, BOARD the bus, SCOOT, START a mission, HOP OFF. Short haptic pings (Android) mark freezes, checkpoints, and wins; phones that can't hold 30fps quietly step their render resolution down instead of stuttering.
 
 ## Admin
 

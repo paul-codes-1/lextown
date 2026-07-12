@@ -2350,7 +2350,11 @@ function sndHitClank(){ sndTone(230, 0.16, 0, 'square', 0.2, 120); sndNoise(0.12
 function sndSnip(){ sndNoise(0.06, 5200, 2600, 0.3); sndNoise(0.07, 4800, 2200, 0.3); }
 function sndWin(){
   [523, 659, 784, 1047].forEach(function(f, i){ sndTone(f, 0.28, i * 0.13, 'square', 0.12); });
+  buzz([40, 60, 40]);   // every mission win plays this jingle — one haptic site covers them all
 }
+// tactile pings on coarse devices. navigator.vibrate is Android-only in
+// practice (iOS Safari no-ops) — fine: patterns are short, rare, and additive.
+function buzz(p){ try { if (IS_COARSE && navigator.vibrate) navigator.vibrate(p); } catch (e){} }
 function sndApplause(){
   if (!AC || !sndOn) return;
   for (var i = 0; i < 16; i++) setTimeout(sndNoise.bind(null, 0.09, 2400, 1200, 0.12), i * 90 + Math.random() * 60);
@@ -3574,6 +3578,7 @@ function canBoardBus(){
 function boardBus(){
   if (busBoardStop() < 0) return;
   var bs = busStateAt(Date.now());
+  buzz(20);
   player.bus = busSeatFor(myId);
   setPvp(false);   // holster the blaster — a passenger is not a tag target
   rigP.r = Math.max(rigP.r, 17);
@@ -3725,6 +3730,7 @@ function mountScoot(){
   var s = nearScooter();
   if (!s) return;
   player.scoot = s; s.taken = true; s.spd = 0;
+  buzz(15);
   setPvp(false);   // hands on the bars — a rider is not a tag target and can't fire
   player.x = s.x; player.z = s.z; player.ry = s.th;
   player.y = groundY(s.x, s.z, player.y + 1); player.vy = 0; player.grounded = true;
@@ -4765,6 +4771,7 @@ function updateMission5(dt){
         } else {
           sndTone(880, 0.18, 0, 'square', 0.14);
           caption('THE BLOCK', 'GOT IT. NEXT: ' + M5_CPS[mission5.cur].name + '.', 3200);
+          buzz(25);
         }
       }
     }
@@ -5607,6 +5614,7 @@ function updateMissionD(dt){
         // and hint both show the NEXT target's ordinal, and the two disagreeing
         // on screen at once reads as an off-by-one
         caption('THE DASH', missionD.cur + ' OF ' + MD_N + ' BANKED. NEXT: ' + MD_CPS[missionD.cur].name + '.', 3200);
+        buzz(25);
       }
     }
     return;
@@ -5703,6 +5711,8 @@ if (/debug=1/.test(hashStr)){
     m4horses: function(){ return m4Horses.map(function(h){ return {s: h.state, x: Math.round(h.g.position.x), z: Math.round(h.g.position.z)}; }); },
     photo: function(){ takePhoto(); },
     tp: function(x, z){ player.x = x; player.z = z; player.y = groundY(x, z); },
+    rq: function(){ return rqRatio; },
+    elabel: function(){ return eActionLabel(); },
     tick: function(){ frameStep(performance.now()); },   // pump one frame while rAF is paused (hidden tab)
     tpcar: function(){   // hop next to the nearest vehicle (radio/drive testing)
       var best = null, bd = 1e12;
@@ -5931,7 +5941,15 @@ function updatePlayer(dt){
     if (keysDown.a || keysDown.arrowleft) r -= 1;
     if (stick.active){ f = -stick.y; r = stick.x; }
   }
+  // full-tilt on the touch stick sprints — Shift doesn't exist on a phone.
+  // Blended across the outer throw rather than a hard threshold: the stick
+  // clamps each axis independently, so any decisive drag saturates one axis
+  // and a threshold would make walk unreachable AND pop speeds at 1px.
   var sp = keysDown.shift ? 13.5 : 7.5;
+  if (stick.active){
+    var sm = Math.min(1, Math.hypot(stick.x, stick.y));
+    if (sm > 0.7) sp = Math.max(sp, 7.5 + 20 * (sm - 0.7));   // 7.5 → 13.5 across 0.7..1.0
+  }
   if (!player.grounded && player.thrusting) sp = 15;
   // water-cannon knockback: an impulse that decays; while it's strong you
   // can't fight it at full walking speed (also keeps combined speed under
@@ -6247,6 +6265,7 @@ function handleNet(m){
       if (m.id === myId){
         frozenByName = m.by && remotes[m.by] ? remotes[m.by].name : 'SOMEONE';
         sndFrozenMe();
+        buzz(80);
       }
     }
   } else if (m.t === 'shot'){
@@ -6467,6 +6486,53 @@ window.addEventListener('error', function(ev){
       src: String(ev.filename || '').split('/').pop() + ':' + (ev.lineno || 0)}));
   } catch (e){}
 });
+// adaptive render quality: a device that can't hold 30fps steps its render
+// resolution down a notch per 5s window (floor 1.0, never back up — no
+// oscillation). rq rides the diag beacon so telemetry shows how often the
+// bottom decile actually degrades.
+var rqRatio = Math.min(window.devicePixelRatio || 1, IS_COARSE ? 1.5 : 2);
+var rqFrames = 0, rqAcc = 0;
+function rqTick(dt){
+  // a hidden/occluded tab throttles rAF to ~0-1fps; those sparse frames carry
+  // clamped dt and would read as a legitimately slow device, sinking quality
+  // to the floor while the player is in another app. Discard such windows.
+  if (document.hidden){ rqFrames = 0; rqAcc = 0; return; }
+  rqFrames++; rqAcc += dt;
+  if (rqAcc < 5) return;
+  var f = rqFrames / rqAcc;
+  rqFrames = 0; rqAcc = 0;
+  if (f < 30 && rqRatio > 1.001){
+    rqRatio = Math.max(1, rqRatio - 0.15);
+    renderer.setPixelRatio(rqRatio);   // r147: setPixelRatio re-applies setSize itself
+  }
+}
+// the one context button says what E would actually do — mirrors
+// tryEnterExit's branch order exactly (coarse pointers only; desktop
+// keeps the static tutorial-matched label)
+function eActionLabel(){
+  if (player.heli || player.veh) return 'EXIT';
+  if (player.ride || player.bus !== null || player.scoot) return 'HOP OFF';
+  if (allIdle() && !isFrozen() &&
+      (nearMissionTrig() || (heliUnlocked && nearDoor()) || nearM3Trig() ||
+       nearM4Trig() || nearM5Trig() || nearM6Trig() || nearM7Trig() ||
+       nearM8Trig() || nearM9Trig() || nearMDTrig())) return 'START';
+  if (!isFrozen() && calmableHorse()) return 'CALM';
+  if (canEnterHeli()) return 'FLY';
+  if (canBoardBus()) return 'BOARD';
+  if (canMountScoot()) return 'SCOOT';
+  if (canRideShotgun()) return 'SHOTGUN';
+  if (player.grounded && nearestVehicle()) return 'DRIVE';
+  return 'E-VEH';
+}
+var eLabelLast = '', eLabelAcc = 0;
+function eLabelTick(dt){
+  if (!IS_COARSE) return;
+  eLabelAcc += dt;
+  if (eLabelAcc < 0.15) return;
+  eLabelAcc = 0;
+  var l = mode === 'player' ? eActionLabel() : 'E-VEH';
+  if (l !== eLabelLast){ eLabelLast = l; els.bCar.textContent = l; }
+}
 var diagFrames = 0, diagAcc = 0;
 function diagTick(dt){
   diagFrames++;
@@ -6476,7 +6542,8 @@ function diagTick(dt){
   diagFrames = 0; diagAcc = 0;
   if (online && ws && ws.readyState === 1)
     ws.send(JSON.stringify({t: 'diag', fps: fps, coarse: IS_COARSE ? 1 : 0,
-      dpr: Math.round((window.devicePixelRatio || 1) * 10) / 10, peers: peerCount()}));
+      dpr: Math.round((window.devicePixelRatio || 1) * 10) / 10,
+      rq: Math.round(rqRatio * 10), peers: peerCount()}));
 }
 
 var netAcc = 0;
@@ -7276,6 +7343,14 @@ function tutClose(){
   }
   els.tut.hidden = true;
   try { localStorage.setItem('lt_tut_seen', '1'); } catch (e){}
+  // one-shot landscape nudge for portrait phones — a caption, never a modal
+  try {
+    if (IS_COARSE && window.innerHeight > window.innerWidth &&
+        !localStorage.getItem('lt_rot_seen')){
+      localStorage.setItem('lt_rot_seen', '1');
+      caption('LEXTOWN', 'TIP: LANDSCAPE PLAYS BETTER', 3500);
+    }
+  } catch (e){}
   // first-session shove toward the missions
   if (!_welcomed && !heliUnlocked && allIdle()){
     _welcomed = true;
@@ -7289,6 +7364,18 @@ function tutClose(){
 }
 els.bHelp.onclick = tutOpen;
 document.getElementById('tutClose').onclick = tutClose;
+// phones read their controls first: the ON A PHONE section jumps to the top
+// of the tutorial on coarse pointers (desktop order untouched)
+if (IS_COARSE){
+  try {
+    var _phH = document.getElementById('tutPhoneH'), _phG = document.getElementById('tutPhoneG');
+    var _firstH = els.tut.querySelector('h2');
+    if (_phH && _phG && _firstH && _firstH !== _phH){
+      _firstH.parentNode.insertBefore(_phH, _firstH);
+      _firstH.parentNode.insertBefore(_phG, _firstH);
+    }
+  } catch (e){}
+}
 document.getElementById('tutPlay').onclick = tutClose;
 els.tut.addEventListener('pointerdown', function(e){ if (e.target === els.tut) tutClose(); });
 (function(){
@@ -8005,6 +8092,8 @@ function frameStep(now){
   updateAssetAudio(dt);
   netTick(dt);
   diagTick(dt);
+  rqTick(dt);
+  eLabelTick(dt);
   if (cine.active){
     updateCineCam(dt);   // scripted trailer camera takes over while running
   } else if (mode === 'drone'){
