@@ -6199,6 +6199,7 @@ window.addEventListener('keydown', function(e){
   if (photo.active){   // Enter = desktop shutter, Esc = leave Photo Mode (chat is hidden here)
     if (e.key === 'Enter'){ e.preventDefault(); photoShutter(); return; }
     if (e.key === 'Escape'){ e.preventDefault(); exitPhoto(); return; }
+    if (e.key.toLowerCase() === 'v') return;   // mode toggle would break the drone-only premise
   }
   if (els.scores && !els.scores.hidden &&
       (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ' || e.key.toLowerCase() === 'e')){
@@ -6371,6 +6372,7 @@ function enterPhoto(){
 function exitPhoto(){
   if (!photo.active) return;
   photo.active = false;
+  captureNext = false;   // a shutter pressed the same frame as exit must not fire on the restored view
   if (photobarEl) photobarEl.hidden = true;
   var hudEl = document.getElementById('hud'); if (hudEl) hudEl.style.display = '';
   var fxEl = document.getElementById('fx'); if (fxEl) fxEl.style.display = '';
