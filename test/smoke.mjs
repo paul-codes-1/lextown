@@ -807,8 +807,10 @@ async function runM11Assertions() {
 // run, so the wire ladder reads 2..13 complete. THE regression is the full
 // 13-vs-12-vs-11-vs-10 ladder: a valid m:13 run must land on .m12 ONLY — never
 // .m11 (wire 12), never .m10 (wire 11), never the daily 'd' (wire 10), never m1
-// (the object-map fall-through). WIN m12 = [60000, 900000]; announce is "cleared
-// THE THRILLER and saved City Hall". Clones runM11Assertions exactly; each
+// (the object-map fall-through). WIN m12 = [30000, 900000] — the floor was
+// lowered from 60s after QA's spawn-stagger math showed a hot legit clear lands
+// 40-70s; T2b guards that exact boundary. Announce is "cleared THE THRILLER and
+// saved City Hall". Clones runM11Assertions exactly; each
 // submitter is its own client (1-per-15s score cooldown). The mev-band check
 // confirms the mission's beacon k values stay inside the existing 0-99 validator.
 async function runM12Assertions() {
@@ -842,7 +844,7 @@ async function runM12Assertions() {
   check('T1c. m:13 lands on m12 ONLY — not m11 (wire 12), not m10 (wire 11), not the daily d (wire 10), not m1',
     onM12 && !onM11 && !onM10 && !onD && !onM1, `onM12=${onM12} onM11=${onM11} onM10=${onM10} onD=${onD} onM1=${onM1}`);
 
-  // T2: below-window m:13 (1s < 60s floor) -> no reply, no announce, no entry.
+  // T2: below-window m:13 (1s < 30s floor) -> no reply, no announce, no entry.
   const S2 = await named('', 'SLOWPOKE');
   const obsT2 = OBS.msgs.length, s2mark = S2.msgs.length;
   send(S2, { t: 'score', m: 13, ms: 1000 });
@@ -854,6 +856,18 @@ async function runM12Assertions() {
   const s2onBoard = !!(req2 && (req2.m12 || []).some((e) => e.ms === 1000));
   check('T2. below-window m:13 score rejected (no reply, no announce, no board entry)',
     !s2reply && !s2announce && !s2onBoard, `reply=${s2reply} announce=${s2announce} onBoard=${s2onBoard}`);
+
+  // T2b: the floor is 30s, NOT the original 60s. QA's spawn-stagger math put an
+  // optimized legit clear at 40-70s, so a 45s run MUST rank — under the old 60s
+  // floor this exact submit was silently rejected. Regression guard for the
+  // [30000, 900000] window; if someone reverts the floor, this check goes red.
+  const S2B = await named('', 'SPEEDRUN');
+  send(S2B, { t: 'score', m: 13, ms: 45000 });
+  const rep2b = await want(S2B, (m) => m.t === 'scores');
+  const t2bOn = !!(rep2b && (rep2b.m12 || []).some((e) => e.n === 'SPEEDRUN' && e.ms === 45000));
+  check('T2b. 45s m:13 clear ACCEPTED and ranks (floor is 30s, not the original 60s)',
+    t2bOn, 'm12=' + JSON.stringify(rep2b && rep2b.m12));
+  S2B.ws.close();
 
   // T3: mission-12 mev band — {t:'mev', k:80}/{k:84} inside the existing 0-99
   // validator, so they no-op (log-only, no rebroadcast) and never disconnect.

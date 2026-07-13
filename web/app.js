@@ -6030,9 +6030,10 @@ function updateMission11(dt){
 // reveal is the parade taking a bow. Everything here is LOCAL: zombies + the mayor
 // NEVER enter remotes (m5 ghost precedent - anything in that map is freeze-tag
 // taggable and inflates peerCount). No new net protocol; only the final score sends.
-// PHASE A = the playable combat core. The hallucination color grade + the GTA-style
-// credits cinematic are Phase B (#80); a commented seam in the 'won' stage marks
-// where the credits insert (before showScores). Wire 13 / key m12 / DOM scoreList12.
+// Ships in two layers: the combat core, plus forced night (simH save/re-pin/
+// restore), the hallucination color grade, the streamed mx_thriller music, and
+// the first-clear GTA-style credits that run in the 'won' stage before
+// showScores. Wire 13 / key m12 / DOM scoreList12.
 // All registries declared before the labels.push block below (statement order).
 var M12_TRIG = {x: 150, z: 20};        // City Hall plaza, near DOOR_P / the m1 ribbon set (walkable)
 var M12_PLAZA = {x: 158, z: 26};       // horde converges here; spawns ring the plaza edge
@@ -6081,7 +6082,7 @@ var m12Music = null;              // HTMLAudioElement (streamed, NOT decoded - 1
 var M12_CRED_TGT = {x: 172, z: 32};        // City Hall, the credits camera's anchor
 // PARALLEL credits state (architect ruling: do NOT flip cine.active - it's entangled
 // with the #cine trailer capture). Reuses cineApplyPose/cineEase/cineLetterbox only.
-var credits = {active: false, priorMode: null, shots: null, shot: 0, t: 0, el: null};
+var credits = {active: false, shots: null, shot: 0, t: 0, el: null};
 (function(){
   m12Ring = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.06, 6, 24),
     new THREE.MeshBasicMaterial({color: M12_RING_COL, transparent: true, opacity: 0.85}));
@@ -6093,7 +6094,6 @@ function nearM12Trig(){
   var dx = player.x - M12_TRIG.x, dz = player.z - M12_TRIG.z;
   return dx * dx + dz * dz < 16;
 }
-function m12Sec(){ return (performance.now() - mission12.t0) / 1000; }   // pure elapsed (score), no timeout
 function thrillerFight(){ return mission12.stage === 'fighting' || mission12.stage === 'climax'; }
 function m12WaveN(w){ return IS_COARSE ? Math.max(3, Math.ceil(w.n * 0.5)) : w.n; }
 // a cheap zombie ped in the avatar-builder SHAPE (no gun/jetpack baggage - perf) with
@@ -6380,7 +6380,6 @@ function buildCreditsRoll(){
 }
 function startCredits(){
   credits.active = true;
-  credits.priorMode = mode;
   credits.shot = 0; credits.t = 0;
   // slow B-roll over the City Hall plaza + Main St (parallel to updatePlayerCam - never flips cine.active)
   credits.shots = [
@@ -6417,7 +6416,6 @@ function endCredits(skipped){
   credits.el = null; credits.roll = null;
   var hudEl = document.getElementById('hud'); if (hudEl) hudEl.style.display = '';
   // teardown mirrors Photo Mode: nothing to un-toggle (we never left player mode), just release
-  credits.priorMode = null;
   try { localStorage.setItem('lt_m12_credits', '1'); } catch (e){}
   m12Credits = true;
   // hand off to the score modal (the seam's other side)
