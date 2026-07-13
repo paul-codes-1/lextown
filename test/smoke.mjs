@@ -16,10 +16,10 @@
 // the private-room score gate, sanitization equivalence, and NPC-forced-PUBLIC
 // (see runRoomAssertions). A further pass exercises the fire-and-forget "mev"
 // telemetry beacon — validated, rate-limited, log-only, never broadcast (see
-// runMevAssertions). Four board passes (runM8/runM9/runM10/runM11Assertions) verify
-// the foal + airmail + HIGH WATER flood + VP-motorcade leaderboards end-to-end
-// (the last two on wires m:11 -> 'm10' and m:12 -> 'm11', guarding the
-// 12-vs-11-vs-10 daily-board ladder trap). A DAILY DASH pass covers the m:10 daily
+// runMevAssertions). Five board passes (runM8/runM9/runM10/runM11/runM12Assertions)
+// verify the foal + airmail + HIGH WATER flood + VP-motorcade + THRILLER
+// leaderboards end-to-end (the wire ladder 11->'m10', 12->'m11', 13->'m12' all sit
+// one notch off the m:10 daily board, so each guards the ladder trap). A DAILY DASH pass covers the m:10 daily
 // board: a valid score lands on `d` with the dDay stamp + announce, below-window
 // + private-room submits are dropped, and a throwaway second server (booted from
 // a stale scores.json) proves rollDaily() empties the board on the EST day flip
@@ -802,6 +802,85 @@ async function runM11Assertions() {
   S1.ws.close(); S2.ws.close(); MB.ws.close(); S4.ws.close(); OBS.ws.close();
 }
 
+// --- THE THRILLER: the m12 board (mission 12, wire m:13) ----------------------
+// Mission 12 ships as board key 'm12' on wire number 13 — the last board of the
+// run, so the wire ladder reads 2..13 complete. THE regression is the full
+// 13-vs-12-vs-11-vs-10 ladder: a valid m:13 run must land on .m12 ONLY — never
+// .m11 (wire 12), never .m10 (wire 11), never the daily 'd' (wire 10), never m1
+// (the object-map fall-through). WIN m12 = [60000, 900000]; announce is "cleared
+// THE THRILLER and saved City Hall". Clones runM11Assertions exactly; each
+// submitter is its own client (1-per-15s score cooldown). The mev-band check
+// confirms the mission's beacon k values stay inside the existing 0-99 validator.
+async function runM12Assertions() {
+  const want = async (c, pred, opts) => {
+    try { return await expect(c, pred, { timeout: 1500, ...(opts || {}) }); }
+    catch { return null; }
+  };
+  const named = async (query, name) => {   // fresh client with a fixed name + spawn
+    const c = connect(query); await opened(c); await expect(c, (m) => m.t === 'welcome');
+    send(c, { t: 'state', n: name, c: 0x3a76c4, m: 0, p: 0, x: 14, y: 1, z: -9.5, ry: 0 });
+    await sleep(140);
+    return c;
+  };
+  const OBS = connect(); await opened(OBS); await expect(OBS, (m) => m.t === 'welcome');
+
+  // T1: valid PUBLIC m:13 -> lands on .m12 + fires the "cleared THE THRILLER..." announce.
+  const S1 = await named('', 'ZOMBIE');
+  const obsT1 = OBS.msgs.length;
+  send(S1, { t: 'score', m: 13, ms: 180000 });
+  const rep1 = await want(S1, (m) => m.t === 'scores');
+  const ann1 = await want(OBS, (m) => m.t === 'chat' && m.n === '* MISSION', { from: obsT1 });
+  const onM12 = !!(rep1 && (rep1.m12 || []).some((e) => e.n === 'ZOMBIE' && e.ms === 180000));
+  const onM11 = !!(rep1 && (rep1.m11 || []).some((e) => e.n === 'ZOMBIE' && e.ms === 180000));
+  const onM10 = !!(rep1 && (rep1.m10 || []).some((e) => e.n === 'ZOMBIE' && e.ms === 180000));
+  const onD = !!(rep1 && (rep1.d || []).some((e) => e.n === 'ZOMBIE' && e.ms === 180000));
+  const onM1 = !!(rep1 && (rep1.m1 || []).some((e) => e.n === 'ZOMBIE' && e.ms === 180000));
+  const t1announce = !!(ann1 && /thriller/i.test(ann1.msg || ''));
+  check('T1a. valid m:13 score lands on the m12 board (topScores includes m12)', onM12, 'm12=' + JSON.stringify(rep1 && rep1.m12));
+  check('T1b. m:13 score fires the mission announce to a second client (matches "thriller")', t1announce, 'announce=' + JSON.stringify(ann1));
+  // THE 13-vs-12-vs-11-vs-10 ladder regression: the run is on m12 ONLY.
+  check('T1c. m:13 lands on m12 ONLY — not m11 (wire 12), not m10 (wire 11), not the daily d (wire 10), not m1',
+    onM12 && !onM11 && !onM10 && !onD && !onM1, `onM12=${onM12} onM11=${onM11} onM10=${onM10} onD=${onD} onM1=${onM1}`);
+
+  // T2: below-window m:13 (1s < 60s floor) -> no reply, no announce, no entry.
+  const S2 = await named('', 'SLOWPOKE');
+  const obsT2 = OBS.msgs.length, s2mark = S2.msgs.length;
+  send(S2, { t: 'score', m: 13, ms: 1000 });
+  await sleep(400);
+  const s2reply = S2.msgs.slice(s2mark).some((m) => m.t === 'scores');
+  const s2announce = OBS.msgs.slice(obsT2).some((m) => m.t === 'chat' && m.n === '* MISSION');
+  send(OBS, { t: 'scores' });
+  const req2 = await want(OBS, (m) => m.t === 'scores');
+  const s2onBoard = !!(req2 && (req2.m12 || []).some((e) => e.ms === 1000));
+  check('T2. below-window m:13 score rejected (no reply, no announce, no board entry)',
+    !s2reply && !s2announce && !s2onBoard, `reply=${s2reply} announce=${s2announce} onBoard=${s2onBoard}`);
+
+  // T3: mission-12 mev band — {t:'mev', k:80}/{k:84} inside the existing 0-99
+  // validator, so they no-op (log-only, no rebroadcast) and never disconnect.
+  const MB = await named('', 'BEACONTRI');
+  const obsT3 = OBS.msgs.length;
+  send(MB, { t: 'mev', k: 80 });
+  send(MB, { t: 'mev', k: 84 });
+  await sleep(300);
+  const t3quiet = OBS.msgs.slice(obsT3).length === 0;
+  send(MB, { t: 'chat', msg: 'beacon3 ok' });
+  const t3live = await want(OBS, (m) => m.t === 'chat' && m.n === 'BEACONTRI' && m.msg === 'beacon3 ok');
+  check('T3. mev band k:80/k:84 accepted quietly (no rebroadcast, sender stays live)',
+    t3quiet && !!t3live, `quiet=${t3quiet} live=${JSON.stringify(t3live)}`);
+
+  // T4: an m:13 score from a private room is dropped (F4 gate composes with m12).
+  const S4 = await named('?room=CRYPT', 'CRYPTROOM');
+  const obsT4 = OBS.msgs.length, s4mark = S4.msgs.length;
+  send(S4, { t: 'score', m: 13, ms: 185000 });
+  await sleep(400);
+  const s4reply = S4.msgs.slice(s4mark).some((m) => m.t === 'scores');
+  const s4announce = OBS.msgs.slice(obsT4).some((m) => m.t === 'chat' && m.n === '* MISSION');
+  check('T4. m:13 score from a private room is dropped (no reply, no announce)', !s4reply && !s4announce,
+    `reply=${s4reply} announce=${s4announce}`);
+
+  S1.ws.close(); S2.ws.close(); MB.ws.close(); S4.ws.close(); OBS.ws.close();
+}
+
 // --- DAILY DASH: the m:10 daily board (F2) -----------------------------------
 // The daily board `d` is the mission-board wiring one notch over (score-handler
 // map 10:'d', WIN [20000,900000], DAILY DASH announce) plus two twists topScores
@@ -964,6 +1043,7 @@ async function main() {
     await runM9Assertions();
     await runM10Assertions();
     await runM11Assertions();
+    await runM12Assertions();
     await runDailyAssertions();
     await runScooterAssertions();
     await runDailyRollAssertion();

@@ -77,7 +77,17 @@ VP flew in to golf: lead car of an unnamed VIP's motorcade, six red
 drive-through checkpoints hotel-to-Idle-Hour against a 180s tee time — with
 a **composure meter**: hard knocks rattle the passenger, empty it and he
 makes you pull over while the clock runs; score is pure elapsed, `m11`
-board on wire `m:12`, suite at 74). Spec in `PHASE2-SPEC.md` §F9.
+board on wire `m:12`, suite at 74). Spec in `PHASE2-SPEC.md` §F9 ·
+**Mission 12: THE THRILLER — the finale** (the real October Main Street
+Thriller parade, the mayor's 'medicinal' gummy bears, and a hallucinated
+zombie horde at City Hall: wave survival co-op with the never-down CPU
+mayor, weapons auto-escalating machine gun → rockets → grenades up to THE
+BIG ONE, the whole thing at forced **night** under a hallucination color
+grade, scored to an original ElevenLabs horror-funk track with Lexington
+parody lyrics — "IT'S LEXINGTON" — and capped by a first-clear, skippable,
+untimed **GTA-style credits scene**. The reveal: the zombies were the
+parade dancers all along; nobody was harmed. `m12` board on wire `m:13`,
+suite at 80). Spec in `PHASE2-SPEC.md` §F10.
 
 ---
 

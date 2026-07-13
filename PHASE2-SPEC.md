@@ -2392,10 +2392,12 @@ So: **wire 13 (score send + `showScores` arg) → server key `m12` → DOM
 - **Score = fastest full clear** — elapsed time from the `CLOCK STARTED` GO beat to
   the **last zombie of the final wave going down** (the credits scene runs AFTER the
   timer stops and is NOT timed). Lower is better.
-- **WIN plausibility window: `m12: [60000, 900000]` ms** — a 60 s floor (a
-  pre-positioned shredder blitzing every wave) and a 15 min ceiling (well above the
-  ~3–5 min first clear; a longer window than the driving missions because a cautious
-  survivor can drag). Anti-cheat plausibility, distinct from any in-mission cap.
+- **WIN plausibility window: `m12: [30000, 900000]` ms** — a 30 s floor (QA's
+  spawn-stagger math put an optimized legit clear plausibly at 40–70 s, so the
+  original 60 s floor risked rejecting real runs; 30 s is still implausible for
+  76 kills + the 30-hp boss) and a 15 min ceiling (well above the ~3–5 min first
+  clear; a longer window than the driving missions because a cautious survivor
+  can drag). Anti-cheat plausibility, distinct from any in-mission cap.
   *(Pin is tunable once the wave counts are set in playtest — flag to the architect.)*
 
 ### User story
@@ -2636,7 +2638,7 @@ Same recipe; mission-12 specifics (this is the heaviest mission — budget accor
    after the `m11` entry §F9 introduced** (the raw line numbers will have shifted — go
    by the `m11` neighbor): `BOARDS` → add `'m12'`; the `scores` literal → `m12: []`;
    `topScores()` → include `m12`; the board/score map → **`13: 'm12'`** (wire 13, after
-   `12: 'm11'`); the per-board `WIN` object → `m12: [60000, 900000]`; the announce map
+   `12: 'm11'`); the per-board `WIN` object → `m12: [30000, 900000]`; the announce map
    → `` m12: `${n} cleared THE THRILLER and saved City Hall in ${sec}s` ``.
 9. **Credits scene (Phase B, task #80 — layers on a finished core):** a parallel
    **`creditsActive`** flag (Photo Mode isolation precedent) driving
@@ -2754,7 +2756,7 @@ both files, `npm test`). Two tabs for the announce check.
       nothing; `allIdle()` includes `mission12`.
 - [ ] **Server plumbing complete.** `m12` added (only — m1–m11 already present) to
       `BOARDS`, the `scores` literal, `topScores()`, the score map (`13:'m12'`), the
-      `WIN` object (`[60000, 900000]`), and the announce map — a win persists under
+      `WIN` object (`[30000, 900000]`), and the announce map — a win persists under
       `m12` and survives a restart.
 - [ ] **Surfaces updated together.** README mission list + `#tut` grid line +
       `#scoreList12` block all present.

@@ -136,8 +136,12 @@ Key models to keep straight:
   keep them in sync when adding missions.
   Holding an RPG (mission or crate) forces first person via `rpgOut()` so
   the chopper is aimable — third-person elevation can't look up. Sound is
-  synthesized WebAudio (no assets): `pokeAudio()` on first gesture, rotor
-  loop gain by distance, `lt_snd` mutes. Captions are the `#caption` DOM
+  two-tier: synthesized WebAudio for gameplay SFX (`pokeAudio()` on first
+  gesture, rotor loop gain by distance) plus a generated mp3 suite in
+  `web/audio/` (radio stations, stingers, ambience — `loadClip`/`playClip`
+  fetch+decode on demand; long music like the m12 THRILLER track streams
+  via HTMLAudioElement instead, since decoding 150s to PCM costs ~50MB RAM
+  on low-end phones). `lt_snd` mutes both. Captions are the `#caption` DOM
   bar. Dev hook: `#debug=1` exposes `window.__lt`; `#x=..&z=..` deep-links
   the spawn point.
 - **The news chopper is a single shared object** (`heli`), not a vehicle in

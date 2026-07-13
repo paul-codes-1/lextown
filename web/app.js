@@ -1726,6 +1726,21 @@ function updateDarts(dt){
         }
       }
     }
+    // mission 12 (THE THRILLER): my machine-gun darts damage the local horde,
+    // mine-only, no broadcast (zombies never enter remotes)
+    if (!dead && d.mine && thrillerFight()){
+      for (var zk = 0; zk < m12Zombies.length; zk++){
+        var zt = m12Zombies[zk];
+        if (zt.state === 'dying') continue;
+        var zdx = p.x - zt.x, zdz = p.z - zt.z, zdy = p.y - (zt.y + 1.4);
+        var zr = zt.boss ? 3.2 : 1.4;
+        if (zdx * zdx + zdz * zdz < zr * zr && zdy * zdy < 4){
+          dead = true;
+          damageZombie(zt, 1, now);
+          break;
+        }
+      }
+    }
     if (!dead && d.mine){
       for (var id in remotes){
         var r = remotes[id];
@@ -2185,14 +2200,16 @@ function fireRocket(){
   var now = performance.now();
   if (now - lastRocket < 1100 || isFrozen()) return;
   lastRocket = now;
-  if (!missionFight()) myRpg--;   // the ceremonial RPG never runs dry
+  if (!missionFight() && !thrillerFight()) myRpg--;   // the ceremonial RPG never runs dry
   camera.getWorldDirection(_aim);
   player.ry = Math.atan2(_aim.x, _aim.z);
   var ox = player.x + _aim.x * 1.5;
   var oy = player.y + 1.9 + _aim.y * 1.5;
   var oz = player.z + _aim.z * 1.5;
   spawnRocket(ox, oy, oz, _aim.x, _aim.y, _aim.z, true);
-  if (online && ws && ws.readyState === 1)
+  // THE THRILLER's rockets are a local hallucination — don't relay them to peers
+  // (darts + grenades are already local; m1's ceremonial RPG still broadcasts)
+  if (online && ws && ws.readyState === 1 && !thrillerFight())
     ws.send(JSON.stringify({t: 'rocket',
       ox: +ox.toFixed(1), oy: +oy.toFixed(1), oz: +oz.toFixed(1),
       dx: +_aim.x.toFixed(3), dy: +_aim.y.toFixed(3), dz: +_aim.z.toFixed(3)}));
@@ -2202,6 +2219,7 @@ function updateRockets(dt){
   for (var i = rockets.length - 1; i >= 0; i--){
     var r = rockets[i];
     r.vy -= 3 * dt;
+    if (r.nade) r.vy -= 11 * dt;   // THRILLER grenades arc harder than rockets
     r.g.position.x += r.vx * dt;
     r.g.position.y += r.vy * dt;
     r.g.position.z += r.vz * dt;
@@ -2227,8 +2245,30 @@ function updateRockets(dt){
         }
       }
     }
+    // THE THRILLER: rockets + grenades detonate on/near the local horde (grenades
+    // also fuse out mid-air); mine-only, no broadcast
+    if (!boom && r.mine && thrillerFight()){
+      if (r.nade && now - r.born > 1300) boom = true;   // grenade fuse
+      if (!boom){
+        for (var zc = 0; zc < m12Zombies.length; zc++){
+          var zz = m12Zombies[zc];
+          if (zz.state === 'dying') continue;
+          var pdx = p.x - zz.x, pdy = p.y - (zz.y + 1.2), pdz = p.z - zz.z;
+          if (pdx * pdx + pdy * pdy + pdz * pdz < 9){ boom = true; break; }   // proximity
+        }
+      }
+    }
     if (!boom && (now - r.born > 4500 || p.y < 0.1 || pointInBuilding(p.x, p.y, p.z))) boom = true;
     if (boom){
+      if (r.mine && thrillerFight()){   // area blast: melt everything within ~7 m
+        big = true;
+        for (var za = 0; za < m12Zombies.length; za++){
+          var zd = m12Zombies[za];
+          if (zd.state === 'dying') continue;
+          var adx = p.x - zd.x, adz = p.z - zd.z, ady = p.y - (zd.y + 1.2);
+          if (adx * adx + adz * adz + ady * ady < 49) damageZombie(zd, 5, now);
+        }
+      }
       explosion(p.x, p.y, p.z, big);
       scene.remove(r.g); rockets.splice(i, 1);
     }
@@ -2538,7 +2578,7 @@ function updateRadioChip(){
 // --- world/mission audio watcher, ticked from frame() ---
 var PARK_PTS = [[-171, 40], [122, 50], [250, 50], [350, 300], [150, -535], [150, -874]];
 var BELL_PT = {x: -46, z: -262};   // First Presbyterian tower
-var aw = {m1: '', m2: '', m3: '', m4: '', m5: '', m6: '', m7: '', m8: '', m9: '', m10: '', m11: '', mD: '', hFloor: -1, horse: [], acc: 0};
+var aw = {m1: '', m2: '', m3: '', m4: '', m5: '', m6: '', m7: '', m8: '', m9: '', m10: '', m11: '', m12: '', mD: '', hFloor: -1, horse: [], acc: 0};
 function stinger(stage, prev){
   if (stage === prev) return stage;
   if (prev !== ''){   // skip the very first observation (page load)
@@ -2568,6 +2608,7 @@ function updateAssetAudio(dt){
   aw.m9 = stinger(mission9.stage, aw.m9);
   aw.m10 = stinger(mission10.stage, aw.m10);
   aw.m11 = stinger(mission11.stage, aw.m11);
+  aw.m12 = stinger(mission12.stage, aw.m12);
   aw.mD = stinger(missionD.stage, aw.mD);
   // SNOW EMERGENCY: queue an EAS interrupt — it airs the moment the player
   // hops in the plow (the radio auto-starts and plays the queue first)
@@ -2882,6 +2923,7 @@ function showScores(myMs, board){
                board === 4 ? 'HORSES HOME IN ' : board === 5 ? 'DEADLINE MET IN ' :
                board === 6 ? 'SCOOPS LANDED IN ' : board === 7 ? 'LOT TAGGED IN ' :
                board === 8 ? 'FOALS PENNED IN ' : board === 9 ? 'ROUTE FLOWN IN ' :
+               board === 13 ? 'THRILLER CLEARED IN ' :
                board === 12 ? 'MOTORCADE DELIVERED IN ' :
                board === 11 ? 'LOW SPOTS HELD IN ' :
                board === 10 ? 'THE DASH IN ' : 'CHOPPER DOWN IN ';
@@ -2889,6 +2931,7 @@ function showScores(myMs, board){
     var best = board === 2 ? m2Best : board === 3 ? m3Best : board === 4 ? m4Best :
                board === 5 ? m5Best : board === 6 ? m6Best : board === 7 ? m7Best :
                board === 8 ? m8Best : board === 9 ? m9Best :
+               board === 13 ? m12Best :
                board === 12 ? m11Best :
                board === 11 ? m10Best :
                board === 10 ? (dailyBest ? dailyBest.ms : 0) : missionBest;
@@ -2905,11 +2948,12 @@ function showScores(myMs, board){
       ' · ' + (m8Best ? 'PADDOCK: ' + fmtMs(m8Best) : 'PADDOCK: —') +
       ' · ' + (m9Best ? 'AIR MAIL: ' + fmtMs(m9Best) : 'AIR MAIL: —') +
       ' · ' + (m10Best ? 'HIGH WATER: ' + fmtMs(m10Best) : 'HIGH WATER: —') +
-      ' · ' + (m11Best ? 'MOTORCADE: ' + fmtMs(m11Best) : 'MOTORCADE: —');
+      ' · ' + (m11Best ? 'MOTORCADE: ' + fmtMs(m11Best) : 'MOTORCADE: —') +
+      ' · ' + (m12Best ? 'THRILLER: ' + fmtMs(m12Best) : 'THRILLER: —');
   }
   document.getElementById('scoreYou').textContent = you;
   setDailyMeta();
-  ['scoreListD', 'scoreList', 'scoreList2', 'scoreList3', 'scoreList4', 'scoreList5', 'scoreList6', 'scoreList7', 'scoreList8', 'scoreList9', 'scoreList10', 'scoreList11'].forEach(function(id){
+  ['scoreListD', 'scoreList', 'scoreList2', 'scoreList3', 'scoreList4', 'scoreList5', 'scoreList6', 'scoreList7', 'scoreList8', 'scoreList9', 'scoreList10', 'scoreList11', 'scoreList12'].forEach(function(id){
     var list = document.getElementById(id);
     if (!list) return;
     list.textContent = '';
@@ -2949,6 +2993,7 @@ function renderScores(m){
   fill('scoreList9', m.m9 || []);
   fill('scoreList10', m.m10 || []);
   fill('scoreList11', m.m11 || []);
+  fill('scoreList12', m.m12 || []);
   setDailyMeta();   // refresh the countdown + device best when server times land
 }
 function updateMission(dt){
@@ -5975,6 +6020,514 @@ function updateMission11(dt){
   if (mission11.stage === 'post'){ if (t > 22) m11Cleanup(); }
 }
 
+// ---------- MISSION 12: THE THRILLER (the finale - zombie-horde last stand) ----
+// THE FINALE. It's the real October Thriller parade: THE MAYOR shares her
+// "medicinal" gummy bears and you BOTH hallucinate the red-jacketed dancers as a
+// zombie horde storming City Hall. Wave survival on foot at the plaza, three
+// auto-swapped weapon phases (machine gun -> rockets -> grenades), a climax vs THE
+// BIG ONE (a zombie thoroughbred - a nod to HORSEPOWER). Score = fastest full clear;
+// ms FREEZES at the climax kill (pure elapsed, no fold). Nobody's harmed - the win
+// reveal is the parade taking a bow. Everything here is LOCAL: zombies + the mayor
+// NEVER enter remotes (m5 ghost precedent - anything in that map is freeze-tag
+// taggable and inflates peerCount). No new net protocol; only the final score sends.
+// PHASE A = the playable combat core. The hallucination color grade + the GTA-style
+// credits cinematic are Phase B (#80); a commented seam in the 'won' stage marks
+// where the credits insert (before showScores). Wire 13 / key m12 / DOM scoreList12.
+// All registries declared before the labels.push block below (statement order).
+var M12_TRIG = {x: 150, z: 20};        // City Hall plaza, near DOOR_P / the m1 ribbon set (walkable)
+var M12_PLAZA = {x: 158, z: 26};       // horde converges here; spawns ring the plaza edge
+var M12_RING_COL = 0xd826ff;           // candy-magenta (FINAL; CVD-safe vs every taken hue)
+var M12_ZCAP = IS_COARSE ? 10 : 24;    // concurrent-zombie cap, scaled down on touch/low-end
+var M12_ZHP = 3, M12_BOSS_HP = 30;
+// escalating wave table: {n zombies, weapon phase 0=MG/1=rocket/2=grenade, boss?}.
+// The spawner queues overflow past the concurrent cap. Counts halve on IS_COARSE.
+var M12_WAVES = [
+  {n: 6,  phase: 0},
+  {n: 9,  phase: 0},
+  {n: 12, phase: 1},
+  {n: 15, phase: 1},
+  {n: 18, phase: 2},
+  {n: 16, phase: 2, boss: true}   // the climax: a horde + THE BIG ONE
+];
+var M12_BANTER = [
+  'I\'M ADDING THIS TO NEXT WEEK\'S AGENDA.',
+  'REPORT YOUR ZOMBIES TO 311.',
+  'I APPROVED A PERMIT FOR THIS, TECHNICALLY.'
+];
+var M12_WAVEDOWN = [   // the mayor's between-waves barks (ally chatter, B5)
+  'WAVE DOWN. STILL UNBOTHERED. KEEP GOING.',
+  'THAT\'S ONE MORE FOR THE PRESS RELEASE. NEXT.',
+  'GOOD. THE STEPS ARE STILL OURS. HOLD.'
+];
+var m12Zombies = [], m12Mayor = null, m12Ring = null, m12MgAt = 0;
+var m12Best = 0;
+try { m12Best = parseInt(localStorage.getItem('lt_m12_best') || '0', 10) || 0; } catch (e){}
+var m12Credits = false;   // first-clear credits gate (lt_m12_credits) - reserved for Phase B
+try { m12Credits = localStorage.getItem('lt_m12_credits') === '1'; } catch (e){}
+var mission12 = {stage: 'idle', tStage: 0, t0: 0, ms: 0, phase: 0, wave: 0, hp: 5,
+                 capIdx: 0, quick: false, spawned: 0, killed: 0, need: 0,
+                 spawnAt: 0, banterAt: 0};
+// --- Phase B: night force + hallucination grade + music + credits ---
+// The "gummy-bear kick-in" slides the day clock to night and washes the world in a
+// sick violet grade; the reveal SNAPS the grade off (you sobered up) while the night
+// HOLDS through the credits. simH is saved ONCE (null sentinel) and restored ONLY
+// through m12Cleanup, so win / downed / retry / abandon all un-force cleanly. `paused`
+// is never touched (it would freeze traffic + peds).
+var m12SavedSimH = null;          // null == not forced; set once at first force
+var M12_NIGHT_H = 22.0;           // the hallucination's dusk target hour
+var m12Grade = 0;                 // 0..1 hallucination wash (m10Sky-style, read in the env block)
+var _m12Col = new THREE.Color(0x3a2f55);   // murky violet-magenta - reads "wrong" at night
+var m12Music = null;              // HTMLAudioElement (streamed, NOT decoded - 150s PCM would OOM phones)
+var M12_CRED_TGT = {x: 172, z: 32};        // City Hall, the credits camera's anchor
+// PARALLEL credits state (architect ruling: do NOT flip cine.active - it's entangled
+// with the #cine trailer capture). Reuses cineApplyPose/cineEase/cineLetterbox only.
+var credits = {active: false, priorMode: null, shots: null, shot: 0, t: 0, el: null};
+(function(){
+  m12Ring = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.06, 6, 24),
+    new THREE.MeshBasicMaterial({color: M12_RING_COL, transparent: true, opacity: 0.85}));
+  m12Ring.rotation.x = Math.PI / 2;
+  m12Ring.position.set(M12_TRIG.x, 0.9, M12_TRIG.z);
+  scene.add(m12Ring);
+})();
+function nearM12Trig(){
+  var dx = player.x - M12_TRIG.x, dz = player.z - M12_TRIG.z;
+  return dx * dx + dz * dz < 16;
+}
+function m12Sec(){ return (performance.now() - mission12.t0) / 1000; }   // pure elapsed (score), no timeout
+function thrillerFight(){ return mission12.stage === 'fighting' || mission12.stage === 'climax'; }
+function m12WaveN(w){ return IS_COARSE ? Math.max(3, Math.ceil(w.n * 0.5)) : w.n; }
+// a cheap zombie ped in the avatar-builder SHAPE (no gun/jetpack baggage - perf) with
+// the arms-out Thriller reach; recolored sickly green. THE BIG ONE reuses makeFoal.
+function makeZombie(){
+  var g = new THREE.Group();
+  var mat = new THREE.MeshStandardMaterial({color: 0x6b8f4e, roughness: 0.95});
+  var pants = new THREE.MeshStandardMaterial({color: 0x3a2f45, roughness: 0.95});
+  var torso = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.15, 0.65), mat);
+  torso.position.y = 1.52; torso.castShadow = true; g.add(torso);
+  var head = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.78, 0.78), mat);
+  head.position.y = 2.5; head.rotation.z = 0.14; g.add(head);   // lolling head
+  var armL = new THREE.Group(); armL.position.set(-0.9, 2.05, 0);
+  var aL = new THREE.Mesh(new THREE.BoxGeometry(0.42, 1.0, 0.5), mat); aL.position.y = -0.5; armL.add(aL);
+  armL.rotation.x = -1.4; g.add(armL);
+  var armR = new THREE.Group(); armR.position.set(0.9, 2.05, 0);
+  var aR = new THREE.Mesh(new THREE.BoxGeometry(0.42, 1.0, 0.5), mat); aR.position.y = -0.5; armR.add(aR);
+  armR.rotation.x = -1.4; g.add(armR);
+  var legL = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.0, 0.5), pants); legL.position.set(-0.35, 0.5, 0); g.add(legL);
+  var legR = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.0, 0.5), pants); legR.position.set(0.35, 0.5, 0); g.add(legR);
+  g.scale.setScalar(0.85);
+  scene.add(g);
+  return {g: g, armL: armL, armR: armR};
+}
+function m12NameSprite(text){
+  var c = document.createElement('canvas'); c.width = 256; c.height = 64;
+  var cx = c.getContext('2d');
+  cx.fillStyle = 'rgba(6,10,14,0.55)'; cx.fillRect(0, 17, 256, 30);
+  cx.fillStyle = '#ffd28a'; cx.font = 'bold 26px ui-monospace, monospace'; cx.textAlign = 'center';
+  cx.fillText(text, 128, 42);
+  var tex = new THREE.CanvasTexture(c);
+  var spr = new THREE.Sprite(new THREE.SpriteMaterial({map: tex, transparent: true, depthTest: false}));
+  spr.scale.set(3.4, 0.85, 1); spr.position.y = 3.4;
+  return spr;
+}
+function makeMayor(){
+  var av = makeAvatar(0x8a3f6d, 0x2a2a3a);   // magenta blazer, deadpan and unbothered
+  av.gun.visible = true;
+  av.g.add(m12NameSprite('THE MAYOR'));
+  return {av: av, g: av.g, x: 0, y: 0, z: 0, fireAt: 0};
+}
+function spawnZombie(isBoss){
+  // west/south arc only (ang in [pi/2, 3pi/2] keeps every spawn at x <= plaza.x = 158,
+  // clear of the City Hall footprint at x[163,189] to the EAST) — npcWalk has no
+  // collision, so an east spawn would shamble straight through the building. R=30-40
+  // also clears the m1 ribbon / m2 door props clustered ~8-12 m west of the plaza.
+  var ang = Math.PI * 0.5 + Math.random() * Math.PI, R = 30 + Math.random() * 10;
+  var x = M12_PLAZA.x + Math.cos(ang) * R, z = M12_PLAZA.z + Math.sin(ang) * R;
+  var y = groundY(x, z);
+  if (isBoss){
+    var f = makeFoal(0x5a7a3a);   // sickly-green zombie thoroughbred - THE BIG ONE
+    f.g.scale.setScalar(1.6);
+    f.g.position.set(x, y + 0.05, z);
+    m12Zombies.push({g: f.g, x: x, y: y, z: z, hp: M12_BOSS_HP, state: 'shamble', boss: true, biteAt: 0});
+  } else {
+    var zm = makeZombie();
+    zm.g.position.set(x, y, z);
+    m12Zombies.push({g: zm.g, armL: zm.armL, armR: zm.armR, x: x, y: y, z: z,
+                     hp: M12_ZHP, state: 'shamble', boss: false, biteAt: 0});
+  }
+}
+function damageZombie(z, dmg, now){
+  if (z.state === 'dying') return;
+  z.hp -= dmg;
+  if (z.hp <= 0){
+    z.state = 'dying'; z.dieT = now;
+    mission12.killed++;
+    puff(z.x, z.y + 1, z.z, M12_RING_COL, 0.3, 1.4, 500, 0.6, 0.7);   // the hallucination disperses (no gore)
+    sndTone(z.boss ? 190 : 520, 0.2, 0, 'triangle', 0.13);
+    if (z.boss){ explosion(z.x, z.y + 1.4, z.z, true); }   // THE BIG ONE goes down big (win fanfare is m12Win's)
+  } else {
+    puff(z.x, z.y + 1.3, z.z, 0xffffff, 0.1, 0.8, 200, 0.4, 0.6);
+  }
+}
+function updateZombie(z, idx, dt, now){
+  if (z.state === 'dying'){
+    var k = (now - z.dieT) / 500;
+    if (k >= 1){ scene.remove(z.g); m12Zombies.splice(idx, 1); return; }
+    z.g.scale.setScalar((z.boss ? 1.6 : 0.85) * (1 - k));   // melt: shrink + sink
+    z.g.position.y = z.y - k * 1.2;
+    return;
+  }
+  // aggro soak: chase whichever of player / mayor is nearer (mayor draws a share)
+  var tx = player.x, tz = player.z;
+  if (m12Mayor){
+    var dpl = Math.hypot(player.x - z.x, player.z - z.z);
+    var dma = Math.hypot(m12Mayor.x - z.x, m12Mayor.z - z.z);
+    if (dma < dpl){ tx = m12Mayor.x; tz = m12Mayor.z; }
+  }
+  npcWalk(z.g, tx, tz, z.boss ? 2.2 : 3.2, dt);
+  z.x = z.g.position.x; z.y = z.g.position.y; z.z = z.g.position.z;
+  if (z.armL){ var sw = Math.sin(now * 0.005 + idx) * 0.2; z.armL.rotation.x = -1.4 + sw; z.armR.rotation.x = -1.4 - sw; }
+  // only the player takes damage - the mayor is unbothered (no hp)
+  var pd = Math.hypot(player.x - z.x, player.z - z.z);
+  if (pd < (z.boss ? 3.2 : 2.2) && now - z.biteAt > 1000){
+    z.biteAt = now;
+    mission12.hp -= (z.boss ? 2 : 1);
+    sndTone(90, 0.16, 0, 'sawtooth', 0.16);
+  }
+}
+function updateMayor(dt, now){
+  if (!m12Mayor) return;
+  var tx = player.x - 3, tz = player.z + 1;
+  if (Math.hypot(tx - m12Mayor.x, tz - m12Mayor.z) > 2.5) npcWalk(m12Mayor.g, tx, tz, 4.2, dt);
+  m12Mayor.x = m12Mayor.g.position.x; m12Mayor.y = m12Mayor.g.position.y; m12Mayor.z = m12Mayor.g.position.z;
+  var near = null, nd = 1e9;
+  for (var i = 0; i < m12Zombies.length; i++){
+    var zz = m12Zombies[i]; if (zz.state === 'dying') continue;
+    var dd = Math.hypot(zz.x - m12Mayor.x, zz.z - m12Mayor.z);
+    if (dd < nd){ nd = dd; near = zz; }
+  }
+  if (near){
+    m12Mayor.g.rotation.y = Math.atan2(near.x - m12Mayor.x, near.z - m12Mayor.z);
+    if (now - m12Mayor.fireAt > 420){   // COSMETIC stream - her shots credit nobody (the player scores)
+      m12Mayor.fireAt = now;
+      var mx = m12Mayor.x, my = m12Mayor.y + 1.5, mz = m12Mayor.z;
+      var ddx = near.x - mx, ddy = (near.y + 1.4) - my, ddz = near.z - mz;
+      var dl = Math.hypot(ddx, ddy, ddz) || 1;
+      spawnDart(mx, my, mz, ddx / dl, ddy / dl, ddz / dl, false);   // mine:false -> never damages
+      sndPew();
+    }
+  }
+}
+function m12SetWeaponVisual(){ player.av.gun.visible = (mission12.phase === 0); }   // MG in hand; rockets/nades use rpgView
+// the machine gun / rockets / grenades, dispatched by phase from fireAction()
+function thrillerFire(){
+  if (mission12.phase === 0){                 // MACHINE GUN: ~10/s dart stream, mission-local
+    var now = performance.now();
+    if (now - m12MgAt < 100 || isFrozen()) return;
+    m12MgAt = now;
+    camera.getWorldDirection(_aim);
+    player.ry = Math.atan2(_aim.x, _aim.z);
+    var sx, sy, sz;
+    if (ads || camFP){ sx = camera.position.x + _aim.x * 6; sy = camera.position.y + _aim.y * 6; sz = camera.position.z + _aim.z * 6; }
+    else { sx = player.x + _aim.x * 1.1; sy = player.y + 1.7 + _aim.y * 1.1; sz = player.z + _aim.z * 1.1; }
+    var jx = (Math.random() - 0.5) * 0.03, jy = (Math.random() - 0.5) * 0.03;   // tight spread
+    spawnDart(sx, sy, sz, _aim.x + jx, _aim.y + jy, _aim.z, true);
+    sndPew();
+  } else if (mission12.phase === 1){          // ROCKET LAUNCHER: reuse the RPG rig
+    fireRocket();
+  } else {                                    // GRENADE LAUNCHER: arced, fused, area
+    thrillerGrenade();
+  }
+}
+function thrillerGrenade(){
+  var now = performance.now();
+  if (now - lastRocket < 900 || isFrozen()) return;
+  lastRocket = now;
+  camera.getWorldDirection(_aim);
+  player.ry = Math.atan2(_aim.x, _aim.z);
+  var ox = player.x + _aim.x * 1.5, oy = player.y + 1.9 + _aim.y * 1.5, oz = player.z + _aim.z * 1.5;
+  var g = new THREE.Group();
+  var body = new THREE.Mesh(rocketBodyGeo, rocketBodyMat); body.rotation.x = Math.PI / 2; g.add(body);
+  var head = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 6), rocketTipMat); head.position.z = 0.42; g.add(head);
+  g.position.set(ox, oy, oz); g.lookAt(ox + _aim.x, oy + _aim.y, oz + _aim.z);
+  scene.add(g);
+  // nade:true -> updateRockets adds gravity + a fuse and detonates it as an area blast
+  rockets.push({g: g, vx: _aim.x * 30, vy: _aim.y * 30 + 6, vz: _aim.z * 30, born: now, puffAt: 0, mine: true, nade: true});
+  sndRocket();
+}
+function m12StartWave(now){
+  var w = M12_WAVES[mission12.wave];
+  mission12.spawned = 0; mission12.killed = 0;
+  mission12.need = m12WaveN(w) + (w.boss ? 1 : 0);
+  mission12.spawnAt = now;
+  if (w.phase > mission12.phase){
+    mission12.phase = w.phase;
+    if (w.phase === 1) caption('THE MAYOR', 'MORE OF THEM. HERE - ROCKET LAUNCHER. I DID NOT QUESTION IT EITHER.', 4200);
+    else if (w.phase === 2) caption('THE MAYOR', 'THE BIG ONE. GRENADES. ARC THEM. TRY NOT TO HIT THE FLOAT.', 4200);
+    mev(81);   // funnel: phase / weapon advance
+  }
+  m12SetWeaponVisual();
+  if (w.boss){ mission12.stage = 'climax'; spawnZombie(true); }
+  else mission12.stage = 'fighting';
+}
+function startMission12(){
+  mission12.stage = 'brief'; mission12.tStage = 0; mission12.capIdx = 0;
+  mission12.phase = 0; mission12.wave = 0; mission12.hp = 5; mission12.ms = 0;
+  mission12.spawned = 0; mission12.killed = 0; mission12.need = 0; mission12.spawnAt = 0; mission12.banterAt = 0;
+  if (m12SavedSimH === null) m12SavedSimH = simH;   // save the real clock ONCE (retry won't re-save the forced value)
+  m12Grade = 0; mission12.goMusic = false;
+  m12MusicPrime();   // begin streaming the track now (brief) so it's ready to play at GO
+  m12Mayor = makeMayor();
+  m12Mayor.g.position.set(player.x - 3, groundY(player.x - 3, player.z + 1), player.z + 1);
+  m12Mayor.x = m12Mayor.g.position.x; m12Mayor.y = m12Mayor.g.position.y; m12Mayor.z = m12Mayor.g.position.z;
+  player.av.gun.visible = true;   // the "machine gun" appears (phase 0) WITHOUT opting into PvP
+  mission12.quick = true;
+  try { mission12.quick = localStorage.getItem('lt_m12_briefed') === '1'; } catch (e){}
+  try { localStorage.setItem('lt_m12_briefed', '1'); } catch (e){}
+  caption('THE MAYOR', mission12.quick
+    ? 'THE GUMMY BEARS AGAIN. FINE. KEEP THEM OFF THE STEPS. GO.'
+    : 'OH, HAPPY THRILLER PARADE. GUMMY BEAR? ... THEY\'RE MEDICINAL. FOR MY KNEE.', 5000);
+  addChatLine('* FINALE', 'THE THRILLER - hold the City Hall steps through the waves', true);
+  mev(80);   // funnel: mission start
+}
+function m12Downed(){
+  mission12.stage = 'fail'; mission12.tStage = 0;
+  player.av.gun.visible = false;
+  mev(83);   // funnel: downed
+  caption('THE MAYOR', 'THEY GOT YOU. IT WAS THE GUMMY BEARS. SHAKE IT OFF, GO AGAIN.', 4600);
+}
+function m12Win(now){
+  mission12.ms = now - mission12.t0;   // FROZEN at the climax kill - pure elapsed, no fold
+  mission12.stage = 'won'; mission12.tStage = 0; mission12.capIdx = 0;
+  player.av.gun.visible = false;
+  m12Grade = 0;   // the reveal: the hallucination SNAPS off (you sobered up) - night still holds
+  mev(84);   // funnel: win (last of the horde down)
+  sndWin(); sndApplause();
+  caption('THE MAYOR', '...OH. THEY WERE THE PARADE DANCERS. THEY\'RE TAKING A BOW. NOBODY WAS HARMED. GOOD ROUTINE, ACTUALLY.', 5600);
+  try {
+    if (!m12Best || mission12.ms < m12Best){
+      m12Best = mission12.ms;
+      localStorage.setItem('lt_m12_best', String(Math.round(mission12.ms)));
+    }
+  } catch (e){}
+  sendScore({t: 'score', ms: Math.round(mission12.ms), m: 13});   // WIRE 13 (board m12) - never 12/11/10
+}
+function m12Cleanup(){
+  mission12.stage = 'idle';
+  for (var i = 0; i < m12Zombies.length; i++) scene.remove(m12Zombies[i].g);
+  m12Zombies.length = 0;
+  if (m12Mayor){ scene.remove(m12Mayor.g); m12Mayor = null; }
+  player.av.gun.visible = player.pvp;   // holster unless opted into PvP separately
+  mission12.phase = 0;
+  // un-force the world: the SINGLE chokepoint every exit path routes through
+  if (m12SavedSimH !== null){ simH = m12SavedSimH; m12SavedSimH = null; }
+  m12Grade = 0;
+  m12MusicStop();
+  if (credits.active) endCredits(true);
+}
+// --- B2: streamed music (HTMLAudioElement; loop; ducks under captions; respects lt_snd) ---
+function m12MusicPrime(){
+  if (m12Music) return;
+  try {
+    m12Music = new Audio('audio/mx_thriller.mp3');   // untracked until commit; .catch guards a 404 in dev
+    m12Music.loop = true; m12Music.preload = 'auto'; m12Music.volume = 0.55;
+  } catch (e){ m12Music = null; }
+}
+function m12MusicPlay(){
+  if (!sndOn || !m12Music) return;
+  try { var pr = m12Music.play(); if (pr && pr.catch) pr.catch(function(){}); } catch (e){}
+}
+function m12MusicStop(){
+  if (!m12Music) return;
+  try { m12Music.pause(); m12Music.currentTime = 0; } catch (e){}
+}
+function m12MusicTick(){
+  if (!m12Music) return;
+  if (!sndOn){ if (!m12Music.paused){ try { m12Music.pause(); } catch (e){} } return; }
+  if (m12Music.paused && mission12.goMusic){ m12MusicPlay(); }   // resume after an un-mute mid-run
+  var ducking = capUntil > performance.now();   // a caption/stinger is on-screen -> pull the bed down
+  m12Music.volume = ducking ? 0.24 : 0.55;
+}
+// --- B4: first-clear credits (parallel to cine; reuses cineApplyPose/cineEase/cineLetterbox) ---
+function m12CredShot(fx, fy, fz, tx, ty, tz, lx, lz, pitch, dur, ease){
+  return {from: {x: fx, y: fy, z: fz, ry: Math.atan2(lx - fx, lz - fz), pitch: pitch},
+          to:   {x: tx, y: ty, z: tz, ry: Math.atan2(lx - tx, lz - tz), pitch: pitch},
+          dur: dur, ease: ease};
+}
+function buildCreditsRoll(){
+  var el = document.createElement('div');
+  el.id = 'credits';
+  el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;top:0;z-index:60;pointer-events:none;' +
+    'font:600 15px ui-monospace,Menlo,Consolas,monospace;color:#ffe9c2;text-align:center;' +
+    'text-shadow:0 2px 6px #000;overflow:hidden';
+  var roll = document.createElement('div');
+  var lines = [
+    'LEXTOWN-01', '', 'THE THRILLER', 'the finale', '', '',
+    'a free, open-source game', 'about downtown Lexington, KY', '', 'MIT LICENSE', 'playlextown.com', '', '',
+    'thank you for staying', 'longer than 48 seconds', '', '',
+    'THE GUMMY BEARS  ...  AS THEMSELVES',
+    'THE ZOMBIES  ...  ACTUALLY THE PARADE DANCERS',
+    'MUSIC: "IT\'S LEXINGTON"  ...  PERFORMED BY THE GUMMY BEARS', '', '',
+    'built in the open', 'fork it, and build the Lexington', 'you want to walk around in', '', '', '', '',
+    'NOBODY WAS HARMED IN LEXINGTON.'
+  ];
+  var html = '';
+  for (var i = 0; i < lines.length; i++) html += '<div style="margin:14px 0;min-height:1px">' + lines[i] + '</div>';
+  roll.innerHTML = html;
+  roll.style.cssText = 'position:absolute;left:0;right:0;top:100%;padding:0 24px';
+  el.appendChild(roll);
+  document.body.appendChild(el);
+  credits.el = el; credits.roll = roll;
+}
+function startCredits(){
+  credits.active = true;
+  credits.priorMode = mode;
+  credits.shot = 0; credits.t = 0;
+  // slow B-roll over the City Hall plaza + Main St (parallel to updatePlayerCam - never flips cine.active)
+  credits.shots = [
+    m12CredShot(100, 54, 120,  244, 54, 120,  M12_CRED_TGT.x, M12_CRED_TGT.z, -0.30, 9.0, 'inout'),  // wide arc across the plaza
+    m12CredShot(215, 30, -42, -130, 34, -42,  40, -18,               -0.12, 10.0, 'linear'),         // glide down Main St
+    m12CredShot(162, 16, 118,  172, 122, 60,  M12_CRED_TGT.x, M12_CRED_TGT.z, -0.55, 8.5, 'out')      // rise + tilt up off City Hall
+  ];
+  var total = 0; for (var i = 0; i < credits.shots.length; i++) total += credits.shots[i].dur;
+  buildCreditsRoll();
+  // scroll the whole roll up past the top over the shot total (CSS transition, no per-frame layout)
+  credits.roll.style.transition = 'transform ' + total.toFixed(1) + 's linear';
+  requestAnimationFrame(function(){
+    if (credits.roll) credits.roll.style.transform = 'translateY(-' + (credits.roll.scrollHeight + vh) + 'px)';
+  });
+  var hudEl = document.getElementById('hud'); if (hudEl) hudEl.style.display = 'none';
+  document.addEventListener('keydown', m12CreditsSkip, true);
+  document.addEventListener('pointerdown', m12CreditsSkip, true);
+  sndApplause();
+}
+function m12CreditsSkip(e){
+  if (!credits.active) return;
+  // swallow the skip input (capture-phase) so it can't also reach the game keydown /
+  // fire handlers — e.g. the same key would otherwise instantly close the score modal
+  // endCredits is about to open
+  if (e){ e.stopPropagation(); if (e.preventDefault) e.preventDefault(); }
+  endCredits(true);
+}
+function endCredits(skipped){
+  if (!credits.active) return;
+  credits.active = false;
+  document.removeEventListener('keydown', m12CreditsSkip, true);
+  document.removeEventListener('pointerdown', m12CreditsSkip, true);
+  if (credits.el && credits.el.parentNode) credits.el.parentNode.removeChild(credits.el);
+  credits.el = null; credits.roll = null;
+  var hudEl = document.getElementById('hud'); if (hudEl) hudEl.style.display = '';
+  // teardown mirrors Photo Mode: nothing to un-toggle (we never left player mode), just release
+  credits.priorMode = null;
+  try { localStorage.setItem('lt_m12_credits', '1'); } catch (e){}
+  m12Credits = true;
+  // hand off to the score modal (the seam's other side)
+  if (mission12.stage === 'credits'){
+    showScores(mission12.ms, 13);   // WIRE 13
+    mission12.stage = 'post'; mission12.tStage = 0;
+  }
+}
+function updateCredits(dt){
+  var s = credits.shots[credits.shot];
+  if (!s){ endCredits(false); return; }
+  credits.t += dt;
+  var f = s.dur > 0 ? Math.min(1, credits.t / s.dur) : 1;
+  var e = cineEase(f, s.ease);
+  var a = s.from, b = s.to;
+  cineApplyPose({
+    x: a.x + (b.x - a.x) * e, y: a.y + (b.y - a.y) * e, z: a.z + (b.z - a.z) * e,
+    ry: a.ry + angDelta(a.ry, b.ry) * e, pitch: a.pitch + (b.pitch - a.pitch) * e
+  });
+  if (f >= 1){
+    credits.shot++; credits.t = 0;
+    if (credits.shot >= credits.shots.length) endCredits(false);
+  }
+}
+function updateMission12(dt){
+  if (m12Ring){
+    m12Ring.visible = allIdle();
+    if (m12Ring.visible) m12Ring.rotation.z += dt * 0.8;
+  }
+  if (mission12.stage === 'idle') return;
+  var now = performance.now();
+  mission12.tStage += dt;
+  var t = mission12.tStage;
+  // --- B1/B3: pin the forced night + hallucination grade EVERY tick (brief -> credits).
+  // simH advanced earlier this frame; we overwrite it before the env/HUD read it. Restore
+  // lives solely in m12Cleanup. m12Grade snaps to 0 at the win reveal (set in m12Win).
+  if (m12SavedSimH !== null){
+    var na = mission12.quick ? 0.3 : 5.0;   // the dusk-slide begins at the "gummy kick-in" beat
+    var hp = (mission12.stage === 'brief') ? Math.max(0, Math.min(1, (t - na) / 1.5)) : 1;
+    simH = m12SavedSimH + (M12_NIGHT_H - m12SavedSimH) * cineEase(hp, 'inout');
+    if (mission12.stage === 'brief') m12Grade = hp;
+    else if (mission12.stage === 'fighting' || mission12.stage === 'climax') m12Grade = 1;
+    // 'won' / 'credits' / 'post' / 'fail': grade stays wherever it was snapped (0 after the reveal)
+  }
+  m12MusicTick();
+  if (mission12.stage === 'brief'){
+    // the clock is HELD through the brief - t0 stamps at GO. The mayor idles at your
+    // side; the gummy-bear beats play. (Hallucination grade ramps in here in Phase B.)
+    updateMayor(dt, now);
+    if (!mission12.quick){
+      if (t > 5.0 && mission12.capIdx === 0){ mission12.capIdx = 1; caption('THE MAYOR', '...HUH. ARE THE PARADE DANCERS SUPPOSED TO LOOK LIKE THAT. THAT IS A LOT OF ZOMBIES. CITY HALL IS NOT DEFENDING ITSELF.', 5200); }
+      if (t > 10.6 && mission12.capIdx === 1){ mission12.capIdx = 2; caption('THE MAYOR', 'THERE\'S A MACHINE GUN. OBVIOUSLY. KEEP THEM OFF THE STEPS THROUGH THE WAVES. I\'LL COVER YOU. I\'M UNBOTHERED.', 5200); }
+    }
+    if (t > (mission12.quick ? 4.6 : 16.4)){
+      mission12.tStage = 0; mission12.capIdx = 0;
+      mission12.t0 = performance.now();
+      caption('DISPATCH', 'CLOCK STARTED. GO - HERE THEY COME. NONE OF THIS IS REAL. PROBABLY.', 4400);
+      mission12.wave = 0;
+      m12StartWave(mission12.t0);
+      mission12.banterAt = mission12.t0 + 9000;
+      mission12.goMusic = true; m12MusicPlay();   // the horror-funk drops on GO (synth bed covers any pre-canplay gap)
+    }
+    return;
+  }
+  if (mission12.stage === 'fighting' || mission12.stage === 'climax'){
+    var w = M12_WAVES[mission12.wave];
+    var wn = m12WaveN(w);
+    var alive = 0;
+    for (var zi = 0; zi < m12Zombies.length; zi++) if (m12Zombies[zi].state !== 'dying') alive++;
+    if (mission12.spawned < wn && alive < M12_ZCAP && now > mission12.spawnAt){
+      spawnZombie(false); mission12.spawned++;
+      mission12.spawnAt = now + 350;   // staggered so the horde flows in
+    }
+    for (var zj = m12Zombies.length - 1; zj >= 0; zj--) updateZombie(m12Zombies[zj], zj, dt, now);
+    updateMayor(dt, now);
+    if (mission12.hp <= 0){ m12Downed(); return; }
+    if (now > mission12.banterAt){
+      mission12.banterAt = now + 9000 + Math.random() * 4000;
+      caption('THE MAYOR', M12_BANTER[Math.floor(Math.random() * M12_BANTER.length)], 3200);
+    }
+    if (mission12.killed >= mission12.need){
+      if (mission12.wave >= M12_WAVES.length - 1){ m12Win(now); return; }
+      var prevPhase = mission12.phase;
+      mission12.wave++;
+      m12StartWave(now);
+      mission12.hp = 5;   // top-up between waves (forgiving core)
+      mev(82);   // funnel: wave clear
+      // on a phase-change wave m12StartWave already fired the weapon-swap caption —
+      // don't clobber it this same frame (caption() replaces, it doesn't queue)
+      if (mission12.phase === prevPhase) caption('THE MAYOR', M12_WAVEDOWN[Math.floor(Math.random() * M12_WAVEDOWN.length)], 3000);
+    }
+    return;
+  }
+  if (mission12.stage === 'won'){
+    updateMayor(dt, now);
+    for (var zk = m12Zombies.length - 1; zk >= 0; zk--) if (m12Zombies[zk].state === 'dying') updateZombie(m12Zombies[zk], zk, dt, now);
+    if (t > 5.6 && mission12.capIdx === 0){
+      mission12.capIdx = 1;
+      // THE SEAM: first clear rolls the GTA-style credits (parallel path; endCredits hands
+      // off to showScores). A repeat clear skips straight to the modal (ms already froze).
+      if (!m12Credits){ mission12.stage = 'credits'; startCredits(); }
+      else { showScores(mission12.ms, 13); mission12.stage = 'post'; mission12.tStage = 0; }   // WIRE 13
+    }
+    return;
+  }
+  if (mission12.stage === 'credits'){ return; }   // updateCredits (camera branch) owns the flow until endCredits -> 'post'
+  if (mission12.stage === 'fail'){ if (t > 5) m12Cleanup(); return; }
+  if (mission12.stage === 'post'){ if (t > 22) m12Cleanup(); }
+}
+
 // ---------- DAILY DASH (mission D): one rotating checkpoint route per day ----
 // A daily challenge with its own global board: five checkpoints drawn
 // deterministically from a twelve-landmark pool by the EST day seed, so every
@@ -6182,7 +6735,8 @@ function allIdle(){
          mission3.stage === 'idle' && mission4.stage === 'idle' &&
          mission5.stage === 'idle' && mission6.stage === 'idle' &&
          mission7.stage === 'idle' && mission8.stage === 'idle' &&
-         mission9.stage === 'idle' && mission10.stage === 'idle' && mission11.stage === 'idle' && missionD.stage === 'idle';
+         mission9.stage === 'idle' && mission10.stage === 'idle' && mission11.stage === 'idle' &&
+         mission12.stage === 'idle' && missionD.stage === 'idle';
 }
 // Everything mission-related on the overlay (start markers, target
 // brackets, edge arrow, timers, zone chips, the fight chopper tag) draws
@@ -6204,6 +6758,7 @@ labels.push({name: '★ MISSION: LOOSE IN THE PADDOCK', x: M8_TRIG.x, y: 9, z: M
 labels.push({name: '★ MISSION: AIR MAIL', x: M9_TRIG.x, y: 9, z: M9_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: HIGH WATER', x: M10_TRIG.x, y: 9, z: M10_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: MOTORCADE', x: M11_TRIG.x, y: 9, z: M11_TRIG.z, col: MISSION_COL, mission: true});
+labels.push({name: '★ FINALE: THE THRILLER', x: M12_TRIG.x, y: 9, z: M12_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ DAILY: THE DASH', x: MD_TRIG.x, y: 9, z: MD_TRIG.z, col: MISSION_COL, mission: true});
 // the gentle shove: when nothing else is going on, point at the next mission
 // bare next-unbeaten mission name, by the same best-gated chain ('' when all
@@ -6220,7 +6775,8 @@ function nextMissionName(){
   if (!m9Best) return 'AIR MAIL';
   if (!m10Best) return 'HIGH WATER';
   if (!m11Best) return 'MOTORCADE';
-  // all eleven beaten: point at today's DAILY DASH until it's run today
+  if (!m12Best) return 'THE THRILLER';
+  // all twelve beaten: point at today's DAILY DASH until it's run today
   if (!dailyBest || dailyBest.day !== dayIndex()) return 'THE DASH';
   return '';
 }
@@ -6237,11 +6793,13 @@ var MISSION_HINT_SUFFIX = {
   'AIR MAIL': 'VIOLET RING DOWNTOWN (JETPACK - HOLD SPACE)',
   'HIGH WATER': 'ORANGE RING AT THE PUBLIC WORKS YARD (DRIVE)',
   'MOTORCADE': 'RED RING AT THE DOWNTOWN HOTEL (DRIVE)',
+  'THE THRILLER': 'MAGENTA RING AT CITY HALL (ON FOOT)',
   'THE DASH': 'GOLD RING AT THE COURTHOUSE — NEW ROUTE DAILY'
 };
 function nextMissionHint(){
   var nm = nextMissionName();
-  if (!nm) return '';
+  // '' == every mission beaten AND today's daily already run: the fully-cleared state
+  if (!nm) return 'ALL MISSIONS CLEARED — CHASE THE LEADERBOARDS';
   // the ribbon cutting is the FIRST mission; everything after it is NEXT
   return (nm === 'THE RIBBON CUTTING' ? 'FIRST MISSION: ' : 'NEXT MISSION: ') +
     nm + ' — ' + MISSION_HINT_SUFFIX[nm];
@@ -6263,6 +6821,7 @@ if (/debug=1/.test(hashStr)){
     m7: function(){ return mission7; },
     m10: function(){ return mission10; },
     m11: function(){ return mission11; },
+    m12: function(){ return mission12; },
     veh: function(){ return !!player.veh; },
     m4horses: function(){ return m4Horses.map(function(h){ return {s: h.state, x: Math.round(h.g.position.x), z: Math.round(h.g.position.z)}; }); },
     photo: function(){ takePhoto(); },
@@ -6359,6 +6918,7 @@ function fireAction(){
   if (player.heli) return;   // water cannon is hold-to-spray, handled in flight
   if (player.ride || player.bus !== null || player.scoot) return;   // no firing from a passenger seat / scooter bars
   if (mission3.stage === 'photo' && !player.veh){ takePhoto(); return; }
+  if (thrillerFight() && !player.veh){ thrillerFire(); return; }   // MG / rockets / grenades by phase
   if (missionFight() && !player.veh){ fireRocket(); return; }
   if (myRpg > 0 && heliActive() && !player.veh){ fireRocket(); return; }
   fireDart();
@@ -6416,6 +6976,10 @@ function tryEnterExit(){
   }
   if (allIdle() && !player.veh && !player.ride && player.bus === null && !player.scoot && !isFrozen() && nearM11Trig()){
     startMission11();
+    return;
+  }
+  if (allIdle() && !player.veh && !player.ride && player.bus === null && !player.scoot && !isFrozen() && nearM12Trig()){
+    startMission12();
     return;
   }
   if (allIdle() && !player.veh && !player.ride && player.bus === null && !player.scoot && !isFrozen() && nearMDTrig()){
@@ -6574,7 +7138,7 @@ function updatePlayer(dt){
 // (third-person elevation can't look up past ~8 degrees)
 function rpgOut(){
   return mode === 'player' && !player.veh && !player.heli &&
-    (missionFight() || (myRpg > 0 && heliActive()));
+    (missionFight() || (myRpg > 0 && heliActive()) || (thrillerFight() && mission12.phase >= 1));
 }
 // first-person RPG viewmodel, parented to the camera (past the near plane)
 scene.add(camera);
@@ -6597,7 +7161,7 @@ var rpgView = new THREE.Group();
 var camR = 13, aimBlend = 0, camFP = false;
 function updatePlayerCam(dt){
   followPause -= dt;
-  var aiming = ads && !player.veh && (player.pvp || player.heli || missionFight() || (myRpg > 0 && heliActive()));
+  var aiming = ads && !player.veh && (player.pvp || player.heli || missionFight() || (myRpg > 0 && heliActive()) || thrillerFight());
   aimBlend += ((aiming ? 1 : 0) - aimBlend) * Math.min(1, dt * 9);
   var tf = aiming ? 42 : 55;
   if (Math.abs(camera.fov - tf) > 0.05){
@@ -7079,7 +7643,7 @@ function eActionLabel(){
   if (allIdle() && !isFrozen() &&
       (nearMissionTrig() || (heliUnlocked && nearDoor()) || nearM3Trig() ||
        nearM4Trig() || nearM5Trig() || nearM6Trig() || nearM7Trig() ||
-       nearM8Trig() || nearM9Trig() || nearM10Trig() || nearM11Trig() || nearMDTrig())) return 'START';
+       nearM8Trig() || nearM9Trig() || nearM10Trig() || nearM11Trig() || nearM12Trig() || nearMDTrig())) return 'START';
   if (!isFrozen() && calmableHorse()) return 'CALM';
   if (canEnterHeli()) return 'FLY';
   if (canBoardBus()) return 'BOARD';
@@ -7439,7 +8003,7 @@ document.addEventListener('mousemove', function(e){
 document.addEventListener('mousedown', function(e){
   if (!ptrLocked || mode !== 'player') return;
   if (e.button === 0){ mouse0Held = true; if (!player.heli) fireAction(); }
-  if (e.button === 2 && (player.pvp || player.heli || missionFight() || (myRpg > 0 && heliActive()))) ads = true;
+  if (e.button === 2 && (player.pvp || player.heli || missionFight() || (myRpg > 0 && heliActive()) || thrillerFight())) ads = true;
 });
 document.addEventListener('mouseup', function(e){
   if (e.button === 0) mouse0Held = false;
@@ -8030,6 +8594,7 @@ function missionTarget(){
     var cp11 = M11_ROUTE[mission11.cur];
     return {x: cp11.x, y: 3, z: cp11.z, label: 'CHECKPOINT ' + (mission11.cur + 1) + '/' + M11_ROUTE.length};
   }
+  if (thrillerFight()) return {x: M12_PLAZA.x, y: 3, z: M12_PLAZA.z, label: 'HOLD THE PLAZA'};
   if (mission7.stage === 'tag'){
     var tent = m7NextTent();
     if (tent) return {x: tent.x, y: 3, z: tent.z,
@@ -8150,6 +8715,8 @@ function currentObjective(){
     return {x: M10_TRIG.x, y: 9, z: M10_TRIG.z, label: 'HIGH WATER'};
   if (typeof m11Best !== 'undefined' && !m11Best && typeof M11_TRIG !== 'undefined')
     return {x: M11_TRIG.x, y: 9, z: M11_TRIG.z, label: 'MOTORCADE'};
+  if (typeof m12Best !== 'undefined' && !m12Best && typeof M12_TRIG !== 'undefined')
+    return {x: M12_TRIG.x, y: 9, z: M12_TRIG.z, label: 'THE THRILLER'};
   if (typeof missionD !== 'undefined' && (!dailyBest || dailyBest.day !== dayIndex()))
     return {x: MD_TRIG.x, y: 9, z: MD_TRIG.z, label: 'THE DASH'};
   return null;
@@ -8200,6 +8767,7 @@ var camPos = new THREE.Vector3();
 function drawOverlay(){
   ov.clearRect(0, 0, vw, vh);
   if (CINE){ if (cine.bars) cineLetterbox(); return; }   // trailer: nothing but the 3D world (+ optional bars)
+  if (credits.active){ cineLetterbox(); return; }   // THE THRILLER credits: bars only, the DOM roll rides on top
   if (photo.active){   // Photo Mode: bars + optional tags, no HUD chrome (mirrors the CINE strip)
     if (photo.bars) cineLetterbox();
     if (photo.tags) drawPhotoTags();
@@ -8222,7 +8790,7 @@ function drawOverlay(){
     ov.fill();
   }
   if (mode === 'player' && !player.veh &&
-      (player.pvp || player.heli || missionFight() || (myRpg > 0 && heliActive()) || camFP)){   // crosshair
+      (player.pvp || player.heli || missionFight() || (myRpg > 0 && heliActive()) || thrillerFight() || camFP)){   // crosshair
     ov.fillStyle = 'rgba(255,157,90,0.95)';
     ov.fillRect(vw / 2 - 1.5, vh / 2 - 1.5, 3, 3);
     if (ads){
@@ -8660,6 +9228,7 @@ function frameStep(now){
   updateMission9(dt);
   updateMission10(dt);
   updateMission11(dt);
+  updateMission12(dt);
   updateMissionD(dt);
   updateRouteRibbon(dt);
   updateRockets(dt);
@@ -8674,6 +9243,8 @@ function frameStep(now){
   eLabelTick(dt);
   if (cine.active){
     updateCineCam(dt);   // scripted trailer camera takes over while running
+  } else if (credits.active){
+    updateCredits(dt);   // THE THRILLER finale credits — parallel scripted camera (never flips cine.active)
   } else if (mode === 'drone'){
     applyWASD(dt);
     updateRig(dt);
@@ -8702,9 +9273,17 @@ function frameStep(now){
     env.sun *= 1 - (1 - wxSun) * wxW;
     env.hemi += (0.5 - env.hemi) * (0.35 * wxGrey * wxW);
   }
+  if (m12Grade > 0.01){   // THE THRILLER: the gummy-bear hallucination wash (violet-magenta)
+    var gw = m12Grade;
+    if (!IS_COARSE) gw *= 0.92 + 0.08 * Math.sin(now * 0.005);   // faint breathing wobble, desktop only (no shader, no FOV touch)
+    skyC.lerp(_m12Col, 0.7 * gw);
+    fogC.lerp(_m12Col, 0.85 * gw);
+    env.sun *= 1 - 0.35 * gw;
+    env.hemi = env.hemi * (1 - 0.4 * gw) + 0.18 * gw;
+  }
   renderer.setClearColor(skyC);
   scene.fog.color.copy(fogC);
-  scene.fog.density = Math.min(0.003, 0.0007 + env.night * 0.00045 + m2Sky * 0.0012 + m10Sky * 0.0012 + wxFog * 0.0016);
+  scene.fog.density = Math.min(0.003, 0.0007 + env.night * 0.00045 + m2Sky * 0.0012 + m10Sky * 0.0012 + m12Grade * 0.0011 + wxFog * 0.0016);
   hemi.color.copy(skyC); hemi.intensity = env.hemi;
   var sa = (simH - 6) / 12 * Math.PI;
   sun.position.set(-Math.cos(sa) * 600, Math.max(30, Math.sin(sa) * 500), 220);
@@ -8728,6 +9307,7 @@ function frameStep(now){
   els.clock.childNodes[0].nodeValue = fmtClock(simH);
   els.clocksub.textContent = paused ? 'PAUSED · ' + dayName(simH)
     : 'DAY CYCLE ' + speed + '× · ' + dayName(simH);
+  if (m12SavedSimH !== null) els.clocksub.textContent = '· THRILLER NIGHT ·';   // clock is pinned during the hallucination
   els.elapsed.textContent = fmtElapsed((now - t0) / 1000);
   els.fuel.textContent = Math.round(player.fuel);
   if (els.wx){ var ww = wxCurState.toUpperCase(); if (ww !== _wxWord){ _wxWord = ww; els.wx.textContent = ww; } }
@@ -8738,6 +9318,7 @@ function frameStep(now){
     else if (player.ride) hint = 'E — HOP OUT · R — RADIO · C — VIEW';
     else if (player.scoot) hint = 'E — HOP OFF · W/S THROTTLE · A/D STEER · ' + Math.round(Math.abs(player.scoot.spd) * 3.6) + ' KM/H';
     else if (missionFight()) hint = 'SHOOT DOWN THE CHOPPER · F/CLICK — FIRE · RMB — AIM · CHOPPER HP ' + mh.hp + '/3';
+    else if (thrillerFight()) hint = 'THE THRILLER · WAVE ' + (mission12.wave + 1) + '/' + M12_WAVES.length + ' · ' + ['MACHINE GUN', 'ROCKETS', 'GRENADES'][mission12.phase] + ' · HP ' + Math.max(0, mission12.hp) + ' · ' + Math.max(0, mission12.need - mission12.killed) + ' LEFT · F/CLICK — FIRE';
     else if (player.heli) hint = 'W/S A/D FLY · SPACE UP · SHIFT DOWN · HOLD F/CLICK — WATER CANNON · E — EXIT · HP ' + heli.hp + '/3';
     else if (player.veh && player.veh.plow) hint = 'BLADE: ' + (bladeDown ? 'DOWN' : 'UP') + ' · SPACE — RAISE/LOWER · CLEAR THE SNOWY STREETS · E — EXIT';
     else if (mission5.stage === 'driving'){
@@ -8774,6 +9355,7 @@ function frameStep(now){
     else if (allIdle() && nearM9Trig()) hint = 'E — START MISSION: AIR MAIL';
     else if (allIdle() && nearM10Trig()) hint = 'E — START MISSION: HIGH WATER';
     else if (allIdle() && nearM11Trig()) hint = 'E — START MISSION: MOTORCADE';
+    else if (allIdle() && nearM12Trig()) hint = 'E — START FINALE: THE THRILLER';
     else if (allIdle() && nearMDTrig()) hint = 'E — START THE DAILY DASH';
     else if (canEnterHeli()) hint = 'E — FLY THE NEWS CHOPPER';
     else if (!heliUnlocked && canEnterHeliBase()) hint = 'LOCKED — BEAT "THE RIBBON CUTTING" AT CITY HALL TO FLY';
