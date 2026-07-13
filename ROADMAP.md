@@ -64,6 +64,31 @@ reported in telemetry) · Android **haptics** on freezes, checkpoints, and
 wins · a **touch-first tutorial** and a one-shot landscape tip. Spec in
 `PHASE5-SPEC.md`.
 
+**Follow-ons since Phase 5:** every score-attack mission (m5-m9 + the daily)
+got a real briefing — the clock now HOLDS through an in-character setup and
+"CLOCK STARTED" stamps the timer, with quick one-beat re-briefs for returning
+players · **Mission 10: HIGH WATER** (ripped from the active July 2026 flood
+watch: public works straps the sandbags on your back — grab any car and hit
+five hazard-orange low spots before the water crests; hydroplaning costs 15
+seconds a splash), with its own rain-grey mission sky, an `m10` board (wire
+`m:11` — `m:10` stays the daily), and six new smoke checks (suite at 68).
+Spec in `PHASE2-SPEC.md` §F8 · **Mission 11: MOTORCADE** (the week a sitting
+VP flew in to golf: lead car of an unnamed VIP's motorcade, six red
+drive-through checkpoints hotel-to-Idle-Hour against a 180s tee time — with
+a **composure meter**: hard knocks rattle the passenger, empty it and he
+makes you pull over while the clock runs; score is pure elapsed, `m11`
+board on wire `m:12`, suite at 74). Spec in `PHASE2-SPEC.md` §F9 ·
+**Mission 12: THE THRILLER — the finale** (the real October Main Street
+Thriller parade, the mayor's 'medicinal' gummy bears, and a hallucinated
+zombie horde at City Hall: wave survival co-op with the never-down CPU
+mayor, weapons auto-escalating machine gun → rockets → grenades up to THE
+BIG ONE, the whole thing at forced **night** under a hallucination color
+grade, scored to an original ElevenLabs horror-funk track with Lexington
+parody lyrics — "IT'S LEXINGTON" — and capped by a first-clear, skippable,
+untimed **GTA-style credits scene**. The reveal: the zombies were the
+parade dancers all along; nobody was harmed. `m12` board on wire `m:13`,
+suite at 80). Spec in `PHASE2-SPEC.md` §F10.
+
 ---
 
 ## NEXT — depth and reasons to return

@@ -30,8 +30,11 @@ Ground rules that bind every feature (from CLAUDE.md, do not violate):
 | F4 Private Worlds / Rooms | `server.js` (room-scoped broadcast + per-room heli), `web/app.js`, `web/index.html`, `web/privacy.html`, `README.md` | Server dev + client dev (paired) |
 | F6 Mission 8: LOOSE IN THE PADDOCK | `web/app.js` (mission island), `server.js` (board), `web/index.html`, `README.md` | Mission dev |
 | F7 Mission 9: AIR MAIL | `web/app.js` (mission island), `server.js` (board), `web/index.html`, `README.md` | Mission dev |
+| F8 Mission 10: HIGH WATER | `web/app.js` (mission island), `server.js` (board), `web/index.html`, `README.md` | Mission dev |
+| F9 Mission 11: MOTORCADE | `web/app.js` (mission island), `server.js` (board), `web/index.html`, `README.md` | Mission dev |
+| F10 Mission 12: THE FINALE (THRILLER) | `web/app.js` (mission island + ally bot + credits scene), `server.js` (board), `web/index.html`, `README.md` | Mission dev (heaviest — combat + cinematic) |
 
-*(F5 is HORSEPOWER tuning — data-driven, tracked as a build task, no spec section here. F8+ appended below.)*
+*(F5 is HORSEPOWER tuning — data-driven, tracked as a build task, no spec section here. F11+ appended below.)*
 
 ---
 
@@ -1705,3 +1708,1114 @@ Precondition: m1–m8 beaten, every mission idle (fast-forward the eight bests v
   from data.
 - **Statement order** — `M9_TRIG`, the waypoint arrays, and `mission9` declared
   before the label push and the ring-builder.
+
+---
+
+## F8 — Mission 10: "HIGH WATER" (flood sandbag run)
+
+**Why this mission.** It's ripped straight from *this week's* Lexington headlines,
+which is the whole LEXTOWN-mission-10 brief — and unlike a one-off gag it plugs
+into a system we're already building. It's a driving delivery run (reuses THE
+MELT's proven loop) with a civic-comedy voice that matches m5–m9, and it has
+direct synergy with the F3 weather system: a flood mission that darkens the sky
+and (once F3 ships) runs in real rain is the kind of cross-feature moment that
+makes the world feel authored.
+
+**Ripped from the headlines (real, verified via the Lexington Times feed,
+2026-07-12).** A **Flood Watch covered central/eastern Kentucky through Saturday**
+(WUKY, 2026-07-10) — i.e. right now. Three weeks earlier, **2.5–3 inches fell in
+under 90 minutes on June 22**, triggering multiple water rescues and road
+closures, and Mayor Gorton urged residents to **report flood damage to 311**
+(LFUCG / Mayor's Office, 2026-06-23). **Wolf Run** — the creek that historically
+floods out **Kilrush Drive** — and **Tates Creek Road** (a bridge closed by flood
+damage) are the real low-water names. HIGH WATER puts the player in the
+public-works sandbag truck against the rising creek. *(Runner-up headline, noted
+for the lead: the VP's golf visit gridlocking the city, 2026-07-12 — the funniest
+"today" hook, but naming a sitting official reads partisan for a real news org's
+game, so I chose the non-partisan flood story. Easy to swap if you'd rather.)*
+
+### The HORSEPOWER lesson, applied
+- **Target first-timer completion: 90–150 s.** In-mission budget (the water crests
+  = fail deadline): **~180 s**.
+- **Restart-friendly:** start ring beside the sandbag depot, downtown-reachable;
+  a fail is an instant `E`-to-retry, no walk-back.
+- **Failure is legible:** a clear "the water won" caption; the truck and drop rings
+  reset on retry.
+- **Forgiving core:** it's a *driving* delivery run — the skill is route + speed
+  management through standing water, not a punishing precision window.
+- **Ship the funnel telemetry** (start / each drop / hydroplane / win / fail) from
+  day one, like F5–F7.
+
+### The board (server plumbing) — FOUR names, do NOT conflate them
+This is a ratified contract (locked with backend-dev + test-engineer +
+frontend-dev-1). HIGH WATER carries **four identifiers**; the **wire number `11` is
+what the client passes almost everywhere**, and "10" appears in exactly one of them:
+- **Wire number = `11`.** Used in BOTH the score send `{t:'score', ms, m: 11}`
+  **and** the client `showScores(mission10.ms, 11)` call — `showScores`'s second arg
+  is the *wire number*, not a DOM id. (Wire `10` is already DAILY DASH → board `'d'`;
+  passing `10` to `showScores` would caption a HIGH WATER win as a Daily Dash time
+  with the daily best.)
+- **Server board key = `'m10'`.** The score-map entry is `11: 'm10'`; the key
+  everywhere server-side (`BOARDS`, `scores`, `WIN`, `topScores`, announce) is
+  `'m10'`.
+- **DOM list id = `scoreList10`** — the **only** place the number 10 appears in the
+  scoring path. The leaderboard `<ol>` is `#scoreList10`, filled by `renderScores`
+  via `fill('scoreList10', m.m10)`.
+- **localStorage = `lt_m10_best`** (and the `m10Best` var).
+
+So: **wire 11 (score send + `showScores` arg) → server key `m10` → DOM
+`scoreList10` → storage `lt_m10_best`.** The client verb/best switch keys on
+**`board === 11`** (`'LOW SPOTS HELD IN '`, `m10Best`) — never `10`.
+- **Score = elapsed time** to bag every low spot (lower is better).
+- **WIN plausibility window: `m10: [25000, 300000]` ms** — approved as-is. The 25 s
+  floor now assumes a **pre-positioned** player, because the clock starts at the GO
+  beat (see the brief pattern below), not at ring-touch; 5 min ceiling sits well
+  above the 180 s budget. Anti-cheat plausibility, distinct from the in-mission
+  budget.
+
+### User story
+As a player who's cleared the other jobs, the sky goes slate-grey, my marker points
+to an orange ring by the public-works yard, and a frazzled dispatcher hands me a
+sandbag truck — I race the rising creek to bag the low spots before Wolf Run takes
+Kilrush Drive, easing through the puddles so I don't spin out.
+
+### Premise & personality
+**HIGH WATER**: a flash-flood warning is up (the real July flood watch), Wolf Run is
+coming up fast, and Public Works needs the low spots sandbagged before the water
+crests. Civic-comedy voice matching m5–m9; captions via `capIdx` + `#caption` (no
+new audio, ASCII).
+
+**Intro follows the current brief pattern (landed on main, 3011d6c) — NOT the old
+`lt_m10_coached` flag.** On `E`, the mission enters **`stage:'brief'` with the clock
+HELD**; the timer's `t0` stamps only at the final DISPATCH **`CLOCK STARTED`** beat
+(GO), so the player is pre-positioned when timing begins. First-ever play gets the
+full multi-beat brief (flavor → coaching → GO); repeat plays get **one quick beat
+(~4.6 s)** then GO. Gated by `localStorage lt_m10_briefed` (set after the first full
+brief). The coaching + hydroplane warning fold **into** the full first-time brief:
+- **Full brief, first-ever play (multi-beat):**
+  1. *(flavor)* `PUBLIC WORKS - THREE INCHES IN NINETY MINUTES AND WOLF RUN IS
+     COMING UP FAST. LOAD THE SANDBAG TRUCK AND BAG THE LOW SPOTS BEFORE IT CRESTS.`
+  2. *(coaching, folded in)* `DRIVE INTO EACH ORANGE RING TO DROP THE BAGS - AND
+     EASE THROUGH STANDING WATER, HIT IT TOO FAST AND YOU HYDROPLANE.`
+  3. *(GO — DISPATCH `CLOCK STARTED`, stamps `t0`)* `GO - IT IS ALREADY RISING.`
+- **Quick brief, repeat play (~4.6 s, one beat then GO):** `PUBLIC WORKS - BAG THE
+  LOW SPOTS BEFORE WOLF RUN CRESTS. GO.`
+- **Progress:** `TWO SPOTS BAGGED - KEEP MOVING, IT IS STILL RISING.`
+- **Hydroplane nudge (in-action, contextual — stays as its own caption):** `WHOA -
+  THAT ONE COST YOU. EASE OFF IN THE WATER.`
+- **Win:** `EVERY LOW SPOT HELD. TELL THE MAYOR - AND TELL EVERYONE ELSE TO REPORT
+  DAMAGE TO 311.`
+- **Fail:** `WOLF RUN JUST TOOK KILRUSH. TOO SLOW - THE WATER WON.`
+- **Radio flavor (optional, needs an audio regen — not required to ship):** a NEWS
+  630 `news_wx` line — `Flood watch is up through the weekend; if you do not have to
+  be out in this, do not be.` (mirrors the real WUKY headline; ships whenever audio
+  is next baked).
+
+### Mechanic & structure
+Copy **THE MELT (m6)** — it's the driving-delivery mission with slosh/crash
+penalties, the closest analog:
+- **Drive the sandbag truck** (steal-or-provided at the depot by the start ring),
+  same car system as every driving mission.
+- **~5 drop rings at low-lying spots**, only the current one lit; the next lights on
+  arrival (m5/m6/m8 pattern). **Drive into the lit ring to drop the sandbags** (a
+  brief hold like m6's scoop stops). Name the spots after the real flood-prone
+  Lexington locations — **Wolf Run, Kilrush Drive, a downtown underpass, Tates Creek
+  low-water crossing, the Vine St dip** — placed on drivable low ground on the
+  current map (verify in playtest).
+- **The rising water is the ~180 s countdown.** Optional cheap visual: a translucent
+  blue-grey water plane creeps up at each un-bagged spot over the run (reuse the
+  translucent-plane pattern); the core is the timer.
+- **Hydroplane penalty:** standing-water zones (puddle decals near the low spots);
+  driving through them too fast spins/skids the truck + costs time — the same
+  crash/slosh-penalty logic as THE MELT. Managing speed through water **is** the
+  skill.
+- **On foot the rings don't count** (reinforces "this is a driving mission," like
+  DEADLINE).
+
+### Weather synergy
+- **The mission darkens the sky to storm** by reusing the existing **m2Sky-style
+  overcast blend** the snow emergency already runs (app.js:6233–6241) — rain-grey,
+  not snow-white — so HIGH WATER *looks* like a flood even if F3 (Weather) hasn't
+  shipped. Cheap: it's the storm-sky mechanic that already exists, minus the snow.
+- **If F3 is live**, pin its `RAIN` state on for the mission's duration so ambient
+  rain reinforces the flood — the cross-feature payoff. (F3's mission-precedence
+  rule already yields to mission storms; HIGH WATER simply *is* a rain mission.)
+
+### Discoverability
+- **Gold ★ label** `★ MISSION: HIGH WATER` at `M10_TRIG`.
+- **`nextMissionHint()`:** append `if (!m10Best) return 'NEXT MISSION: HIGH WATER -
+  ORANGE RING AT THE PUBLIC WORKS YARD (DRIVE)';` after the m9 branch.
+- **F1 waypoint** retargets to `M10_TRIG` once m9 is beaten.
+- **Ring color: `0xff6a00` (vivid hazard orange)** — the flood-warning color, and
+  deliberately distinct from m8's muted amber `0xc8792e` (as well as teal m3 / green
+  m4 / pink m6 / blue m7 / violet m9 / gold m1,m5). Start ring + drop rings both use
+  `0xff6a00`.
+- **Start gate includes `!player.ride`:** `allIdle() && !player.veh && !player.ride
+  && !isFrozen() && nearM10Trig()`. Start on foot at the depot, then drive.
+
+### Build checklist (follow MODDING.md §"(c) A new mission", lines 286–341)
+Same recipe; mission-10 specifics:
+1. **Island layout (statement order!):** declare `M10_TRIG`, `M10_SPOTS` (the
+   ordered drop list), `M10_BUDGET`, `m10Best` (from `lt_m10_best`), and `mission10`
+   (`{stage:'idle', tStage, t0, ms, cur:0, capIdx:0}` — `stage` runs
+   `idle→brief→hauling→…`) as top-level `var`s **before** the label push and the
+   ring-builder. Read `lt_m10_briefed` at declare time for the brief pattern.
+2. **Join `allIdle()`** (app.js:4339): add `&& mission10.stage === 'idle'`.
+3. **Gold ★ label** (above).
+4. **`nextMissionHint()` branch** (above).
+5. **`E` branch** with the `!player.ride` gate + a `nearM10Trig()` helper.
+6. **Per-frame `updateMission10(dt)`:** `idle → brief → hauling → won → post → idle`
+   / `hauling → fail → idle`. The **`brief`** stage holds the clock and plays the
+   brief beats (full first-ever, one quick ~4.6 s beat on repeat, gated by
+   `lt_m10_briefed`); **stamp `t0` only at the `CLOCK STARTED` GO beat**, then enter
+   `hauling`. Light only the current drop; advance `cur` on an in-car ring drop; win
+   when `cur` passes the last spot; countdown off `performance.now()` + `M10_BUDGET`
+   (measured from GO); HUD hint `HIGH WATER · BAGGED n/5 · <s>s LEFT`; the hydroplane
+   check reuses THE MELT's slosh-penalty logic. Reuse the m2Sky overcast blend for
+   the sky. Emit funnel telemetry (`mev`) in the **50–59** enum range (m8=20–29,
+   m9=30–39, daily=40–43 are reserved per the server comment).
+7. **Leaderboard UI:** on win call **`showScores(mission10.ms, 11)`** — the second
+   arg is the WIRE number (11), NOT the DOM id; passing `10` captions the win as a
+   Daily Dash time. Add the **`board === 11`** verb (`LOW SPOTS HELD IN `) and
+   **`board === 11 ? m10Best`** to the score modal. Add the `#scoreList10` `<ol>`
+   (+ `<h2>` + CSS) to `web/index.html` (frontend-dev-2's block), and give
+   `renderScores` a `fill('scoreList10', m.m10)` plus `'scoreList10'` in the
+   fetching-loop id array. (`scoreList10` is the only "10"; the `showScores` arg,
+   verb key, and best key are all `11`.)
+8. **Server board (server.js) — add ONLY `m10`** (m1–m9 already exist on main as of
+   3011d6c; do NOT re-add them). Six sites, all keyed `'m10'`: `BOARDS` (:172) → add
+   `'m10'`; the `scores` literal (:178) → `m10: []`; `topScores()` (:208) → include
+   `m10`; the board/score map (:720) → **`11: 'm10'`** (wire 11, because wire 10 is
+   DAILY DASH); the per-board `WIN` object (:724–725) → `m10: [25000, 300000]`; the
+   announce map (:745–746) → `m10: `${n} held back the flood in ${sec}s``.
+9. **README + tutorial:** HIGH WATER blurb + `#tut` grid line.
+
+> **The wire-number trap.** Send `{t:'score', ms, m: 11}` — the **number 11**, not
+> `10` and not `'m10'`. Wire 10 is already DAILY DASH (board `'d'`); the server maps
+> `{…, 11:'m10'}[msg.m] || 'm1'`, so a wrong wire number silently lands your times on
+> the ribbon (m1) or daily board.
+
+### Multiplayer behavior
+- **Entirely client-side**, like every mission. Drop rings, the water, and the
+  countdown are local; only the final `{t:'score', ms, m:11}` (wire 11 → board
+  `m10`) touches the server → validated against `WIN.m10` → `scores.json` →
+  `{t:'scores'}` + announce.
+- Others see you driving the truck via the existing `m:2` remote-car render; they
+  never see your rings or mission. **Offline/bots-only:** playable, submit no-ops
+  offline, local best saves. **Private rooms (F4):** plays; score doesn't rank in a
+  non-PUBLIC room; `lt_m10_best` still saves.
+
+### Edge cases
+- **Exits the truck mid-run:** timer keeps running (don't pause on foot); re-enter
+  any vehicle and continue — on-foot ring passes don't bag.
+- **Hydroplanes into a wall / other car:** the slosh penalty + normal collision
+  apply; no soft-lock; keep driving.
+- **Reaches a spot on foot:** nothing bags; only an in-car drop at the lit ring
+  counts.
+- **Weather already storming (F3 live):** HIGH WATER coexists — the mission owns the
+  sky for its duration (F3 yields to mission storms), so no double-blend fight.
+- **Concurrent-mission guard:** `allIdle()` must include `mission10`.
+- **Retry:** `E` at the ring re-inits (truck + rings + clock + sky), standing at the
+  depot — no walk-back.
+
+### Non-goals (F8)
+- **No new mechanic** — it's a driving delivery run over existing roads; the
+  hydroplane is THE MELT's penalty logic reused.
+- **No real rescue/injury depiction** — it's civic slapstick (sandbags vs. a rising
+  creek), not disaster tragedy; keep the tone light, like THE MELT.
+- **No partisan/real-person content** — the flood is the antagonist; no named
+  officials beyond the existing light "the Mayor" flavor.
+- **No new baked audio** to ship (captions carry it; the NEWS 630 line is optional).
+- **No map growth** — drop spots sit on existing drivable low ground.
+- **No co-op** — solo against the clock and the board.
+
+### Acceptance checklist — F8 Mission 10: HIGH WATER
+
+Precondition: m1–m9 beaten, every mission idle (fast-forward the nine bests, leave
+`lt_m10_best` cleared, reload). Standing gate first (`node --check` both files,
+`npm test`). Two tabs for the announce check.
+
+- [ ] **Waypoint + storm sky.** With m9 beaten and m10 not, F1's marker points to
+      `M10_TRIG`; the ★ HIGH WATER label renders at the orange ring. On start, the
+      sky darkens to storm-grey (m2Sky-style blend).
+- [ ] **Start gate is `allIdle` + on-foot + not-riding.** `E` at the depot ring
+      starts it only when every mission is idle and you're not in/​riding a car; the
+      Public Works brief fires and the ~180 s countdown begins.
+- [ ] **In-truck drops bank; on-foot doesn't.** Driving into a lit orange ring drops
+      the sandbags and lights the next; walking through it does nothing. HUD shows
+      `BAGGED n/5`.
+- [ ] **Hydroplane penalty.** Hitting a standing-water zone at speed spins/skids the
+      truck and costs time (THE MELT slosh logic); easing through is clean.
+- [ ] **Brief pattern (held clock).** First-ever play shows the full multi-beat
+      brief (flavor → coaching → GO) with the clock HELD; `t0` stamps only at the
+      `CLOCK STARTED` GO beat; `lt_m10_briefed` is set. A repeat play shows one quick
+      ~4.6 s beat then GO. The old `lt_m10_coached` flag is NOT used.
+- [ ] **Win → board + announce.** Bag all five under 180 s → win; scores modal opens
+      on the **m10** board (`#scoreList10`, `LOW SPOTS HELD IN …`) with your time,
+      other tab's chat shows `* MISSION  <name> held back the flood in <t>s`. The
+      client sends **wire `m:11`** → verify the time lands on the **m10** board (not
+      the ribbon or daily board).
+- [ ] **Local best persists.** `lt_m10_best` set; `m10Best` gates the waypoint chain.
+- [ ] **Timer expiry = clean fail + instant retry.** Clock runs out → `WOLF RUN JUST
+      TOOK KILRUSH` fail caption, reset to `idle`, no submit; `E` restarts at the
+      depot.
+- [ ] **Concurrent-mission exclusion.** During the run, `E` at other rings does
+      nothing; `allIdle()` includes `mission10`.
+- [ ] **Server plumbing complete.** `m10` added (only — m1–m9 already present) to
+      `BOARDS`, the `scores` literal, `topScores()`, the score map (`11:'m10'`), the
+      `WIN` object (`[25000, 300000]`), and the announce map — a win persists under
+      `m10` and survives a restart.
+- [ ] **Surfaces updated together.** README mission list + `#tut` grid line +
+      `#scoreList10` block all present.
+- [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
+      pass and `npm test` is all green.
+
+### Notes for the architect / mission dev (F8)
+- **Copy THE MELT (m6) end-to-end** — it's the driving delivery mission with the
+  slosh/crash penalty you're reusing for the hydroplane; swap ice-cream stops for
+  sandbag drops and the melt-timer for the water-crest clock.
+- **Reuse the m2Sky overcast blend** for the storm sky (app.js:6233–6241) — rain-grey
+  tint, no snow particles; if F3 Weather is live, pin its `RAIN` state for the
+  duration instead.
+- **Server: add ONLY `m10`** — m1–m9 already exist on main (3011d6c). Six sites, all
+  keyed `'m10'`: `BOARDS` (:172), the `scores` literal (:178), `topScores()` (:208),
+  the score map (:720) as **`11:'m10'`** (wire 11 — 10 is DAILY DASH), the `WIN`
+  object (:724–725), the announce map (:745–746). Do not re-add m8/m9.
+- **Keep the three identifiers straight: wire `11` → board `m10` → DOM
+  `scoreList10`.** The client sends `m:11`; everything server-side keys `'m10'`; the
+  leaderboard list id is `scoreList10`.
+- **Ship funnel telemetry** — `mev` enum in the **50–59** range
+  (start/per-drop/hydroplane/win/fail).
+- **Statement order** — `M10_TRIG`, `M10_SPOTS`, `mission10` declared before the
+  label push and the ring-builder.
+- **Real-place naming is the flavor** — label the drop spots after actual
+  flood-prone Lexington locations (Wolf Run, Kilrush, Tates Creek); it's what makes
+  a "ripped from the headlines" mission land.
+
+---
+
+## F9 — Mission 11: "MOTORCADE" (VIP golf-visit escort run)
+
+**Why this mission.** It's the runner-up headline from HIGH WATER's brief (§F8),
+promoted: the VP's golf visit gridlocking Lexington on **2026-07-12** was the
+funniest "today" hook on the board. The reason I passed on it for mission 10 —
+"naming a sitting official reads partisan for a real news org's game" — is
+**solved by the house convention**: the VIP is **unnamed** (the same move the game
+already makes with `THE MAYOR` / `GRAFT`). With no name and no party, the comedy is
+pure **logistics slapstick** — a self-important convoy that has to blow through
+downtown *fast* without spilling a pampered passenger's coffee — not politics. It
+reuses the two most-proven mission loops in the game (DEADLINE's checkpoint spine
++ THE MELT's rough-driving penalty), so it's cheap to build and lands in the same
+civic-comedy voice as m5–m10.
+
+**Ripped from the headlines (real, verified via the Lexington Times feed,
+2026-07-12).** The 2026-07-12 r/Lexington roundup confirmed **the Vice President's
+golf visit** as one of the day's top stories (feed slug
+`lex-reddit-roundup-2026-07-12`). A VIP visit means a **motorcade** — rolling road
+closures, a black-SUV convoy, and the whole city waiting at the light while the
+lead car runs an out-of-town guest to his tee time. MOTORCADE puts the player in
+the **lead car**, racing the tee-time clock out to a country club. The player
+never sees a name or a party — just a frazzled advance staffer barking on the
+radio and a passenger who complains about every pothole. *(Non-partisan by
+construction: the antagonist is the clock and the passenger's mood, exactly like
+the flood was HIGH WATER's antagonist.)*
+
+### The HORSEPOWER lesson, applied
+- **Target first-timer completion: 90–150 s.** In-mission budget (the tee time =
+  fail deadline): **~180 s**.
+- **Restart-friendly:** start ring beside a downtown hotel, an SUV provided at the
+  ring; a fail is an instant `E`-to-retry, no walk-back.
+- **Failure is legible:** a clear "the VIP missed his tee time" caption; the SUV,
+  checkpoints, and composure meter reset on retry.
+- **Forgiving core:** it's a *driving* checkpoint run — the skill is route + speed
+  vs. smoothness, and the one new twist (composure) is a **time cost, not a second
+  instant-fail**, so a rough driver still finishes, just slower. The clock is the
+  only true fail.
+- **Ship the funnel telemetry** (start / each checkpoint / composure-empty pull-over
+  / win / fail) from day one, like F5–F8.
+
+### The board (server plumbing) — FOUR names, do NOT conflate them
+Same ratified discipline as HIGH WATER (§F8); MOTORCADE is the **next** mission, so
+every identifier steps up by one — and again the **wire number is what the client
+passes almost everywhere**, while the DOM number is the odd one out:
+- **Wire number = `12`.** Used in BOTH the score send `{t:'score', ms, m: 12}`
+  **and** the client `showScores(mission11.ms, 12)` call — `showScores`'s second arg
+  is the *wire number*, not a DOM id. (Wire `10` is DAILY DASH → `'d'`; wire `11` is
+  HIGH WATER → `'m10'`; MOTORCADE is the next free wire, `12`. Passing `11` to
+  `showScores` would caption a MOTORCADE win as a HIGH WATER time.)
+- **Server board key = `'m11'`.** The score-map entry is `12: 'm11'`; the key
+  everywhere server-side (`BOARDS`, `scores`, `WIN`, `topScores`, announce) is
+  `'m11'`.
+- **DOM list id = `scoreList11`** — the **only** place the number 11 appears in the
+  scoring path. The leaderboard `<ol>` is `#scoreList11`, filled by `renderScores`
+  via `fill('scoreList11', m.m11)`.
+- **localStorage = `lt_m11_best`** (and the `m11Best` var).
+
+So: **wire 12 (score send + `showScores` arg) → server key `m11` → DOM
+`scoreList11` → storage `lt_m11_best`.** The client verb/best switch keys on
+**`board === 12`** (`'MOTORCADE DELIVERED IN '`, `m11Best`) — never `11`.
+- **Score = elapsed time** to reach the country club (lower is better).
+- **WIN plausibility window: `m11: [25000, 300000]` ms** — mirrors HIGH WATER. The
+  25 s floor assumes a **pre-positioned** player (the clock starts at the GO beat,
+  not ring-touch); 5 min ceiling sits above the 180 s budget. Anti-cheat
+  plausibility, distinct from the in-mission budget.
+
+### User story
+As a player who's cleared the flood job, my marker points to a red ring outside a
+downtown hotel; a frazzled advance staffer throws me the keys to a black SUV and I
+peel out as the lead car of a motorcade — hitting every cleared checkpoint on the
+route to the country club before the tee time, easing over the bumps so the VIP in
+the back doesn't make me pull over to fix his hair.
+
+### Premise & personality
+**MOTORCADE**: an out-of-town VIP landed and he's already late for his golf tee time
+at the country club. You're the **lead car**. Get the convoy across town, fast —
+but the VIP is a delicate passenger, and every hard bump, curb, or jump rattles him
+until he makes you stop. Civic-comedy voice matching m5–m10; captions via `capIdx`
++ `#caption` (no new audio, ASCII). The on-radio character is **THE ADVANCE** (a
+frazzled advance staffer); the passenger is only ever **THE VIP** — no name, no
+party.
+
+**Intro follows the current brief pattern (landed on main, 3011d6c).** On `E`, the
+mission enters **`stage:'brief'` with the clock HELD**; the timer's `t0` stamps only
+at the final DISPATCH **`CLOCK STARTED`** beat (GO), so the player is pre-positioned
+(in the SUV) when timing begins. First-ever play gets the full multi-beat brief
+(flavor → coaching → GO); repeat plays get **one quick beat (~4.6 s)** then GO.
+Gated by `localStorage lt_m11_briefed` (set after the first full brief). Coaching +
+the composure warning fold **into** the full first-time brief:
+- **Full brief, first-ever play (multi-beat):**
+  1. *(flavor)* `ADVANCE TEAM - THE VIP LANDED AND HE IS ALREADY LATE FOR HIS TEE
+     TIME. YOU ARE LEAD CAR. GET THE MOTORCADE TO THE COUNTRY CLUB.`
+  2. *(coaching, folded in)* `HIT EVERY CHECKPOINT ON THE CLEARED ROUTE - FAST. BUT
+     KEEP IT SMOOTH; EVERY BUMP RATTLES THE VIP AND HE WILL MAKE YOU PULL OVER.`
+  3. *(GO — DISPATCH `CLOCK STARTED`, stamps `t0`)* `GO - THE TEE TIME WILL NOT
+     WAIT.`
+- **Quick brief, repeat play (~4.6 s, one beat then GO):** `ADVANCE TEAM - LEAD CAR
+  TO THE COUNTRY CLUB BEFORE THE TEE TIME. SMOOTH AND FAST. GO.`
+- **Progress:** `HALFWAY - THE VIP IS CHECKING HIS WATCH.`
+- **Composure-low nudge (in-action, contextual — its own caption):** `EASY - THE VIP
+  IS TURNING GREEN BACK THERE.`
+- **Pull-over penalty (composure hit zero):** `PULL OVER - HE IS FIXING HIS HAIR.
+  THAT COST YOU.`
+- **Win:** `MOTORCADE DELIVERED - THE VIP MADE HIS TEE TIME. NOW GET THESE STREETS
+  BACK OPEN.`
+- **Fail:** `TEE TIME BLEW. THE VIP TOOK A CART FROM THE GATE - AND IT IS ON YOU.`
+- **Radio flavor (optional, needs an audio regen — not required to ship):** a NEWS
+  630 `news_traffic` line — `Rolling closures downtown this afternoon for the VIP
+  motorcade; give yourself extra time.` (mirrors the real headline; ships whenever
+  audio is next baked).
+
+### Mechanic & structure
+Copy **DEADLINE (m5)** for the checkpoint spine and layer **THE MELT (m6)**'s
+rough-driving penalty on top as the composure system:
+- **Drive the lead SUV** (provided at the hotel by the start ring), same car system
+  as every driving mission.
+- **~6 checkpoint rings** along the cleared motorcade route, only the current one
+  lit; the next lights on arrival (m5/m6/m8/m10 pattern). **Drive through the lit
+  ring** to advance (no hold — it's a race, unlike HIGH WATER's drop-hold). Name the
+  checkpoints after real cross-streets on a plausible downtown→SE route (e.g. **Main
+  & Broadway, Vine, Ashland/East Main, the Chevy Chase turn, Fontaine, the club
+  gate**), ending at a **country club** on the SE side near Chevy Chase (**Idle Hour
+  Country Club** is the real, on-map-adjacent target — verify the ring sits on
+  drivable ground in playtest).
+- **The tee time is the ~180 s countdown** — the single true fail deadline.
+- **Composure meter (the new twist, forgiving):** a 0–1 "VIP mood" bar shown in the
+  HUD. It **drains on hard knocks** (collisions, curb/kerb hits, big jumps — reuse
+  THE MELT's crash/slosh detection) and **regenerates while cruising smooth**. At
+  **zero** it does **NOT** instant-fail — instead the VIP forces a **pull-over
+  penalty**: a ~3–4 s hold (the SUV stops, `PULL OVER…` caption) while the tee-time
+  clock **keeps ticking**, then the meter refills to a working level and you drive
+  on. So composure is a **time cost you can eat**, keeping the clock as the only true
+  fail (HORSEPOWER-lesson forgiveness). *(Tuning knob for the mission dev: a
+  hard-mode variant could make composure-zero an instant fail; default to the
+  forgiving pull-over version.)*
+- **On foot the rings don't count** (reinforces "this is a driving mission," like
+  DEADLINE / HIGH WATER).
+- **Optional cosmetic follow-cars:** a limo + chase car **leashed to the player's
+  recent path** (trailing waypoints), purely visual motorcade dressing. **Non-goal
+  if it costs perf or time** — the mission reads fine as a solo lead car; build only
+  if cheap (they're dumb path-followers, no collision, no net).
+
+### Discoverability
+- **Gold ★ label** `★ MISSION: MOTORCADE` at `M11_TRIG`.
+- **`nextMissionHint()`:** append `if (!m11Best) return 'NEXT MISSION: MOTORCADE -
+  RED RING AT THE DOWNTOWN HOTEL (DRIVE)';` after the m10 branch.
+- **F1 waypoint** retargets to `M11_TRIG` once m10 is beaten.
+- **Ring color: `0xd7263c` (motorcade red — FINAL, lead + architect ratified)** —
+  deliberately distinct from every ring in use: gold m1/m5, teal m3, green m4, pink
+  m6, blue m7, amber m8 `0xc8792e`, violet m9, hazard-orange m10 `0xff6a00`. Red
+  reads as flashing-lights / do-not-stop and is unused. Start ring + checkpoints both
+  use `0xd7263c` (final — not the interim `0xdd2222` that briefly appeared during
+  cycle-2 review).
+- **Start gate — full Phase-4 form (do NOT drop the bus/scooter checks):**
+  `allIdle() && !player.veh && !player.ride && player.bus === null && !player.scoot
+  && !isFrozen() && nearM11Trig()`. Start on foot at the hotel, then take the SUV.
+  The `player.bus === null && !player.scoot` pair is easy to omit (the same trap the
+  architect flagged on F8/HIGH WATER last cycle) — a rider on the LOOP bus or a
+  scooter must not be able to trigger a driving mission; keep all four
+  vehicle-state checks.
+
+### Build checklist (follow MODDING.md §"(c) A new mission", lines 286–341)
+Same recipe; mission-11 specifics:
+1. **Island layout (statement order!):** declare `M11_TRIG`, `M11_ROUTE` (the ordered
+   checkpoint list), `M11_BUDGET`, `m11Best` (from `lt_m11_best`), and `mission11`
+   (`{stage:'idle', tStage, t0, ms, cur:0, capIdx:0, composure:1}` — `stage` runs
+   `idle→brief→escort→…`) as top-level `var`s **before** the label push and the
+   ring-builder. Read `lt_m11_briefed` at declare time for the brief pattern.
+2. **Join `allIdle()`** (app.js:4339): add `&& mission11.stage === 'idle'`.
+3. **Gold ★ label** (above).
+4. **`nextMissionHint()` branch** (above).
+5. **`E` branch** with the **full Phase-4 gate** (`!player.veh && !player.ride &&
+   player.bus === null && !player.scoot`) + a `nearM11Trig()` helper.
+6. **Per-frame `updateMission11(dt)`:** `idle → brief → escort → won → post → idle`
+   / `escort → fail → idle`. The **`brief`** stage holds the clock and plays the
+   brief beats (full first-ever, one quick ~4.6 s beat on repeat, gated by
+   `lt_m11_briefed`); **stamp `t0` only at the `CLOCK STARTED` GO beat**, then enter
+   `escort`. Light only the current checkpoint; advance `cur` on an in-car
+   drive-through; win when `cur` passes the last checkpoint; countdown off
+   `performance.now()` + `M11_BUDGET` (measured from GO); HUD hint `MOTORCADE ·
+   CHECKPOINT n/6 · <s>s LEFT · COMPOSURE ▓▓▓`. Drive the **composure** bar (drain on
+   THE MELT-style hard-knock detection, regen while smooth, pull-over penalty at
+   zero). Emit funnel telemetry (`mev`) in the **70–74** enum range (architect-frozen;
+   m8=20–29, m9=30–39, daily=40–43, m10=50–54 reserved; **60–69 is Phase 4's bus**, so
+   MOTORCADE takes 70–74 — five events: start/checkpoint/pull-over/win/fail).
+7. **Leaderboard UI:** on win call **`showScores(mission11.ms, 12)`** — the second
+   arg is the WIRE number (12), NOT the DOM id; passing `11` captions the win as a
+   HIGH WATER time. Add the **`board === 12`** verb (`MOTORCADE DELIVERED IN `) and
+   **`board === 12 ? m11Best`** to the score modal. Add the `#scoreList11` `<ol>`
+   (+ `<h2>` + CSS) to `web/index.html` (frontend-dev-2's block), and give
+   `renderScores` a `fill('scoreList11', m.m11)` plus `'scoreList11'` in the
+   fetching-loop id array. (`scoreList11` is the only "11"; the `showScores` arg,
+   verb key, and best key are all `12`.)
+8. **Server board (server.js) — add ONLY `m11`** (m1–m10 already exist once §F8 has
+   shipped; do NOT re-add them). Six sites, all keyed `'m11'`, each added **right
+   after the `m10` entry §F8 introduced** (the pre-m10 anchor lines below will have
+   shifted a few lines once m10 lands — go by the `m10` neighbor, not the raw
+   number): `BOARDS` (~:172, after `'m10'`) → add `'m11'`; the `scores` literal
+   (~:178) → `m11: []`; `topScores()` (~:208) → include `m11`; the board/score map
+   (~:720) → **`12: 'm11'`** (wire 12, after `11: 'm10'`); the per-board `WIN` object
+   (~:724–725) → `m11: [25000, 300000]`; the announce map (~:745–746) → `` m11:
+   `${n} ran the motorcade to the tee in ${sec}s` ``.
+9. **README + tutorial:** MOTORCADE blurb + `#tut` grid line.
+
+> **The wire-number trap.** Send `{t:'score', ms, m: 12}` — the **number 12**, not
+> `11` and not `'m11'`. Wire 10 is DAILY DASH (`'d'`), wire 11 is HIGH WATER
+> (`'m10'`); the server maps `{…, 12:'m11'}[msg.m] || 'm1'`, so a wrong wire number
+> silently lands your times on the ribbon (m1), the daily, or the flood board.
+
+### Multiplayer behavior
+- **Entirely client-side**, like every mission. Checkpoints, the composure meter, and
+  the countdown are local; only the final `{t:'score', ms, m:12}` (wire 12 → board
+  `m11`) touches the server → validated against `WIN.m11` → `scores.json` →
+  `{t:'scores'}` + announce.
+- Others see you driving the SUV via the existing `m:2` remote-car render; they never
+  see your checkpoints, composure, or the follow-cars (those are local cosmetic).
+  **Offline/bots-only:** playable, submit no-ops offline, local best saves. **Private
+  rooms (F4):** plays; score doesn't rank in a non-PUBLIC room; `lt_m11_best` still
+  saves.
+
+### Edge cases
+- **Exits the SUV mid-run:** timer keeps running (don't pause on foot); re-enter any
+  vehicle and continue — on-foot ring passes don't advance.
+- **Collides / curbs / jumps:** composure drains + normal collision applies; no
+  soft-lock; keep driving. If composure empties, the pull-over penalty fires **once**
+  (a single ~3–4 s hold, then refill) — it can't stack into a soft-lock while the
+  meter is refilled.
+- **Reaches a checkpoint on foot:** nothing advances; only an in-car drive-through of
+  the lit ring counts.
+- **Composure-empty pull-over vs. the clock:** the clock keeps ticking through the
+  pull-over — that's the point (it's the time cost). If the tee time expires *during*
+  a pull-over, it's a clean fail like any other timeout.
+- **Concurrent-mission guard:** `allIdle()` must include `mission11`.
+- **Retry:** `E` at the ring re-inits (SUV + checkpoints + clock + composure +
+  follow-cars), standing at the hotel — no walk-back.
+- **Follow-cars (if built):** despawn on win/fail/retry and never block the player or
+  other missions; they're path-followers, not colliders.
+
+### Non-goals (F9)
+- **No new *core* mechanic** — it's a checkpoint race over existing roads; composure
+  is THE MELT's rough-driving penalty reused as a time cost, not a new system.
+- **No second instant-fail** in the default build — the tee-time clock is the only
+  true fail; composure costs time, it doesn't end the run (keeps the HORSEPOWER
+  forgiveness lesson).
+- **No named/partisan content** — the VIP is unnamed and party-less; the comedy is
+  logistics (a convoy vs. a tee time vs. a queasy passenger), never politics. No
+  security-theater, protest, or motorcade-incident depiction — keep it light, like
+  THE MELT.
+- **No new baked audio** to ship (captions carry it; the NEWS 630 line is optional).
+- **No map growth** — checkpoints sit on existing drivable downtown→SE roads; the
+  country-club destination reuses on-map ground near Chevy Chase.
+- **Follow-cars are optional cosmetic** — cut them if they cost perf or schedule; the
+  solo lead car reads fine.
+- **No co-op** — solo against the clock, the passenger, and the board.
+
+### Acceptance checklist — F9 Mission 11: MOTORCADE
+
+Precondition: m1–m10 beaten, every mission idle (fast-forward the ten bests, leave
+`lt_m11_best` cleared, reload). Standing gate first (`node --check` both files,
+`npm test`). Two tabs for the announce check.
+
+- [ ] **Waypoint + start.** With m10 beaten and m11 not, F1's marker points to
+      `M11_TRIG`; the ★ MOTORCADE label renders at the red ring outside the hotel.
+- [ ] **Start gate is `allIdle` + on-foot + not in ANY vehicle.** `E` at the hotel
+      ring starts it only when every mission is idle and you're not in/​riding a car,
+      **on the LOOP bus, or on a scooter** (all four checks: `!player.veh &&
+      !player.ride && player.bus === null && !player.scoot`); the SUV is provided, the
+      ADVANCE brief fires, and the ~180 s countdown begins at GO.
+- [ ] **In-car checkpoints bank; on-foot doesn't.** Driving through a lit red ring
+      advances and lights the next; walking through it does nothing. HUD shows
+      `CHECKPOINT n/6`.
+- [ ] **Composure works and is forgiving.** Hard hits drain the composure bar; smooth
+      cruising regenerates it. At zero the VIP forces a ~3–4 s pull-over (caption +
+      SUV stop) while the clock keeps ticking, then it refills — it does **NOT**
+      instant-fail. The tee-time clock is the only true fail.
+- [ ] **Brief pattern (held clock).** First-ever play shows the full multi-beat brief
+      (flavor → coaching → GO) with the clock HELD; `t0` stamps only at the `CLOCK
+      STARTED` GO beat; `lt_m11_briefed` is set. A repeat play shows one quick ~4.6 s
+      beat then GO.
+- [ ] **Win → board + announce.** Reach the country club under 180 s → win; scores
+      modal opens on the **m11** board (`#scoreList11`, `MOTORCADE DELIVERED IN …`)
+      with your time, the other tab's chat shows `* MISSION  <name> ran the motorcade
+      to the tee in <t>s`. The client sends **wire `m:12`** → verify the time lands on
+      the **m11** board (not the ribbon, daily, or flood board).
+- [ ] **Local best persists.** `lt_m11_best` set; `m11Best` gates the waypoint chain.
+- [ ] **Timer expiry = clean fail + instant retry.** Clock runs out → `TEE TIME BLEW`
+      fail caption, reset to `idle`, no submit; `E` restarts at the hotel.
+- [ ] **Concurrent-mission exclusion.** During the run, `E` at other rings does
+      nothing; `allIdle()` includes `mission11`.
+- [ ] **Server plumbing complete.** `m11` added (only — m1–m10 already present) to
+      `BOARDS`, the `scores` literal, `topScores()`, the score map (`12:'m11'`), the
+      `WIN` object (`[25000, 300000]`), and the announce map — a win persists under
+      `m11` and survives a restart.
+- [ ] **Surfaces updated together.** README mission list + `#tut` grid line +
+      `#scoreList11` block all present.
+- [ ] **Standing gate green.** `node --check web/app.js && node --check server.js`
+      pass and `npm test` is all green.
+
+### Notes for the architect / mission dev (F9)
+- **Copy DEADLINE (m5) for the checkpoint spine, THE MELT (m6) for the penalty** —
+  m5 gives you the lit-ring-advance race loop; m6 gives you the hard-knock detection
+  you rewire into the composure drain (as a time cost, via a pull-over hold).
+- **Composure is a *time* system, not a second fail** — drain on knocks, regen when
+  smooth, pull-over hold at zero while the clock ticks. Default forgiving; a hard-mode
+  instant-fail variant is a tuning knob, not the ship target.
+- **Server: add ONLY `m11`** — m1–m10 already exist once §F8 ships. Six sites, all
+  keyed `'m11'`, each placed right after the `m10` entry §F8 added: `BOARDS`, the
+  `scores` literal, `topScores()`, the score map as **`12:'m11'`** (wire 12 — 10 is
+  DAILY, 11 is HIGH WATER), the `WIN` object, the announce map. The pre-m10 anchor
+  lines (~172 / ~178 / ~208 / ~720 / ~724 / ~745) will have shifted a few lines once
+  m10 lands — go by the `m10` neighbor, not the raw number. Do not re-add m8/m9/m10.
+- **Keep the four identifiers straight: wire `12` → board `m11` → DOM `scoreList11`
+  → storage `lt_m11_best`.** The client sends `m:12` and calls
+  `showScores(mission11.ms, 12)`; everything server-side keys `'m11'`; the leaderboard
+  list id is the only `11`.
+- **Ship funnel telemetry** — `mev` enum in the **70–74** range (architect-frozen)
+  (start/per-checkpoint/pull-over/win/fail); 60–69 belongs to Phase 4's bus, 50–54 to
+  m10.
+- **Statement order** — `M11_TRIG`, `M11_ROUTE`, `mission11` declared before the
+  label push and the ring-builder.
+- **Real-place naming is the flavor** — checkpoints on a real downtown→SE route
+  (Main, Vine, the Chevy Chase turn) ending at a real country club (Idle Hour); the
+  VIP stays nameless — that non-partisan framing is what lets a "ripped from the
+  headlines" mission ship on a real news org's game.
+- **The unnamed-VIP line is load-bearing** — no name, no party, no title beyond "THE
+  VIP." The convoy and the tee time are the joke; keep it that way in every caption,
+  the README, and the tutorial.
+
+---
+
+## F10 — Mission 12: "THE FINALE" (THRILLER — zombie-horde last stand + credits)
+
+**Why this mission.** It's **THE FINALE** — the capstone that turns "another
+mission" into "you beat the game." Every mission before it teaches one system;
+MOTORCADE and HIGH WATER are driving, HORSEPOWER is wrangling, AIR MAIL is the
+jetpack. THE FINALE is the **payoff that spends everything the combat + cinematic
+code already ships**: the RPG/rocket rig, the local-entity + ped-mesh machinery (for a
+CPU ally and the horde), and the scripted-camera / cine primitives (for an actual
+credits roll). It's a seasonal
+Halloween/Thriller hook, it's comedy-first, and it ends with the thing no other
+mission has — a **GTA-style credits scene** over City Hall that says "thanks for
+playing." It's the reason to grind all the way to mission 12. **The concept is
+Paul's and FIXED** — this spec designs the execution, not the premise.
+
+**Seasonal hook (Lexington's real THRILLER parade — an October Main Street
+tradition).** Every October Lexington runs a downtown **Thriller parade** on Main
+Street (a genuine local institution — hundreds of red-jacketed dancers doing the
+Michael Jackson routine down the street; the feed confirms the city's active
+spooky-season culture). That real event is the whole hook, and it doubles as the
+**guardrail**: the "zombie horde" is **the parade's dancers**, and the mission is a
+**shared hallucination** — **THE MAYOR** absent-mindedly shares her "medicinal"
+gummy bears and you *both* start seeing the dancers as a horde marching on City
+Hall. Nothing is real, nobody is harmed, and the **win reveal lands the joke** (the
+"defeated horde" is the parade finale, turning to applaud — see the captions). It's
+the license for the only over-the-top set-piece in the game, kept rated-teen
+slapstick. Non-partisan by construction: the ally is the unnamed **THE MAYOR** (house
+convention), the gummy bears are hers and "medicinal," the player never seeks or buys
+them (just the accidental share), and the two agree never to mention it again.
+
+### The HORSEPOWER lesson, applied
+- **Target first-timer completion: it should be WINNABLE on the first serious try** —
+  a finale that walls players out isn't a finale. The challenge lives on the
+  **board** (fastest full clear), not in a survival gate. In-mission length: **~3–5
+  min** for a first clear; a shredder run can beat it much faster (that's the
+  replay).
+- **Restart-friendly:** start ring on the City Hall plaza; a downed run is an instant
+  `E`-to-retry, no walk-back. Waves and the ally reset on retry.
+- **Forgiving core:** generous player HP with **between-wave regen**, plus the CPU
+  mayor soaking aggro — fail only if you're truly overwhelmed, and the fail caption is
+  a laugh ("it was the gummy bears"), not a punishment.
+- **Failure is legible:** a clear "they got us" caption; the horde, waves, weapon, and
+  ally reset on retry.
+- **Ship the funnel telemetry** (start / each phase-advance / each wave-clear / downed
+  / win / credits-shown) from day one, like F5–F9.
+
+### The board (server plumbing) — FOUR names, do NOT conflate them
+Same ratified discipline as F8/F9; THE FINALE is the **next** mission, so every
+identifier steps up by one — the **wire number is what the client passes almost
+everywhere**, and the DOM number is the odd one out:
+- **Wire number = `13`.** Used in BOTH the score send `{t:'score', ms, m: 13}` **and**
+  the client `showScores(mission12.ms, 13)` call — `showScores`'s second arg is the
+  *wire number*, not a DOM id. (Wire `10` is DAILY DASH → `'d'`; `11` is HIGH WATER →
+  `'m10'`; `12` is MOTORCADE → `'m11'`; THE FINALE is the next free wire, `13`.
+  Passing `12` would caption a FINALE win as a MOTORCADE time.)
+- **Server board key = `'m12'`.** The score-map entry is `13: 'm12'`; the key
+  everywhere server-side (`BOARDS`, `scores`, `WIN`, `topScores`, announce) is `'m12'`.
+- **DOM list id = `scoreList12`** — the **only** place the number 12 appears in the
+  scoring path. The leaderboard `<ol>` is `#scoreList12`, filled by `renderScores`
+  via `fill('scoreList12', m.m12)`.
+- **localStorage = `lt_m12_best`** (and the `m12Best` var), plus `lt_m12_briefed`
+  (brief pattern) and `lt_m12_credits` (first-clear credits gate — see below).
+
+So: **wire 13 (score send + `showScores` arg) → server key `m12` → DOM
+`scoreList12` → storage `lt_m12_best`.** The client verb/best switch keys on
+**`board === 13`** (`'THRILLER CLEARED IN '`, `m12Best`) — never `12`.
+- **Score = fastest full clear** — elapsed time from the `CLOCK STARTED` GO beat to
+  the **last zombie of the final wave going down** (the credits scene runs AFTER the
+  timer stops and is NOT timed). Lower is better.
+- **WIN plausibility window: `m12: [30000, 900000]` ms** — a 30 s floor (QA's
+  spawn-stagger math put an optimized legit clear plausibly at 40–70 s, so the
+  original 60 s floor risked rejecting real runs; 30 s is still implausible for
+  76 kills + the 30-hp boss) and a 15 min ceiling (well above the ~3–5 min first
+  clear; a longer window than the driving missions because a cautious survivor
+  can drag). Anti-cheat plausibility, distinct from any in-mission cap.
+  *(Pin is tunable once the wave counts are set in playtest — flag to the architect.)*
+
+### User story
+As a player who's beaten every other job, I'm downtown at the Thriller parade; THE
+MAYOR absent-mindedly shares her "medicinal" gummy bears, the sky goes wrong, and the
+parade dancers look like a zombie horde marching on City Hall. A machine gun appears
+in my hands, the mayor fights at my side deadpanning between waves, the weapons
+escalate to rockets and grenades and one big finale monster — and when the last one
+"drops," the hallucination snaps out: it was the parade all along, the dancers turn to
+applaud, and the screen letterboxes into a credits roll over City Hall. I beat LEXTOWN.
+
+### Premise & personality
+**THE FINALE**: the real October Thriller parade, THE MAYOR's "medicinal" gummy bears
+accidentally shared, and a shared hallucination that turns the dancers into a zombie
+horde storming City Hall. You and the CPU mayor hold the steps through escalating
+weapon phases to a big climax; the win reveals it was parade theater the whole time,
+then the credits roll. **Mayor voice = deadpan, unbothered, established character**
+(dry one-liners, never panics, treats a zombie apocalypse like a scheduling
+conflict); civic-comedy tone matching m5–m11 but drier. Captions via `capIdx` +
+`#caption` (ASCII). THE MAYOR is the co-star, unnamed, referred to as "she"; the
+"medicinal" gummy bears are the running gag ("THEY'RE MEDICINAL. FOR MY KNEE.").
+
+**Intro follows the current brief pattern (landed on main, 3011d6c) — and the
+gummy-bear beat IS the brief.** On `E`, the mission enters **`stage:'brief'` with the
+clock HELD**; `t0` stamps only at the final DISPATCH **`CLOCK STARTED`** beat (GO), so
+the player is pre-positioned when timing begins. The hallucination color grade ramps
+IN across the brief (see "Hallucination look"). First-ever play gets the full
+multi-beat brief; repeat plays get **one quick beat (~4.6 s)** then GO. Gated by
+`localStorage lt_m12_briefed`:
+- **Full brief, first-ever play (multi-beat):**
+  1. *(flavor)* `THE MAYOR - OH, HAPPY THRILLER PARADE. GUMMY BEAR? ... THEY'RE
+     MEDICINAL. FOR MY KNEE.`
+  2. *(flavor)* `THE MAYOR - ...HUH. ARE THE PARADE DANCERS SUPPOSED TO LOOK LIKE
+     THAT. THAT IS A LOT OF ZOMBIES. WELL. CITY HALL IS NOT DEFENDING ITSELF.`
+  3. *(coaching, folded in)* `THE MAYOR - THERE'S A MACHINE GUN. OBVIOUSLY. KEEP THEM
+     OFF THE STEPS THROUGH THE WAVES. I'LL COVER YOU. I'M UNBOTHERED.`
+  4. *(GO — DISPATCH `CLOCK STARTED`, stamps `t0`)* `GO - HERE THEY COME. NONE OF THIS
+     IS REAL. PROBABLY.`
+- **Quick brief, repeat play (~4.6 s, one beat then GO):** `THE MAYOR - THE GUMMY
+  BEARS AGAIN. FINE. KEEP THEM OFF THE STEPS. GO.`
+- **Phase 2 (rockets):** `THE MAYOR - MORE OF THEM. HERE - ROCKET LAUNCHER. I DID NOT
+  QUESTION IT EITHER.`
+- **Phase 3 (grenades / climax):** `THE MAYOR - THE BIG ONE. GRENADES. ARC THEM. TRY
+  NOT TO HIT THE FLOAT.`
+- **Wave-clear progress:** `THE MAYOR - WAVE DOWN. STILL UNBOTHERED. KEEP GOING.`
+- **Ally banter (ambient, occasional, deadpan):** `THE MAYOR - I'M ADDING THIS TO
+  NEXT WEEK'S AGENDA.` / `THE MAYOR - REPORT YOUR ZOMBIES TO 311.` / `THE MAYOR - I
+  APPROVED A PERMIT FOR THIS, TECHNICALLY.`
+- **Win reveal (the joke lands — hallucination snaps out):** `THE MAYOR - ...OH. THEY
+  WERE THE PARADE DANCERS. THEY'RE TAKING A BOW. NOBODY WAS HARMED. GOOD ROUTINE,
+  ACTUALLY.`
+- **Fail (downed):** `THE MAYOR - THEY GOT YOU. IT WAS THE GUMMY BEARS. SHAKE IT OFF,
+  GO AGAIN.`
+- **Credits intro (first clear only):** `THE END - THANKS FOR PLAYING LEXTOWN.`
+- **Radio flavor (optional, needs an audio regen — not required to ship):** a NEWS 630
+  `news_event` line — `The Thriller parade takes over Main Street tonight; hundreds of
+  dancers, zero actual zombies, city officials confirm.` (ships whenever audio is next
+  baked).
+
+### Mechanic & structure — wave survival, three weapon phases
+A new mission *shape* built to be **phase-split for the architect**: the
+**wave-combat core** (this section + the ally + weapons) and the **credits scene** are
+independently buildable — the combat can ship first with a placeholder win, and the
+credits layer on after (mirrors the #75 Phase-A / #80 Phase-B split). No new net
+protocol.
+- **On-foot last stand at the City Hall plaza** (`M12_TRIG` on the plaza; the same
+  City Hall the mission-2 door already gates). You hold the steps; zombies spawn at the
+  plaza edges and chase toward the building / the player.
+- **Zombies are cheap LOCAL chase-walkers** — a `m12Zombies` array, each `{pos, hp,
+  state}`, updated per-frame with a simple **chase-toward-target** walk (the
+  `mh`/`m4Horses` local-entity shape + the m1 chopper-fight NPC precedent), hit-tested
+  **locally** against the player's fire — a mission-owned array that, like the mayor and
+  the m5 ghost, **NEVER enters `remotes`** (else they'd be freeze-tag-taggable and inflate
+  `peerCount`). Reuse the **ped/NPC mesh** (the avatar/ped builder) for the body with a
+  **Thriller-dance idle** (arms-out, the Michael-Jackson pose) so a stationary spawn
+  reads as a parade dancer;
+  on a lethal hit they **melt** (a quick sink/scale-down dissolve — no gore, it's the
+  hallucination dispersing), not ragdoll. **Hard-cap concurrent zombies** and scale the
+  cap down on `IS_COARSE` / low-FPS (see mobile perf) — the SwiftShader/OBS + touch
+  path is the binding constraint on wave sizes.
+- **Three escalating weapon phases**, auto-swapped between phases by the hallucination
+  (no pickup management — the finale is a rollercoaster, not an inventory sim). **All
+  three weapons are MISSION-LOCAL rigs — no PvP leakage** (the m8 blaster lesson: a
+  mission weapon must not damage or spawn projectiles that touch other players; it only
+  hits `m12Zombies`, and its cosmetic relays, if any, are gated to the mission):
+  1. **MACHINE GUN** *(mission-local variant of the existing dart loop — `fireDart` at
+     cadence)* — high-rate fast-projectile fire. Feel: **~10 rounds/sec**, hold-to-fire,
+     tight spread, low per-hit damage so it's a *stream* (a shambler takes a short
+     burst). Same `fireDart` substance, mission-local (hits only `m12Zombies`, no PvP).
+     Phase-1 waves are shambling dancers — learn the loop.
+  2. **ROCKET LAUNCHER** *(reuse the existing RPG/rocket rig)* — the shipped mission
+     RPG with splash vs. denser, faster packs. Crowds force area damage. FP-forced via
+     `rpgOut()`.
+  3. **GRENADE LAUNCHER** *(mission-local variant of the existing rocket loop — rocket
+     projectile + gravity + fuse + area)* — arced lobs with area damage. Feel: a
+     **projectile under gravity** (a real arc — lob over the front rank into a cluster),
+     **~1–1.5 s fuse or impact-detonate**, a moderate blast radius, slower cadence than
+     the MG so placement matters. Vs. the **climax wave**: a massive horde plus **THE
+     BIG ONE** (an oversized boss "zombie" — a fun nod is a zombie thoroughbred, tying
+     back to m4). Big finish.
+  A phase advances when its wave(s) are cleared; the weapon swap fires a caption.
+- **Aim / camera:** the rocket + grenade phases force first person via **`rpgOut()`**
+  (third-person elevation can't look up — the same reason mission RPGs already force
+  FP); the machine-gun phase can use the normal over-the-shoulder shooter.
+- **Player HP + forgiving fail:** the player has generous HP (say 5); zombies that
+  reach melee range chip it; **HP regen between waves**. Downed (HP 0) = a comedy fail
+  + instant `E`-retry. The CPU mayor **never goes down** (she soaks aggro and is
+  "unbothered"), so the player is rarely swarmed alone. The board rewards *speed*, so a
+  cautious player still finishes — they just post a slow time.
+
+### The ally bot — THE MAYOR (client-side CPU co-op)
+- **A LOCAL mission entity — `mh`/`m4Horses` shape, and critically the m5 GHOST
+  precedent.** The mayor is a mission-owned object: an **avatar-builder mesh + name
+  label** for the look, **`npcWalk`-style movement** for locomotion, and the
+  scripted-local-combatant behavior the m1 fight already demonstrates — updated per-frame
+  locally like the m1 chopper-fight target and the m4 horses. **She NEVER enters the
+  `remotes` map and is NEVER on the wire** — exactly like the m5 ghost, which
+  deliberately stays out of `remotes` because *anything* in that map is taggable in
+  freeze-tag, inflates `peerCount` (a phantom "+1 IN CITY"), and rides every
+  remote-consumer. `npcWalk` here is a **movement helper applied to a local entity, NOT
+  registration in `remotes`** — the invariant is never-in-remotes. A mayor **registered
+  in `remotes`** (networked or filler-bot style) would trip all three problems; a local
+  entity avoids them while preserving the **zero-new-protocol** property, and she works
+  identically online and offline.
+- **Simple combat AI:** stays near the player, faces the nearest zombie, and fires a
+  **cosmetic** stream at it (zombie damage is adjudicated by the same local hit-tests
+  — her "kills" credit nobody; she's there for presence + comedy + a little aggro-soak,
+  not for scoring).
+- **She never dies — "unbothered."** No HP, no downed state; she's a comedy anchor, not
+  a fail vector. If overwhelmed she just keeps deadpanning.
+- **She is the comedy engine** — the deadpan banter captions above fire from the ally
+  on a timer. She never breaks the fourth wall (no "our feeds," etc. — the standing
+  voice rule), and stays unnamed / party-less.
+- **"Co-op" = you + the CPU mayor, NOT networked co-op.** Other real players in the
+  world do not see your zombies or your mayor (all local). This keeps the mission
+  client-side and solo-scored like every other mission.
+
+### Hallucination look (cheap full-screen grade — NOT a shader)
+- **A scalar color grade, not a post-process shader** — reuse the **m2Sky / m10Sky
+  overcast-blend pattern** (a per-frame scalar tint on sky/fog + a slight camera
+  wobble), so it runs on the SwiftShader/OBS + mobile path with no fragment-shader
+  cost. Tint the world toward a sickly green-purple with a gentle wobble; keep it
+  cheap.
+- **Ramps IN across the brief** (from `stage:'brief'`, climbing as the gummy-bear beats
+  play) and holds through the fight, so the "trip" builds visually while the clock is
+  still HELD.
+- **Snaps OUT at the win reveal** — the instant THE BIG ONE drops and the joke lands,
+  the grade cuts back to normal daylight in one beat: the horde is revealed as the
+  parade, the world looks real again. That snap IS the reveal; the credits follow.
+- **Respects the perf budget** — on `IS_COARSE`/low-FPS the wobble can drop to a static
+  tint; never let the grade cost frames.
+
+### The climax & credits scene (the "you beat the game" payoff)
+> **Separable for the build (Phase B, task #80).** Everything below layers on top of a
+> finished wave-combat core; ship the core first with a placeholder win, add this
+> after.
+- **Climax:** phase 3's final wave downs THE BIG ONE → the **timer stops** (that's the
+  scored moment) → the **hallucination grade snaps out** → win reveal caption (the
+  dancers turn to applaud, nobody was harmed).
+- **Credits scene — reuse the scripted-camera / cine primitives, don't invent:** run it
+  behind a **parallel `creditsActive` flag** (the **Photo Mode isolation precedent** —
+  the credits camera owns the view without fighting the normal follow/drone cams),
+  driving **`cineShot` / `cineApplyPose` / `cineEase` / `cineLetterbox`** (`cineLetterbox`
+  is at **app.js:7354**; the `__lt.cine` hook site is **~6998**). Letterbox in, run a slow
+  orbit over **City Hall / Main Street**, and scroll a **real credit roll** in a
+  `#credits` DOM overlay: game name, "a free open-source game about Lexington, KY," the
+  **real contributors from README / MODDING**, the MIT license, `playlextown.com`, a wink
+  at the origin ("median session: 48 seconds — thanks for staying longer"), and **gag
+  credits** in the same list (`THE GUMMY BEARS — AS THEMSELVES`, `THE ZOMBIES — ACTUALLY
+  THE PARADE DANCERS`, `THE MAYOR'S KNEE — MEDICINALLY`). ASCII-safe. A **synthesized
+  triumphant sting** (WebAudio, no assets, respects `lt_snd`).
+- **First-clear gate:** the full credits roll plays **only on the first-ever clear**,
+  gated by `lt_m12_credits`; repeat clears skip straight to a short celebration + the
+  board (you don't want to sit through credits every grind run).
+- **Skippable:** any key / tap dismisses the credits and releases to free-roam; the
+  score is already submitted (the timer stopped at the climax, before the credits).
+- **Timer discipline:** the credits are cosmetic and untimed — the scored `ms` is fixed
+  at the climax, so a slow-reading player never posts a worse board time.
+
+### Discoverability
+- **Gold ★ label** `★ FINALE: THE THRILLER` at `M12_TRIG` (City Hall plaza).
+- **`nextMissionHint()`:** append `if (!m12Best) return 'FINALE: THE THRILLER - MAGENTA
+  RING AT CITY HALL (ON FOOT)';` after the m11 branch. **After m12 is beaten**, the
+  chain is complete — return an "all-clear" line (e.g. `ALL MISSIONS CLEARED - CHASE
+  THE LEADERBOARDS`) instead of pointing further.
+- **F1 waypoint** retargets to `M12_TRIG` once m11 is beaten.
+- **Ring color: `M12_RING_COL = 0xd826ff` (candy-magenta — architect-pinned,
+  doc-wins).** A green m12 was ruled out: **m4's actual ring is `0x7cff4f`, a bright neon
+  lime**, so any near-lime green on the finale ring would sit only a few hue-degrees off
+  m4 — confusable at distance and worst-case for red-green color-blindness on the one
+  ring that must be unmistakable. **Candy-magenta `0xd826ff`** is CVD-safe against the
+  whole taken set (checked distinct from pink m6 and violet m9) and doubles as the
+  **gummy-bear hue** — better theme fit. Distinct from every ring in use: gold m1/m5,
+  teal m3, neon-lime m4 `0x7cff4f`, pink m6, blue m7, amber m8 `0xc8792e`, violet m9,
+  hazard-orange m10 `0xff6a00`, motorcade-red m11 `0xd7263c`. Start ring + wave markers
+  use `0xd826ff`.
+- **Start gate — full Phase-4 form (do NOT drop the bus/scooter checks):**
+  `allIdle() && !player.veh && !player.ride && player.bus === null && !player.scoot
+  && !isFrozen() && nearM12Trig()`. It's an **on-foot** mission — you must be out of
+  every vehicle (car, LOOP bus, scooter) and unfrozen at the plaza. (Same omission
+  trap the architect flagged on F8; keep all four vehicle-state checks.)
+
+### Build checklist (follow MODDING.md §"(c) A new mission", lines 286–341)
+Same recipe; mission-12 specifics (this is the heaviest mission — budget accordingly):
+1. **Island layout (statement order!):** declare `M12_TRIG`, `M12_WAVES` (the
+   per-phase spawn table), `m12Zombies` (the live entity array), `m12Mayor` (the ally
+   state), `m12Best` (from `lt_m12_best`), and `mission12` (`{stage:'idle', tStage,
+   t0, ms, phase:0, wave:0, hp:5, grade:0, capIdx:0}` — `grade` is the hallucination
+   color-grade scalar (0→1); `stage` runs `idle→brief→fighting→climax→won→credits→post
+   →idle`) as top-level `var`s **before** the label push and any builder. Read
+   `lt_m12_briefed` + `lt_m12_credits` at declare time.
+2. **Join `allIdle()`** (app.js:4339): add `&& mission12.stage === 'idle'`.
+3. **Gold ★ label** (above).
+4. **`nextMissionHint()` branch** + the post-m12 all-clear line (above).
+5. **`E` branch** with the **full Phase-4 gate** (`!player.veh && !player.ride &&
+   player.bus === null && !player.scoot`) + a `nearM12Trig()` helper.
+6. **Per-frame `updateMission12(dt)`:** `idle → brief → fighting → climax → won →
+   credits → post → idle` / `fighting|climax → fail → idle`. The **`brief`** stage
+   holds the clock and plays the beats (full first-ever, one quick ~4.6 s beat on
+   repeat, gated by `lt_m12_briefed`); **stamp `t0` only at the `CLOCK STARTED` GO
+   beat**. `fighting` runs the wave/phase state machine (spawn from `M12_WAVES`, cap
+   concurrent zombies, advance phase on wave-clear, auto-swap weapon + caption, drive
+   the mayor ally, tick player HP + between-wave regen; ramp `grade` IN across `brief`
+   and hold it through the fight); `climax` is the BIG ONE wave; **stop the timer** the
+   instant the last climax zombie dies, **snap `grade` back to 0** (the reveal), then
+   enter `won`→`credits`. HUD hint `THE THRILLER · PHASE n/3 · WAVE x · <s>s`. Emit funnel
+   telemetry (`mev`) in the **80–89** enum range (reserved: m8=20–29, m9=30–39,
+   daily=40–43, m10=50–54, **bus=60–69**, MOTORCADE=70–74).
+7. **Leaderboard UI:** on win call **`showScores(mission12.ms, 13)`** — the second arg
+   is the WIRE number (13), NOT the DOM id; passing `12` captions the win as a
+   MOTORCADE time. Add the **`board === 13`** verb (`THRILLER CLEARED IN `) and
+   **`board === 13 ? m12Best`** to the score modal. Add the `#scoreList12` `<ol>`
+   (+ `<h2>` + CSS) to `web/index.html`, and give `renderScores` a `fill('scoreList12',
+   m.m12)` plus `'scoreList12'` in the fetching-loop id array. (`scoreList12` is the
+   only "12"; the `showScores` arg, verb key, and best key are all `13`.)
+8. **Server board (server.js) — add ONLY `m12`** (m1–m11 already exist once §F8/§F9
+   have shipped; do NOT re-add them). Six sites, all keyed `'m12'`, each added **right
+   after the `m11` entry §F9 introduced** (the raw line numbers will have shifted — go
+   by the `m11` neighbor): `BOARDS` → add `'m12'`; the `scores` literal → `m12: []`;
+   `topScores()` → include `m12`; the board/score map → **`13: 'm12'`** (wire 13, after
+   `12: 'm11'`); the per-board `WIN` object → `m12: [30000, 900000]`; the announce map
+   → `` m12: `${n} cleared THE THRILLER and saved City Hall in ${sec}s` ``.
+9. **Credits scene (Phase B, task #80 — layers on a finished core):** a parallel
+   **`creditsActive`** flag (Photo Mode isolation precedent) driving
+   `cineShot`/`cineApplyPose`/`cineEase`/`cineLetterbox` (`cineLetterbox` @
+   **app.js:7354**, `__lt.cine` hook **~6998**) for a slow City Hall / Main St orbit + a
+   `#credits` DOM roll (real README/MODDING contributors + gag credits); first-clear gate
+   on `lt_m12_credits`; skippable; untimed.
+10. **README + tutorial:** THE FINALE blurb + `#tut` grid line (note it's the capstone
+    / requires the earlier missions via the chain).
+
+> **The wire-number trap.** Send `{t:'score', ms, m: 13}` — the **number 13**, not
+> `12` and not `'m12'`. Wire 10 is DAILY DASH, 11 is HIGH WATER, 12 is MOTORCADE; the
+> server maps `{…, 13:'m12'}[msg.m] || 'm1'`, so a wrong wire number silently lands
+> your times on the ribbon (m1) or a neighbor board.
+
+### Multiplayer behavior
+- **Entirely client-side**, like every mission. Zombies, waves, weapons, the mayor
+  ally, HP, and the credits are all local; only the final `{t:'score', ms, m:13}`
+  (wire 13 → board `m12`) touches the server → validated against `WIN.m12` →
+  `scores.json` → `{t:'scores'}` + announce.
+- The mayor ally is a **local mission entity** (mh/ghost shape), **never in `remotes`
+  and never on the wire**, so she exists online and offline identically. **Other real
+  players do not see your zombies or your mayor** — they only see you standing/fighting
+  on the plaza via the normal `m:0` on-foot remote render.
+- **Offline/bots-only:** fully playable (it's the least network-dependent mission —
+  everything is local); submit no-ops offline, local best saves. **Private rooms
+  (F4):** plays; score doesn't rank in a non-PUBLIC room; `lt_m12_best`/`_credits`
+  still save.
+
+### Edge cases
+- **Player downed mid-wave:** clean fail caption, reset to `idle`, no submit; `E`
+  restarts at the plaza. Zombies + mayor + weapon reset.
+- **Leaves the plaza / wanders off:** the mission is anchored to City Hall; going far
+  can either soft-fail ("you ran — the horde took the steps") or leash the fight to the
+  plaza. Pick one in playtest; default to a gentle "get back to the steps" nudge with a
+  short grace timer, then fail.
+- **Timer vs. credits:** the scored `ms` is frozen at the climax kill; the credits are
+  untimed and skippable — a slow reader never posts a worse time.
+- **Repeat clear:** `lt_m12_credits` already set → skip the full roll, short celebration
+  → board. Brief also short (`lt_m12_briefed`).
+- **Mobile / low-FPS:** the concurrent-zombie cap and wave sizes scale down (Phase-5
+  adaptive quality) so the finale stays >~24 fps on touch; the credits camera is a
+  simple move, not a heavy shader.
+- **Concurrent-mission guard:** `allIdle()` must include `mission12`.
+- **`lt_snd` muted:** the triumphant sting and combat SFX respect the mute flag.
+- **Retry:** `E` re-inits everything (waves, zombies, mayor, weapon, HP, clock) at the
+  plaza — no walk-back.
+
+### Non-goals (F10)
+- **No networked co-op / no new net protocol** — the "co-op" is the CPU mayor as a
+  **local mission entity** (mh/ghost shape, **never in `remotes`**); zombies and the ally
+  are all local. Only the final score touches the server.
+- **No new weapon *engine*** — the rocket reuses the shipped RPG rig; the MG + grenade
+  are **mission-local variants of the existing dart/rocket projectile loops** (`fireDart`
+  at cadence + a rocket projectile with gravity/fuse/area), not a new combat system, and
+  **must not leak into PvP** (the m8 blaster lesson — they only hit `m12Zombies`).
+- **No gore / no real-violence tone** — it's a slapstick **hallucination of parade
+  theater**: the "zombies" are the parade dancers, they **melt** (not ragdoll/bleed) on
+  hits, the **win reveal explicitly lands "nobody was harmed,"** and City Hall always
+  stands. Rated-teen, kept as light as THE MELT.
+- **No named/partisan content, and no drug-seeking framing** — THE MAYOR is unnamed and
+  party-less; the gummy bears are **hers** and "medicinal," shared **accidentally**, and
+  the player never buys or seeks them on screen. The gag is comedy, not a drug-policy
+  statement. Keep it silly.
+- **No map growth** — the fight is on the existing City Hall plaza; zombies spawn on
+  existing ground.
+- **No permanent unlock beyond the board + credits** — beating it sets `lt_m12_best`
+  and shows the credits once; it doesn't gate other content (it's the last link in the
+  chain).
+- **Mobile is a constraint, not an afterthought** — if a wave size can't hold frame-rate
+  on touch, cut it; the spectacle must not tank perf.
+
+### Acceptance checklist — F10 Mission 12: THE FINALE (THRILLER)
+
+Precondition: m1–m11 beaten, every mission idle (fast-forward the eleven bests, leave
+`lt_m12_best` + `lt_m12_credits` cleared, reload). Standing gate first (`node --check`
+both files, `npm test`). Two tabs for the announce check.
+
+- [ ] **Waypoint + start.** With m11 beaten and m12 not, F1's marker points to
+      `M12_TRIG`; the ★ FINALE label renders at the candy-magenta (`0xd826ff`) ring on
+      the City Hall plaza.
+- [ ] **Start gate is `allIdle` + on-foot + not in ANY vehicle.** `E` at the plaza ring
+      starts it only when every mission is idle and you're not in/​riding a car, on the
+      LOOP bus, or on a scooter (all four checks); the parade/gummy-bear brief fires and
+      the clock stays HELD until GO.
+- [ ] **Brief pattern (held clock).** First-ever play shows the full multi-beat brief
+      (parade → horde → machine gun → GO) with the clock HELD; `t0` stamps only at
+      `CLOCK STARTED`; `lt_m12_briefed` is set. A repeat play shows one quick ~4.6 s beat
+      then GO.
+- [ ] **Three weapon phases escalate.** MG → rocket → grenade auto-swap at phase
+      boundaries with a caption each; the climax wave includes THE BIG ONE. Rocket +
+      grenade phases force first person (`rpgOut()`).
+- [ ] **Zombies are local + capped.** The horde is a local `m12Zombies` array (not
+      `remotes`), hit-tested locally; concurrent count is capped and scales down on
+      touch/low-FPS. Frame-rate holds on a mid mobile device.
+- [ ] **The mayor ally fights + jokes + never dies + never in `remotes`.** THE MAYOR
+      appears as a **local mission entity** (mh/ghost precedent — verify she's NOT in
+      `remotes`: no freeze-tag tag, no `peerCount` "+1 IN CITY" phantom), stays near you,
+      fires cosmetically at zombies, drops deadpan banter, has no HP / never goes down,
+      and works offline too.
+- [ ] **Forgiving survival.** Generous HP with between-wave regen; being downed shows
+      the "gummy bears" fail and instant `E`-retry; a cautious player still finishes.
+- [ ] **Win → timer stops at the climax kill → board + announce.** Last BIG ONE down →
+      timer freezes, win caption; scores modal opens on the **m12** board
+      (`#scoreList12`, `THRILLER CLEARED IN …`) with your time; other tab's chat shows
+      `* MISSION  <name> cleared THE THRILLER and saved City Hall in <t>s`. The client
+      sends **wire `m:13`** → verify the time lands on the **m12** board.
+- [ ] **Credits scene (first clear).** First-ever clear letterboxes in
+      (`cineLetterbox`), pans over City Hall, scrolls the real credit roll with a
+      triumphant sting; it's skippable and untimed; `lt_m12_credits` is set. A repeat
+      clear skips the full roll.
+- [ ] **Local best persists + all-clear.** `lt_m12_best` set; after m12,
+      `nextMissionHint()` returns the all-missions-clear line, not a further pointer.
+- [ ] **Concurrent-mission exclusion.** During the fight, `E` at other rings does
+      nothing; `allIdle()` includes `mission12`.
+- [ ] **Server plumbing complete.** `m12` added (only — m1–m11 already present) to
+      `BOARDS`, the `scores` literal, `topScores()`, the score map (`13:'m12'`), the
+      `WIN` object (`[30000, 900000]`), and the announce map — a win persists under
+      `m12` and survives a restart.
+- [ ] **Surfaces updated together.** README mission list + `#tut` grid line +
+      `#scoreList12` block all present.
+- [ ] **Standing gate green.** `node --check web/app.js && node --check server.js` pass
+      and `npm test` is all green.
+
+### Notes for the architect / mission dev (F10)
+- **This is the heaviest mission — and it's designed to PHASE.** Build the
+  **wave-combat core (Phase A, task #75)** first — waves + local zombies + weapons +
+  the mayor ally + HP + a placeholder win — and ship it standalone; then **layer the
+  credits scene + hallucination-grade polish (Phase B, task #80)** on top. The spec is
+  ordered so the two are separable: the score/board plumbing lives entirely in the
+  core, and the credits are cosmetic and untimed, so Phase A is fully playable and
+  scoreable without Phase B.
+- **Reuse map (do NOT build new engines):**
+  - **Local entities / hit-tests** → the **m1 chopper-fight** NPC + **m4 horse**
+    (`m4Horses`) per-entity state-machine pattern; a mission-owned array, not the
+    `remotes`/PvP `hit`/`rhit` path.
+  - **Zombies** → reuse the **ped/NPC mesh** (avatar/ped builder) with a Thriller-dance
+    idle, but as a **local `m12Zombies` array (mh/m4Horses shape, NEVER in `remotes`)**;
+    chase-walk AI; **melt** on lethal hit (sink/scale dissolve, no ragdoll/gore).
+  - **Weapons** → **rocket = the existing RPG rig** (reuse); **machine gun + grenade =
+    mission-local VARIANTS of the existing dart/rocket projectile loops** — MG is
+    `fireDart` at a ~10/sec cadence, grenade is a rocket projectile with gravity + fuse +
+    area (feel numbers above); same substance, not a new engine. They hit only
+    `m12Zombies` and **must not leak into PvP** (m8 blaster lesson). FP forced via
+    **`rpgOut()`** for rocket + grenade.
+  - **Ally** → a **local mission entity** (mh/m4Horses shape, avatar-builder mesh + name
+    label, **`npcWalk`-style movement**) with the m1 chopper-fight NPC's
+    scripted-combatant behavior — and the **m5 GHOST rule: NEVER in `remotes`, never on
+    the wire** (else freeze-tag / `peerCount` / remote-consumer bleed; `npcWalk` is
+    movement only, not registration). Online/offline identical, zero protocol. **No HP /
+    never dies**.
+  - **Hallucination look** → the **m2Sky / m10Sky scalar overcast-blend** (sky/fog tint
+    + slight wobble), **NOT a shader** (SwiftShader/mobile). Ramp in over `brief`, snap
+    to 0 at the win reveal.
+  - **Credits** → a parallel **`creditsActive`** flag (Photo Mode isolation) +
+    **`cineShot`/`cineApplyPose`/`cineEase`/`cineLetterbox`** (`cineLetterbox` @
+    app.js:7354, `__lt.cine` hook ~6998) for a City Hall / Main St orbit + a `#credits`
+    DOM roll.
+  - **Audio** → synthesized WebAudio only (no assets), respecting `lt_snd`.
+- **Server: add ONLY `m12`** — m1–m11 already exist once §F8/§F9 ship. Six sites, all
+  keyed `'m12'`, each placed right after the `m11` entry: `BOARDS`, the `scores`
+  literal, `topScores()`, the score map as **`13:'m12'`** (wire 13), the `WIN` object,
+  the announce map. Go by the `m11` neighbor, not the raw line number (m10/m11
+  additions have shifted them). Do not re-add m8–m11.
+- **Keep the four identifiers straight: wire `13` → board `m12` → DOM `scoreList12`
+  → storage `lt_m12_best`.** The client sends `m:13` and calls `showScores(mission12.ms,
+  13)`; everything server-side keys `'m12'`; the leaderboard list id is the only `12`.
+- **Ship funnel telemetry** — `mev` enum in the **80–89** range
+  (start/phase-advance/wave-clear/downed/win/credits-shown).
+- **Statement order** — `M12_TRIG`, `M12_WAVES`, `m12Zombies`, `m12Mayor`, `mission12`
+  declared before the label push and any builder (the `vehicles`-before-init class of
+  crash applies double here given how many registries this touches).
+- **Timer stops at the climax kill, NOT after the credits** — the credits are cosmetic
+  and untimed so a slow reader never posts a worse board time.
+- **Mobile-perf is load-bearing** — cap concurrent zombies and scale waves down on
+  `IS_COARSE`/low-FPS; the finale's spectacle must not drop the frame-rate that Phase 5
+  just fought to protect.
+- **The hallucination frame is the license AND the guardrail** — it's why zombies can
+  exist here, and it's why the tone stays silly (gummy bears, a joking unnamed mayor,
+  no gore, City Hall always stands). Keep every caption in that register.
