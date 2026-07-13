@@ -2538,7 +2538,7 @@ function updateRadioChip(){
 // --- world/mission audio watcher, ticked from frame() ---
 var PARK_PTS = [[-171, 40], [122, 50], [250, 50], [350, 300], [150, -535], [150, -874]];
 var BELL_PT = {x: -46, z: -262};   // First Presbyterian tower
-var aw = {m1: '', m2: '', m3: '', m4: '', m5: '', m6: '', m7: '', m8: '', m9: '', m10: '', mD: '', hFloor: -1, horse: [], acc: 0};
+var aw = {m1: '', m2: '', m3: '', m4: '', m5: '', m6: '', m7: '', m8: '', m9: '', m10: '', m11: '', mD: '', hFloor: -1, horse: [], acc: 0};
 function stinger(stage, prev){
   if (stage === prev) return stage;
   if (prev !== ''){   // skip the very first observation (page load)
@@ -2567,6 +2567,7 @@ function updateAssetAudio(dt){
   aw.m8 = stinger(mission8.stage, aw.m8);
   aw.m9 = stinger(mission9.stage, aw.m9);
   aw.m10 = stinger(mission10.stage, aw.m10);
+  aw.m11 = stinger(mission11.stage, aw.m11);
   aw.mD = stinger(missionD.stage, aw.mD);
   // SNOW EMERGENCY: queue an EAS interrupt — it airs the moment the player
   // hops in the plow (the radio auto-starts and plays the queue first)
@@ -2881,12 +2882,14 @@ function showScores(myMs, board){
                board === 4 ? 'HORSES HOME IN ' : board === 5 ? 'DEADLINE MET IN ' :
                board === 6 ? 'SCOOPS LANDED IN ' : board === 7 ? 'LOT TAGGED IN ' :
                board === 8 ? 'FOALS PENNED IN ' : board === 9 ? 'ROUTE FLOWN IN ' :
+               board === 12 ? 'MOTORCADE DELIVERED IN ' :
                board === 11 ? 'LOW SPOTS HELD IN ' :
                board === 10 ? 'THE DASH IN ' : 'CHOPPER DOWN IN ';
     you = verb + fmtMs(myMs) + ' · +' + missionPoints(myMs) + ' PTS';
     var best = board === 2 ? m2Best : board === 3 ? m3Best : board === 4 ? m4Best :
                board === 5 ? m5Best : board === 6 ? m6Best : board === 7 ? m7Best :
                board === 8 ? m8Best : board === 9 ? m9Best :
+               board === 12 ? m11Best :
                board === 11 ? m10Best :
                board === 10 ? (dailyBest ? dailyBest.ms : 0) : missionBest;
     if (best) you += ' · DEVICE BEST ' + fmtMs(best);
@@ -2901,11 +2904,12 @@ function showScores(myMs, board){
       ' · ' + (m7Best ? 'TAILGATE: ' + fmtMs(m7Best) : 'TAILGATE: —') +
       ' · ' + (m8Best ? 'PADDOCK: ' + fmtMs(m8Best) : 'PADDOCK: —') +
       ' · ' + (m9Best ? 'AIR MAIL: ' + fmtMs(m9Best) : 'AIR MAIL: —') +
-      ' · ' + (m10Best ? 'HIGH WATER: ' + fmtMs(m10Best) : 'HIGH WATER: —');
+      ' · ' + (m10Best ? 'HIGH WATER: ' + fmtMs(m10Best) : 'HIGH WATER: —') +
+      ' · ' + (m11Best ? 'MOTORCADE: ' + fmtMs(m11Best) : 'MOTORCADE: —');
   }
   document.getElementById('scoreYou').textContent = you;
   setDailyMeta();
-  ['scoreListD', 'scoreList', 'scoreList2', 'scoreList3', 'scoreList4', 'scoreList5', 'scoreList6', 'scoreList7', 'scoreList8', 'scoreList9', 'scoreList10'].forEach(function(id){
+  ['scoreListD', 'scoreList', 'scoreList2', 'scoreList3', 'scoreList4', 'scoreList5', 'scoreList6', 'scoreList7', 'scoreList8', 'scoreList9', 'scoreList10', 'scoreList11'].forEach(function(id){
     var list = document.getElementById(id);
     if (!list) return;
     list.textContent = '';
@@ -2944,6 +2948,7 @@ function renderScores(m){
   fill('scoreList8', m.m8 || []);
   fill('scoreList9', m.m9 || []);
   fill('scoreList10', m.m10 || []);
+  fill('scoreList11', m.m11 || []);
   setDailyMeta();   // refresh the countdown + device best when server times land
 }
 function updateMission(dt){
@@ -5739,6 +5744,237 @@ function updateMission10(dt){
   if (mission10.stage === 'post'){ if (t > 22) m10Cleanup(); }
 }
 
+// ---------- MISSION 11: MOTORCADE (VIP tee-time escort, red rings) -------------
+// Ripped from the same July headlines as HIGH WATER (the runner-up hook): a VIP's
+// visit gridlocks downtown. You are LEAD CAR of the motorcade, racing a 180s
+// tee-time clock through 6 drive-through checkpoints from the downtown hotel out
+// to the country-club guest gate at the map edge. Checkpoint spine is m5 DEADLINE
+// (light-current, drive-through advance, NO hold). The twist is COMPOSURE: THE MELT's
+// one-frame crash cliff drains a 0..1 meter instead of melting seconds; smooth
+// driving regens it; empty it and the VIP makes you PULL OVER (car frozen 3.5s, the
+// clock keeps running). SCORE IS PURE ELAPSED - the pull-over is real wall-time, so
+// there is NO synthetic penalty fold (unlike m6/m10). No weather hook (golf is sunny).
+// Voice: THE ADVANCE (radio) + THE VIP (unnamed). Wire 12 / key m11 / DOM scoreList11.
+// Top-level vars declared before the labels.push block below (statement order).
+var M11_TRIG = {x: -200, z: 0};        // Main & Broadway - the downtown hotel
+var M11_BUDGET = 180;                  // tee-time clock (seconds)
+var M11_RING_COL = 0xd7263c;           // motorcade red (spec-final; distinct from m10 hazard-orange)
+var M11_KNOCK_DRAIN = 0.34;            // composure lost per hard bump
+var M11_REGEN = 0.15;                  // composure regained per second of smooth driving
+var M11_PULLOVER = 3.5;                // seconds frozen when composure empties (real wall-time)
+// Six drive-through checkpoints, west-to-east: downtown hotel -> Chevy Chase ->
+// the country-club guest gate at the map edge. Coords verified as real EW/NS
+// crossings; only the current one lights, next lights on arrival (m5 pattern).
+var M11_ROUTE = [
+  {x: 0,   z: 0,   name: 'MAIN AND UPPER'},
+  {x: 100, z: 100, name: 'VINE AND LIMESTONE'},
+  {x: 300, z: 200, name: 'HIGH AND ROSE'},
+  {x: 400, z: 400, name: 'EUCLID AND WOODLAND'},
+  {x: 500, z: 400, name: 'EUCLID AND ASHLAND'},
+  {x: 720, z: 400, name: 'IDLE HOUR - GUEST GATE'}
+];
+var m11Best = 0;
+try { m11Best = parseInt(localStorage.getItem('lt_m11_best') || '0', 10) || 0; } catch (e){}
+var mission11 = {stage: 'idle', tStage: 0, t0: 0, ms: 0, cur: 0, capIdx: 0,
+                 composure: 1, prevSpd: 0, knockAt: 0, pullover: false, pullT: 0,
+                 lowNudged: false, quick: false};
+var m11Rings = [], m11Trig = null;
+(function(){
+  // hotel-curb theater at the trigger - cosmetic only, NO colliders (the player
+  // must move freely to grab a car) and NO vehicles[] entry (any car escorts)
+  var canopy = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.25, 2.2),
+    new THREE.MeshStandardMaterial({color: 0x2b2f38, roughness: 0.8}));
+  canopy.position.set(M11_TRIG.x, 3.1, -11); scene.add(canopy);
+  var post1 = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 3.1, 8),
+    new THREE.MeshStandardMaterial({color: 0x1b1e24, roughness: 0.7}));
+  post1.position.set(M11_TRIG.x - 1.9, 1.55, -10.2); scene.add(post1);
+  var post2 = post1.clone(); post2.position.set(M11_TRIG.x + 1.9, 1.55, -10.2); scene.add(post2);
+  var carpet = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.04, 5),
+    new THREE.MeshStandardMaterial({color: M11_RING_COL, roughness: 0.9}));
+  carpet.position.set(M11_TRIG.x, 0.03, -6); scene.add(carpet);
+  labels.push({name: 'THE HOTEL', x: M11_TRIG.x, y: 6, z: -11});
+  // the VIP's black SUV, idling at the curb for theater - static, NOT in vehicles[]
+  var suv = new THREE.Group();
+  var body = new THREE.Mesh(new THREE.BoxGeometry(2.1, 1.0, 4.6),
+    new THREE.MeshStandardMaterial({color: 0x0a0a0c, roughness: 0.5, metalness: 0.3}));
+  body.position.y = 0.85;
+  var cabin = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.8, 2.6),
+    new THREE.MeshStandardMaterial({color: 0x101014, roughness: 0.4, metalness: 0.3}));
+  cabin.position.set(0, 1.6, -0.2);
+  suv.add(body); suv.add(cabin);
+  var wpos = [[-0.95, -1.6], [0.95, -1.6], [-0.95, 1.6], [0.95, 1.6]];
+  for (var wi = 0; wi < 4; wi++){
+    var wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.3, 10),
+      new THREE.MeshStandardMaterial({color: 0x111111, roughness: 0.85}));
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(wpos[wi][0], 0.42, wpos[wi][1]);
+    suv.add(wheel);
+  }
+  suv.position.set(M11_TRIG.x + 9, 0, 3);   // on the road just east of the curb, facing east
+  suv.rotation.y = Math.PI / 2;
+  scene.add(suv);
+  // red start ring at the hotel
+  m11Trig = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.06, 6, 24),
+    new THREE.MeshBasicMaterial({color: M11_RING_COL, transparent: true, opacity: 0.85}));
+  m11Trig.rotation.x = Math.PI / 2;
+  m11Trig.position.set(M11_TRIG.x, 0.9, M11_TRIG.z);
+  scene.add(m11Trig);
+  M11_ROUTE.forEach(function(cp){
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(4.5, 0.12, 6, 28),
+      new THREE.MeshBasicMaterial({color: M11_RING_COL, transparent: true, opacity: 0.7}));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(cp.x, 1.2, cp.z);
+    ring.visible = false;
+    scene.add(ring);
+    m11Rings.push(ring);
+  });
+})();
+function nearM11Trig(){
+  var dx = player.x - M11_TRIG.x, dz = player.z - M11_TRIG.z;
+  return dx * dx + dz * dz < 16;
+}
+function m11Sec(){
+  return (performance.now() - mission11.t0) / 1000;   // PURE elapsed - no composure fold
+}
+function startMission11(){
+  mission11.stage = 'brief'; mission11.tStage = 0; mission11.capIdx = 0;
+  mission11.cur = 0; mission11.ms = 0; mission11.composure = 1;
+  mission11.prevSpd = 0; mission11.knockAt = 0;
+  mission11.pullover = false; mission11.pullT = 0; mission11.lowNudged = false;
+  mission11.quick = true;
+  try { mission11.quick = localStorage.getItem('lt_m11_briefed') === '1'; } catch (e){}
+  try { localStorage.setItem('lt_m11_briefed', '1'); } catch (e){}
+  caption('THE ADVANCE', mission11.quick
+    ? 'LEAD CAR TO THE COUNTRY CLUB BEFORE THE TEE TIME. SMOOTH AND FAST. GO.'
+    : 'THE VIP LANDED AND HE IS ALREADY LATE FOR HIS TEE TIME. YOU ARE LEAD CAR. GET THE MOTORCADE TO THE COUNTRY CLUB.', 5000);
+  addChatLine('* MISSION', 'MOTORCADE - lead the VIP to his tee time', true);
+  mev(70);   // funnel: mission start
+}
+function m11Cleanup(){
+  mission11.stage = 'idle';
+  for (var k = 0; k < m11Rings.length; k++) m11Rings[k].visible = false;
+}
+function updateMission11(dt){
+  if (m11Trig){
+    m11Trig.visible = allIdle();
+    if (m11Trig.visible) m11Trig.rotation.z += dt * 0.8;
+  }
+  if (mission11.stage === 'idle') return;
+  var now = performance.now();
+  mission11.tStage += dt;
+  var t = mission11.tStage;
+  if (mission11.stage === 'brief'){
+    // the tee-time clock is HELD through the brief - t0 stamps at GO
+    if (!mission11.quick){
+      if (t > 5.4 && mission11.capIdx === 0){ mission11.capIdx = 1; caption('THE ADVANCE', 'HIT EVERY CHECKPOINT ON THE CLEARED ROUTE - FAST. BUT KEEP IT SMOOTH; EVERY BUMP RATTLES THE VIP AND HE WILL MAKE YOU PULL OVER.', 5200); }
+    }
+    if (t > (mission11.quick ? 4.6 : 11.2)){
+      mission11.stage = 'escort'; mission11.tStage = 0; mission11.capIdx = 0;
+      mission11.t0 = performance.now();
+      caption('DISPATCH', 'CLOCK STARTED. SIX CHECKPOINTS. GO - THE TEE TIME WILL NOT WAIT.', 4400);
+    }
+    return;
+  }
+  if (mission11.stage === 'escort'){
+    for (var k = 0; k < m11Rings.length; k++){
+      var on = k === mission11.cur;
+      m11Rings[k].visible = on;
+      if (on) m11Rings[k].rotation.z += dt * 0.9;
+    }
+    if (mission11.pullover){
+      // the VIP made you stop: hold the car (re-zeroed each frame; a frame of
+      // throttle creep is fine - advance is blocked anyway). The clock keeps
+      // ticking (t0 untouched). Refill to 0.6 at the end so there is no soft-lock.
+      if (player.veh) player.veh.spd = 0;
+      // keep prevSpd synced across the hold, else the post-crash residual (~5 after
+      // the 0.2x crunch) reads as a fresh drop on release (stale - 0 > 4) and fires
+      // a phantom knock - a second composure hit + crash sound the player never made.
+      mission11.prevSpd = player.veh ? Math.abs(player.veh.spd) : 0;
+      if (now >= mission11.pullT){ mission11.pullover = false; mission11.composure = 0.6; }
+    } else {
+      // COMPOSURE: THE MELT's one-frame crash cliff drains it (in-car only); smooth
+      // frames regen it. A collision chops speed in one frame; braking never does.
+      if (player.veh){
+        var as = Math.abs(player.veh.spd);
+        var drop = mission11.prevSpd - as;
+        if (drop > 4 && drop > mission11.prevSpd * 0.5 && t > mission11.knockAt){
+          mission11.knockAt = t + 0.8;
+          mission11.composure = Math.max(0, mission11.composure - M11_KNOCK_DRAIN);
+          sndTone(150, 0.22, 0, 'sawtooth', 0.18);
+          // pull-over fires drain-side, BEFORE the regen below, and a knock is the
+          // ONLY way composure falls. The regen would lift the floor-clamped 0 to
+          // epsilon within the same frame, so a bottom-of-frame <=0 check never fired.
+          if (mission11.composure <= 0 && !mission11.pullover){
+            mission11.pullover = true;
+            mission11.pullT = now + M11_PULLOVER * 1000;
+            mev(72);   // funnel: composure emptied -> pull-over
+            caption('THE ADVANCE', 'PULL OVER - HE IS FIXING HIS HAIR. THAT COST YOU.', 4000);
+          }
+        }
+        mission11.prevSpd = as;
+      } else mission11.prevSpd = 0;
+      // regen + nudge only while NOT pulled over (including the frame a knock just
+      // triggered the hold) — the refill-to-0.6 at pullT is the only way back up
+      if (!mission11.pullover){
+        mission11.composure = Math.min(1, mission11.composure + M11_REGEN * dt);
+        if (mission11.composure < 0.35 && !mission11.lowNudged){
+          mission11.lowNudged = true;
+          caption('THE VIP', 'EASY - I AM TURNING GREEN BACK HERE.', 3400);
+        } else if (mission11.composure > 0.5 && mission11.lowNudged){
+          mission11.lowNudged = false;
+        }
+      }
+    }
+    if (m11Sec() > M11_BUDGET){
+      mission11.stage = 'fail'; mission11.tStage = 0;
+      for (var f = 0; f < m11Rings.length; f++) m11Rings[f].visible = false;
+      mev(74);   // funnel: fail (tee time blew)
+      caption('THE ADVANCE', 'TEE TIME BLEW. THE VIP TOOK A CART FROM THE GATE - AND IT IS ON YOU.', 5000);
+      return;
+    }
+    // advance the current checkpoint ONLY while driving within ~8m; on foot never
+    // counts, and it is blocked while pulled over
+    if (player.veh && !mission11.pullover){
+      var cp = M11_ROUTE[mission11.cur];
+      if (Math.hypot(cp.x - player.x, cp.z - player.z) < 8){
+        mission11.cur++;
+        mev(71);   // funnel: a checkpoint cleared
+        if (mission11.cur >= M11_ROUTE.length){
+          mission11.ms = now - mission11.t0;   // PURE elapsed (no fold - pull-over is real time)
+          mission11.stage = 'won'; mission11.tStage = 0; mission11.capIdx = 0;
+          for (var w = 0; w < m11Rings.length; w++) m11Rings[w].visible = false;
+          sndWin(); sndApplause();
+          caption('THE ADVANCE', 'MOTORCADE DELIVERED - THE VIP MADE HIS TEE TIME. NOW GET THESE STREETS BACK OPEN.', 5200);
+          try {
+            if (!m11Best || mission11.ms < m11Best){
+              m11Best = mission11.ms;
+              localStorage.setItem('lt_m11_best', String(Math.round(mission11.ms)));
+            }
+          } catch (e){}
+          sendScore({t: 'score', ms: Math.round(mission11.ms), m: 12});   // WIRE 12 (board m11) - never 11/10
+          mev(73);   // funnel: mission win
+        } else {
+          sndTone(880, 0.18, 0, 'square', 0.14);
+          if (mission11.cur === 3) caption('THE ADVANCE', 'HALFWAY - THE VIP IS CHECKING HIS WATCH.', 3400);
+          else caption('THE ADVANCE', 'CHECKPOINT CLEAR. NEXT: ' + M11_ROUTE[mission11.cur].name + '.', 3000);
+        }
+      }
+    }
+    return;
+  }
+  if (mission11.stage === 'won'){
+    if (t > 5.4 && mission11.capIdx === 0){
+      mission11.capIdx = 1;
+      caption('RADIO', 'NEWS 630 DOWNTOWN IS REOPENING NOW THAT A CERTAIN VISITOR HAS REACHED THE FIRST TEE. NO WORD YET ON HIS SCORECARD.', 5200);
+      showScores(mission11.ms, 12);   // WIRE 12 - passing 11/10 would caption the wrong board
+      mission11.stage = 'post'; mission11.tStage = 0;
+    }
+    return;
+  }
+  if (mission11.stage === 'fail'){ if (t > 5) m11Cleanup(); return; }
+  if (mission11.stage === 'post'){ if (t > 22) m11Cleanup(); }
+}
+
 // ---------- DAILY DASH (mission D): one rotating checkpoint route per day ----
 // A daily challenge with its own global board: five checkpoints drawn
 // deterministically from a twelve-landmark pool by the EST day seed, so every
@@ -5946,7 +6182,7 @@ function allIdle(){
          mission3.stage === 'idle' && mission4.stage === 'idle' &&
          mission5.stage === 'idle' && mission6.stage === 'idle' &&
          mission7.stage === 'idle' && mission8.stage === 'idle' &&
-         mission9.stage === 'idle' && mission10.stage === 'idle' && missionD.stage === 'idle';
+         mission9.stage === 'idle' && mission10.stage === 'idle' && mission11.stage === 'idle' && missionD.stage === 'idle';
 }
 // Everything mission-related on the overlay (start markers, target
 // brackets, edge arrow, timers, zone chips, the fight chopper tag) draws
@@ -5967,6 +6203,7 @@ labels.push({name: '★ MISSION: TAILGATE COMPLIANCE', x: M7_TRIG.x, y: 9, z: M7
 labels.push({name: '★ MISSION: LOOSE IN THE PADDOCK', x: M8_TRIG.x, y: 9, z: M8_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: AIR MAIL', x: M9_TRIG.x, y: 9, z: M9_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: HIGH WATER', x: M10_TRIG.x, y: 9, z: M10_TRIG.z, col: MISSION_COL, mission: true});
+labels.push({name: '★ MISSION: MOTORCADE', x: M11_TRIG.x, y: 9, z: M11_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ DAILY: THE DASH', x: MD_TRIG.x, y: 9, z: MD_TRIG.z, col: MISSION_COL, mission: true});
 // the gentle shove: when nothing else is going on, point at the next mission
 // bare next-unbeaten mission name, by the same best-gated chain ('' when all
@@ -5982,7 +6219,8 @@ function nextMissionName(){
   if (!m8Best) return 'LOOSE IN THE PADDOCK';
   if (!m9Best) return 'AIR MAIL';
   if (!m10Best) return 'HIGH WATER';
-  // all ten beaten: point at today's DAILY DASH until it's run today
+  if (!m11Best) return 'MOTORCADE';
+  // all eleven beaten: point at today's DAILY DASH until it's run today
   if (!dailyBest || dailyBest.day !== dayIndex()) return 'THE DASH';
   return '';
 }
@@ -5998,6 +6236,7 @@ var MISSION_HINT_SUFFIX = {
   'LOOSE IN THE PADDOCK': 'AMBER RING AT ELMENDORF (NORTH, PAST NEW CIRCLE)',
   'AIR MAIL': 'VIOLET RING DOWNTOWN (JETPACK - HOLD SPACE)',
   'HIGH WATER': 'ORANGE RING AT THE PUBLIC WORKS YARD (DRIVE)',
+  'MOTORCADE': 'RED RING AT THE DOWNTOWN HOTEL (DRIVE)',
   'THE DASH': 'GOLD RING AT THE COURTHOUSE — NEW ROUTE DAILY'
 };
 function nextMissionHint(){
@@ -6023,6 +6262,7 @@ if (/debug=1/.test(hashStr)){
     m6: function(){ return mission6; },
     m7: function(){ return mission7; },
     m10: function(){ return mission10; },
+    m11: function(){ return mission11; },
     veh: function(){ return !!player.veh; },
     m4horses: function(){ return m4Horses.map(function(h){ return {s: h.state, x: Math.round(h.g.position.x), z: Math.round(h.g.position.z)}; }); },
     photo: function(){ takePhoto(); },
@@ -6172,6 +6412,10 @@ function tryEnterExit(){
   }
   if (allIdle() && !player.veh && !player.ride && player.bus === null && !player.scoot && !isFrozen() && nearM10Trig()){
     startMission10();
+    return;
+  }
+  if (allIdle() && !player.veh && !player.ride && player.bus === null && !player.scoot && !isFrozen() && nearM11Trig()){
+    startMission11();
     return;
   }
   if (allIdle() && !player.veh && !player.ride && player.bus === null && !player.scoot && !isFrozen() && nearMDTrig()){
@@ -6835,7 +7079,7 @@ function eActionLabel(){
   if (allIdle() && !isFrozen() &&
       (nearMissionTrig() || (heliUnlocked && nearDoor()) || nearM3Trig() ||
        nearM4Trig() || nearM5Trig() || nearM6Trig() || nearM7Trig() ||
-       nearM8Trig() || nearM9Trig() || nearM10Trig() || nearMDTrig())) return 'START';
+       nearM8Trig() || nearM9Trig() || nearM10Trig() || nearM11Trig() || nearMDTrig())) return 'START';
   if (!isFrozen() && calmableHorse()) return 'CALM';
   if (canEnterHeli()) return 'FLY';
   if (canBoardBus()) return 'BOARD';
@@ -7782,6 +8026,10 @@ function missionTarget(){
     var s10 = M10_SPOTS[mission10.cur];
     return {x: s10.x, y: 3, z: s10.z, label: 'LOW SPOT ' + (mission10.cur + 1) + '/' + M10_SPOTS.length};
   }
+  if (mission11.stage === 'escort' && mission11.cur < M11_ROUTE.length){
+    var cp11 = M11_ROUTE[mission11.cur];
+    return {x: cp11.x, y: 3, z: cp11.z, label: 'CHECKPOINT ' + (mission11.cur + 1) + '/' + M11_ROUTE.length};
+  }
   if (mission7.stage === 'tag'){
     var tent = m7NextTent();
     if (tent) return {x: tent.x, y: 3, z: tent.z,
@@ -7900,6 +8148,8 @@ function currentObjective(){
     return {x: M9_TRIG.x, y: 9, z: M9_TRIG.z, label: 'AIR MAIL'};
   if (typeof m10Best !== 'undefined' && !m10Best && typeof M10_TRIG !== 'undefined')
     return {x: M10_TRIG.x, y: 9, z: M10_TRIG.z, label: 'HIGH WATER'};
+  if (typeof m11Best !== 'undefined' && !m11Best && typeof M11_TRIG !== 'undefined')
+    return {x: M11_TRIG.x, y: 9, z: M11_TRIG.z, label: 'MOTORCADE'};
   if (typeof missionD !== 'undefined' && (!dailyBest || dailyBest.day !== dayIndex()))
     return {x: MD_TRIG.x, y: 9, z: MD_TRIG.z, label: 'THE DASH'};
   return null;
@@ -8409,6 +8659,7 @@ function frameStep(now){
   updateMission8(dt);
   updateMission9(dt);
   updateMission10(dt);
+  updateMission11(dt);
   updateMissionD(dt);
   updateRouteRibbon(dt);
   updateRockets(dt);
@@ -8497,6 +8748,7 @@ function frameStep(now){
     }
     else if (mission6.stage === 'drive') hint = 'THE MELT · STOP ' + (mission6.cur + 1) + '/' + M6_CPS.length + ' · MELT ' + Math.min(99, Math.max(0, Math.round(m6MeltSec() / M6_BUDGET * 100))) + '% · CRASHES MELT IT FASTER';
     else if (mission10.stage === 'hauling') hint = 'HIGH WATER · BAGGED ' + mission10.cur + '/' + M10_SPOTS.length + ' · ' + Math.max(0, Math.ceil(M10_BUDGET - m10Sec())) + 's LEFT · EASE THROUGH THE WATER';
+    else if (mission11.stage === 'escort') hint = 'MOTORCADE · CHECKPOINT ' + (mission11.cur + 1) + '/' + M11_ROUTE.length + ' · ' + Math.max(0, Math.ceil(M11_BUDGET - m11Sec())) + 's LEFT · ' + (mission11.pullover ? 'PULLED OVER' : 'COMPOSURE ' + Math.round(mission11.composure * 100) + '%');
     else if (missionD.stage === 'run') hint = 'DAILY DASH · CHECKPOINT ' + (missionD.cur + 1) + '/' + MD_N + ' · NEXT: ' + MD_CPS[missionD.cur].name + ' · ' + ((performance.now() - missionD.t0) / 1000).toFixed(1) + 's · ANY WHEELS';
     else if (player.veh) hint = 'E — EXIT · W/S DRIVE · A/D STEER · ' + Math.round(Math.abs(player.veh.spd) * 3.6) + ' KM/H';
     else if (mission2.stage === 'plow' && plowVeh) hint = 'GET TO THE PLOW — MAIN ST BY CITY HALL (E TO BOARD)';
@@ -8521,6 +8773,7 @@ function frameStep(now){
     else if (allIdle() && nearM8Trig()) hint = 'E — START MISSION: LOOSE IN THE PADDOCK';
     else if (allIdle() && nearM9Trig()) hint = 'E — START MISSION: AIR MAIL';
     else if (allIdle() && nearM10Trig()) hint = 'E — START MISSION: HIGH WATER';
+    else if (allIdle() && nearM11Trig()) hint = 'E — START MISSION: MOTORCADE';
     else if (allIdle() && nearMDTrig()) hint = 'E — START THE DAILY DASH';
     else if (canEnterHeli()) hint = 'E — FLY THE NEWS CHOPPER';
     else if (!heliUnlocked && canEnterHeliBase()) hint = 'LOCKED — BEAT "THE RIBBON CUTTING" AT CITY HALL TO FLY';
