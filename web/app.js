@@ -1589,6 +1589,19 @@ function collide(p, r, y){
 // ---------- identity ----------
 var PLAYER_COLS = [0x3a76c4, 0xc44b3a, 0x3f9d5a, 0xb08a2e, 0x7a4a9d, 0xd4703a];
 var hashStr = location.hash || '';
+// ---------- OCTOBER: THRILLER season ----------
+// All October (viewer's local clock) THE THRILLER is the headline: spawn on the
+// City Hall plaza, every other mission's ring / label / trigger is suppressed
+// until the finale is cleared THIS page session (a plain var - never persisted, so
+// each visit opens with the parade), and downtown wears its Halloween dressing.
+// #october=1 / #october=0 force it on or off for testing.
+var OCTOBER = (function(){
+  var om = /(?:^|[#&])october=([01])/.exec(hashStr);
+  if (om) return om[1] === '1';
+  return new Date().getMonth() === 9;
+})();
+var m12SessionClear = false;
+function octLocked(){ return OCTOBER && !m12SessionClear; }
 function cleanName(s){
   return (s || '').replace(/[^A-Za-z0-9 _-]/g, '').trim().slice(0, 14).toUpperCase();
 }
@@ -1622,6 +1635,9 @@ var spawnX = 14, spawnZ = -9.5;
   var mz = /(?:^|[#&])z=(-?[\d.]+)/.exec(hashStr);
   if (mx) spawnX = Math.max(X0 - 20, Math.min(X1 + 20, parseFloat(mx[1])));
   if (mz) spawnZ = Math.max(Z0 - 20, Math.min(Z1 + 20, parseFloat(mz[1])));
+  // October: no deep link -> spawn on the City Hall plaza, a few steps from the
+  // magenta THE THRILLER ring (M12_TRIG is declared much later; literal on purpose)
+  if (OCTOBER && !mx && !mz){ spawnX = 141; spawnZ = 20; }
 })();
 var player = {x: spawnX, y: 0, z: spawnZ, vy: 0, ry: -Math.PI / 2, phase: 0, swing: 0,
               grounded: true, moving: 0, fuel: 100, thrusting: false, veh: null,
@@ -1637,17 +1653,40 @@ var dartGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.4, 8);
 var dartMat = new THREE.MeshStandardMaterial({color: 0x2f6fd4, roughness: 0.6});
 var dartTipMat = new THREE.MeshStandardMaterial({color: 0xff7a1a, roughness: 0.4});
 var lastFire = 0;
-function spawnDart(ox, oy, oz, dx, dy, dz, mine){
+var dartTipGeo = new THREE.SphereGeometry(0.09, 6, 6);
+// THE THRILLER's machine gun fires glowing tracers: faster, flat (no foam droop)
+var tracerGeo = new THREE.BoxGeometry(0.07, 0.07, 1.3);
+var tracerMat = new THREE.MeshBasicMaterial({color: 0xffd27a});
+function spawnDart(ox, oy, oz, dx, dy, dz, mine, tracer){
   var g = new THREE.Group();
-  var body = new THREE.Mesh(dartGeo, dartMat);
-  body.rotation.x = Math.PI / 2; g.add(body);
-  var tip = new THREE.Mesh(new THREE.SphereGeometry(0.09, 6, 6), dartTipMat);
-  tip.position.z = 0.22; g.add(tip);
+  if (tracer){
+    g.add(new THREE.Mesh(tracerGeo, tracerMat));
+  } else {
+    var body = new THREE.Mesh(dartGeo, dartMat);
+    body.rotation.x = Math.PI / 2; g.add(body);
+    var tip = new THREE.Mesh(dartTipGeo, dartTipMat);
+    tip.position.z = 0.22; g.add(tip);
+  }
   g.position.set(ox, oy, oz);
   g.lookAt(ox + dx, oy + dy, oz + dz);
   scene.add(g);
-  darts.push({g: g, vx: dx * 38, vy: dy * 38, vz: dz * 38,
-              born: performance.now(), mine: !!mine});
+  var v = tracer ? 72 : 38;
+  darts.push({g: g, vx: dx * v, vy: dy * v, vz: dz * v,
+              born: performance.now(), mine: !!mine, tracer: !!tracer});
+}
+// THE THRILLER: does a point on my tracer's path hit a live zombie? (body cylinder,
+// head zone above headY doubles damage). Returns true when it connected.
+function m12DartHit(px, py, pz, d, now){
+  for (var zk = 0; zk < m12Zombies.length; zk++){
+    var zt = m12Zombies[zk];
+    if (zt.state === 'dying') continue;
+    var zdx = px - zt.x, zdz = pz - zt.z, zdy = py - zt.y;
+    if (zdx * zdx + zdz * zdz < zt.r * zt.r && zdy > -0.3 && zdy < zt.headY + 0.7 * zt.s){
+      damageZombie(zt, 1, now, d.vx, d.vz, zdy > zt.headY);
+      return true;
+    }
+  }
+  return false;
 }
 function setPvp(on){
   if (on && (player.ride || player.bus !== null || player.scoot)) return;   // a passenger / scooter rider is never a valid tag target
@@ -1703,13 +1742,14 @@ function updateDarts(dt){
   var now = performance.now();
   for (var i = darts.length - 1; i >= 0; i--){
     var d = darts[i];
-    d.vy -= 6 * dt;   // foam-dart droop
+    if (!d.tracer) d.vy -= 6 * dt;   // foam-dart droop (tracers fly flat)
+    var hx0 = d.g.position.x + d.vx * dt * 0.5, hy0 = d.g.position.y + d.vy * dt * 0.5, hz0 = d.g.position.z + d.vz * dt * 0.5;
     d.g.position.x += d.vx * dt;
     d.g.position.y += d.vy * dt;
     d.g.position.z += d.vz * dt;
     var p = d.g.position;
     var surface = p.y < 0.05 || pointInBuilding(p.x, p.y, p.z);
-    if (surface) puff(p.x, Math.max(0.2, p.y), p.z, 0x9adfff, 0.14, 1.1, 240, 0.6, 0.7);
+    if (surface) puff(p.x, Math.max(0.2, p.y), p.z, d.tracer ? 0xffc070 : 0x9adfff, 0.14, 1.1, 240, 0.6, 0.7);
     var dead = now - d.born > 2000 || surface;
     // mission 8: my darts settle loose foals (client-local — other players'
     // darts are cosmetic and never touch my foals)
@@ -1728,20 +1768,11 @@ function updateDarts(dt){
     }
     // mission 12 (THE THRILLER): my machine-gun darts damage the local horde,
     // mine-only, no broadcast (zombies never enter remotes)
+    // (tested at the half-step too so a fast tracer can't tunnel through a runner)
     if (!dead && d.mine && thrillerFight()){
-      for (var zk = 0; zk < m12Zombies.length; zk++){
-        var zt = m12Zombies[zk];
-        if (zt.state === 'dying') continue;
-        var zdx = p.x - zt.x, zdz = p.z - zt.z, zdy = p.y - (zt.y + 1.4);
-        var zr = zt.boss ? 3.2 : 1.4;
-        if (zdx * zdx + zdz * zdz < zr * zr && zdy * zdy < 4){
-          dead = true;
-          damageZombie(zt, 1, now);
-          break;
-        }
-      }
+      if (m12DartHit(hx0, hy0, hz0, d, now) || m12DartHit(p.x, p.y, p.z, d, now)) dead = true;
     }
-    if (!dead && d.mine){
+    if (!dead && d.mine && !d.tracer){
       for (var id in remotes){
         var r = remotes[id];
         if (!r.p) continue;                                   // not opted in
@@ -2196,12 +2227,12 @@ function spawnRocket(ox, oy, oz, dx, dy, dz, mine){
                 born: performance.now(), puffAt: 0, mine: !!mine});
   sndRocket();
 }
-function fireRocket(){
+function fireRocket(keepAim, cool){
   var now = performance.now();
-  if (now - lastRocket < 1100 || isFrozen()) return;
+  if (now - lastRocket < (cool || 1100) || isFrozen()) return;
   lastRocket = now;
   if (!missionFight() && !thrillerFight()) myRpg--;   // the ceremonial RPG never runs dry
-  camera.getWorldDirection(_aim);
+  if (!keepAim) camera.getWorldDirection(_aim);   // THE THRILLER pre-aims (touch aim assist)
   player.ry = Math.atan2(_aim.x, _aim.z);
   var ox = player.x + _aim.x * 1.5;
   var oy = player.y + 1.9 + _aim.y * 1.5;
@@ -2266,8 +2297,10 @@ function updateRockets(dt){
           var zd = m12Zombies[za];
           if (zd.state === 'dying') continue;
           var adx = p.x - zd.x, adz = p.z - zd.z, ady = p.y - (zd.y + 1.2);
-          if (adx * adx + adz * adz + ady * ady < 49) damageZombie(zd, 5, now);
+          if (adx * adx + adz * adz + ady * ady < 49) damageZombie(zd, 5, now, -adx, -adz);
         }
+        var pdb = Math.hypot(p.x - player.x, p.z - player.z);
+        addShake(Math.max(0, 0.5 - pdb / 80));   // feel the blast, scaled by distance
       }
       explosion(p.x, p.y, p.z, big);
       scene.remove(r.g); rockets.splice(i, 1);
@@ -2780,6 +2813,7 @@ var mh = null;      // mission chopper {parts, x,y,z,th,hp,alive,down,...}
 var chute = null;   // the new guy
 function missionFight(){ return mission.stage === 'fight' && mh && mh.alive; }
 function nearMissionTrig(){
+  if (octLocked()) return false;   // October: THE THRILLER first
   var dx = player.x - MISSION_TRIG.x, dz = player.z - MISSION_TRIG.z;
   return dx * dx + dz * dz < 16;
 }
@@ -3001,7 +3035,7 @@ function updateMission(dt){
   if (capEl && !capEl.hidden && now > capUntil) capEl.hidden = true;
   if (setPieces.trig){
     setPieces.trig.rotation.z += dt * 0.8;
-    setPieces.trig.visible = allIdle();
+    setPieces.trig.visible = allIdle() && !octLocked();
   }
   updateChute(dt);
   if (mh && mh.mesh.visible){
@@ -3156,6 +3190,7 @@ var door = {open: false, ang: 0, L: null, R: null, ring: null};
   door.ring = ring;
 })();
 function nearDoor(){
+  if (octLocked()) return false;   // October: THE THRILLER first
   var dx = player.x - DOOR_P.x, dz = player.z - DOOR_P.z;
   return dx * dx + dz * dz < 22;
 }
@@ -3923,7 +3958,7 @@ function updateMission2(dt){
   door.ang += (((door.open ? 1.55 : 0)) - door.ang) * Math.min(1, dt * 2.5);
   door.L.rotation.y = -door.ang;
   door.R.rotation.y = door.ang;
-  door.ring.visible = heliUnlocked && allIdle();
+  door.ring.visible = heliUnlocked && allIdle() && !octLocked();
   if (door.ring.visible) door.ring.rotation.z += dt * 0.8;
   updateSnowPts(dt);
   // overcast blend handled in frame() via m2Sky
@@ -4028,6 +4063,7 @@ var m3Ring = null, m3Obj = null;
   scene.add(m3Obj);
 })();
 function nearM3Trig(){
+  if (octLocked()) return false;   // October: THE THRILLER first
   var dx = player.x - M3_TRIG.x, dz = player.z - M3_TRIG.z;
   return dx * dx + dz * dz < 16;
 }
@@ -4143,7 +4179,7 @@ var M3_LISTEN_AT = (function(){
 var M3_SCOUT_PTS = [[165, 522], [208, 545], [242, 530], [192, 508]];
 function updateMission3(dt){
   if (m3Ring){
-    m3Ring.visible = allIdle();
+    m3Ring.visible = allIdle() && !octLocked();
     if (m3Ring.visible) m3Ring.rotation.z += dt * 0.8;
   }
   if (m3Obj && m3Obj.visible) m3Obj.rotation.z += dt * 1.1;
@@ -4347,6 +4383,7 @@ var M4_NOPE = ['NOPE.', 'HE DECLINES.', 'THE HORSE HAS OPINIONS.', 'HE\'S FASTER
   scene.add(m4PenRing);
 })();
 function nearM4Trig(){
+  if (octLocked()) return false;   // October: THE THRILLER first
   var dx = player.x - M4_TRIG.x, dz = player.z - M4_TRIG.z;
   return dx * dx + dz * dz < 16;
 }
@@ -4521,7 +4558,7 @@ var M4_AMBIENT = [
 ];
 function updateMission4(dt){
   if (m4Ring){
-    m4Ring.visible = allIdle();
+    m4Ring.visible = allIdle() && !octLocked();
     if (m4Ring.visible) m4Ring.rotation.z += dt * 0.8;
   }
   if (m4PenRing && m4PenRing.visible) m4PenRing.rotation.z += dt * 0.7;
@@ -4623,6 +4660,7 @@ var m5Rings = [], m5Trig = null;
   });
 })();
 function nearM5Trig(){
+  if (octLocked()) return false;   // October: THE THRILLER first
   var dx = player.x - M5_TRIG.x, dz = player.z - M5_TRIG.z;
   return dx * dx + dz * dz < 16;
 }
@@ -4776,7 +4814,7 @@ function updateGhost(){
 }
 function updateMission5(dt){
   if (m5Trig){
-    m5Trig.visible = allIdle();
+    m5Trig.visible = allIdle() && !octLocked();
     if (m5Trig.visible) m5Trig.rotation.z += dt * 0.8;
   }
   if (mission5.stage === 'idle') return;
@@ -4936,6 +4974,7 @@ var m6Rings = [], m6Trig = null, m6Cooler = null;
   });
 })();
 function nearM6Trig(){
+  if (octLocked()) return false;   // October: THE THRILLER first
   var dx = player.x - M6_TRIG.x, dz = player.z - M6_TRIG.z;
   return dx * dx + dz * dz < 16;
 }
@@ -4967,7 +5006,7 @@ function m6Cleanup(){
 }
 function updateMission6(dt){
   if (m6Trig){
-    m6Trig.visible = allIdle();
+    m6Trig.visible = allIdle() && !octLocked();
     if (m6Trig.visible) m6Trig.rotation.z += dt * 0.8;
   }
   if (mission6.stage === 'idle') return;
@@ -5096,6 +5135,7 @@ var m7Tents = [], m7Trig = null;
   });
 })();
 function nearM7Trig(){
+  if (octLocked()) return false;   // October: THE THRILLER first
   var dx = player.x - M7_TRIG.x, dz = player.z - M7_TRIG.z;
   return dx * dx + dz * dz < 16;
 }
@@ -5136,7 +5176,7 @@ function m7Cleanup(){
 }
 function updateMission7(dt){
   if (m7Trig){
-    m7Trig.visible = allIdle();
+    m7Trig.visible = allIdle() && !octLocked();
     if (m7Trig.visible) m7Trig.rotation.z += dt * 0.8;
   }
   if (mission7.stage === 'idle') return;
@@ -5239,6 +5279,7 @@ var m8Foals = [], m8Ring = null, m8PenRing = null;
   scene.add(m8PenRing);
 })();
 function nearM8Trig(){
+  if (octLocked()) return false;   // October: THE THRILLER first
   var dx = player.x - M8_TRIG.x, dz = player.z - M8_TRIG.z;
   return dx * dx + dz * dz < 16;
 }
@@ -5352,7 +5393,7 @@ function updateFoal(f, dt, now){
 }
 function updateMission8(dt){
   if (m8Ring){
-    m8Ring.visible = allIdle();
+    m8Ring.visible = allIdle() && !octLocked();
     if (m8Ring.visible) m8Ring.rotation.z += dt * 0.8;
   }
   if (m8PenRing && m8PenRing.visible) m8PenRing.rotation.z += dt * 0.7;
@@ -5466,6 +5507,7 @@ var m9StartRing = null, m9Meshes = [];
   });
 })();
 function nearM9Trig(){
+  if (octLocked()) return false;   // October: THE THRILLER first
   var dx = player.x - M9_TRIG.x, dz = player.z - M9_TRIG.z;
   return dx * dx + dz * dz < 20;
 }
@@ -5506,7 +5548,7 @@ function m9Reached(w){
 }
 function updateMission9(dt){
   if (m9StartRing){
-    m9StartRing.visible = allIdle();
+    m9StartRing.visible = allIdle() && !octLocked();
     if (m9StartRing.visible) m9StartRing.rotation.z += dt * 0.8;
   }
   if (mission9.stage === 'idle') return;
@@ -5660,6 +5702,7 @@ var m10Rings = [], m10Trig = null, m10Bags = null;
   });
 })();
 function nearM10Trig(){
+  if (octLocked()) return false;   // October: THE THRILLER first
   var dx = player.x - M10_TRIG.x, dz = player.z - M10_TRIG.z;
   return dx * dx + dz * dz < 16;
 }
@@ -5694,7 +5737,7 @@ function m10Cleanup(){
 }
 function updateMission10(dt){
   if (m10Trig){
-    m10Trig.visible = allIdle();
+    m10Trig.visible = allIdle() && !octLocked();
     if (m10Trig.visible) m10Trig.rotation.z += dt * 0.8;
   }
   // storm sky eases on mission10's OWN stages; runs even while idle so the flood
@@ -5875,6 +5918,7 @@ var m11Rings = [], m11Trig = null;
   });
 })();
 function nearM11Trig(){
+  if (octLocked()) return false;   // October: THE THRILLER first
   var dx = player.x - M11_TRIG.x, dz = player.z - M11_TRIG.z;
   return dx * dx + dz * dz < 16;
 }
@@ -5901,7 +5945,7 @@ function m11Cleanup(){
 }
 function updateMission11(dt){
   if (m11Trig){
-    m11Trig.visible = allIdle();
+    m11Trig.visible = allIdle() && !octLocked();
     if (m11Trig.visible) m11Trig.rotation.z += dt * 0.8;
   }
   if (mission11.stage === 'idle') return;
@@ -6020,6 +6064,242 @@ function updateMission11(dt){
   if (mission11.stage === 'post'){ if (t > 22) m11Cleanup(); }
 }
 
+// ---------- OCTOBER: downtown Halloween dressing ----------
+// Only built when OCTOBER (see the flag by hashStr). All canvas-generated, mostly
+// instanced: jack-o'-lanterns at the downtown lamp corners and along Main/Vine
+// (faces light up at night via regNight), orange/purple string lights over Main and
+// Vine, a Phoenix Park graveyard, sheet ghosts drifting through the parks, a bat
+// cloud over City Hall + the old courthouse, banners over Main, a giant inflatable
+// pumpkin on the City Hall plaza, and a harvest moon. Pure decor - only the big
+// pumpkin gets a collider (it's climbable). updateHalloween animates ghosts/bats/moon.
+var hw = null;
+if (OCTOBER) (function(){
+  hw = {ghosts: [], bats: null, batN: 0, batSeeds: [], moon: null};
+  var M = new THREE.Matrix4(), Q = new THREE.Quaternion(), S = new THREE.Vector3(), P = new THREE.Vector3(), E = new THREE.Euler();
+  var thin = IS_COARSE ? 2 : 1;   // phones get every other decoration
+  var DX0 = -200, DX1 = 300, DZ0 = -300, DZ1 = 200;   // the downtown grid
+  // --- jack-o'-lanterns ---
+  var face = function(g, w, h, lit){
+    // equirect wrap: u=0.25 is the sphere's local +z, so the face is centered at x=w/4
+    var cx = w / 4, cy = h / 2;
+    g.fillStyle = lit ? '#ffb030' : '#2a1000';
+    g.beginPath(); g.moveTo(cx - 22, cy - 6); g.lineTo(cx - 12, cy - 22); g.lineTo(cx - 4, cy - 6); g.fill();   // eyes
+    g.beginPath(); g.moveTo(cx + 4, cy - 6); g.lineTo(cx + 12, cy - 22); g.lineTo(cx + 22, cy - 6); g.fill();
+    g.beginPath(); g.moveTo(cx - 4, cy + 2); g.lineTo(cx, cy - 4); g.lineTo(cx + 4, cy + 2); g.fill();          // nose
+    g.beginPath(); g.moveTo(cx - 26, cy + 8);                                                                     // jagged grin
+    var teeth = [[-18, 18], [-12, 12], [-6, 20], [0, 13], [6, 20], [12, 12], [18, 18], [26, 8]];
+    for (var t = 0; t < teeth.length; t++) g.lineTo(cx + teeth[t][0], cy + teeth[t][1]);
+    g.lineTo(cx + 18, cy + 26); g.lineTo(cx - 18, cy + 26); g.closePath(); g.fill();
+  };
+  var pMap = makeTex(256, 128, function(g, w, h){
+    g.fillStyle = '#e8731a'; g.fillRect(0, 0, w, h);
+    for (var r = 0; r < 8; r++){ g.fillStyle = 'rgba(120,40,0,0.28)'; g.fillRect(r * 32 + 14, 0, 4, h); }   // ribs
+    face(g, w, h, false);
+  });
+  var pEm = makeTex(256, 128, function(g, w, h){ g.fillStyle = '#000'; g.fillRect(0, 0, w, h); face(g, w, h, true); });
+  pMap.wrapS = pMap.wrapT = pEm.wrapS = pEm.wrapT = THREE.ClampToEdgeWrapping;
+  pMap.encoding = THREE.sRGBEncoding;
+  var pMat = regNight(new THREE.MeshStandardMaterial({map: pMap, emissiveMap: pEm, emissive: 0xffffff,
+    emissiveIntensity: 0, roughness: 0.75}), 1.8);
+  var pumps = [];   // [x, z, scale, faceYaw]
+  function addPump(x, z, sc){
+    var fx = 0, fz = 0;   // face the nearest street centerline
+    var ewz = Math.round(z / 100) * 100, nsx = Math.round(x / 100) * 100;
+    if (Math.abs(z - ewz) < Math.abs(x - nsx)) fz = ewz - z; else fx = nsx - x;
+    pumps.push([x, z, sc, Math.atan2(fx, fz) + (Math.random() - 0.5) * 0.5]);
+  }
+  XINGS.forEach(function(xg, i){
+    var x = xg.n.x, z = xg.e.z;
+    if (x < DX0 || x > DX1 || z < DZ0 || z > DZ1 || xg.e.belt || xg.n.belt || i % thin) return;
+    // flank both lamp bases (+13,+13) / (-13,-13): two pumpkins each
+    addPump(x + 10.4, z + 12, 0.9 + Math.random() * 0.4); addPump(x + 12, z + 10.4, 0.7 + Math.random() * 0.3);
+    addPump(x - 10.4, z - 12, 0.9 + Math.random() * 0.4); addPump(x - 12, z - 10.4, 0.7 + Math.random() * 0.3);
+  });
+  [0, 100].forEach(function(sz){   // stoop pumpkins along Main + Vine
+    for (var x = DX0 + 20; x < DX1 - 10; x += 22 * thin){
+      if (Math.abs(x % 100) < 18 || Math.abs(x % 100) > 82) continue;   // keep the crosswalks clear
+      [-12.6, 12.6].forEach(function(side){
+        var n = 1 + (Math.random() * 2.2 | 0);
+        for (var q = 0; q < n; q++) addPump(x + q * 1.3, sz + side + (Math.random() - 0.5) * 0.6, 0.6 + Math.random() * 0.5);
+      });
+    }
+  });
+  // the City Hall steps: a proper pile (the parade's home base)
+  for (var cp = 0; cp < 12; cp++){
+    var cz = 16 + cp * 2.4;
+    if (cz > 26 && cz < 35) continue;   // keep the west door (DOOR_P) clear
+    addPump(159.6 + Math.random() * 1.4, cz, 0.7 + Math.random() * 0.5);
+  }
+  var pumpG = new THREE.SphereGeometry(0.7, 16, 10);
+  var stemG = new THREE.CylinderGeometry(0.06, 0.1, 0.32, 5);
+  var pIM = new THREE.InstancedMesh(pumpG, pMat, pumps.length);
+  var sIM = new THREE.InstancedMesh(stemG, new THREE.MeshStandardMaterial({color: 0x4f5a22, roughness: 1}), pumps.length);
+  pumps.forEach(function(p, i){
+    var gy = groundY(p[0], p[1]);
+    Q.setFromEuler(E.set(0, p[3], 0));
+    M.compose(P.set(p[0], gy + 0.45 * p[2], p[1]), Q, S.set(p[2], p[2] * 0.72, p[2])); pIM.setMatrixAt(i, M);
+    M.compose(P.set(p[0], gy + 0.45 * p[2] + 0.55 * p[2], p[1]), Q, S.set(p[2], p[2], p[2])); sIM.setMatrixAt(i, M);
+  });
+  pIM.castShadow = true;
+  scene.add(pIM); scene.add(sIM);
+  // --- string lights over Main + Vine: sagging strands, alternating orange / purple ---
+  var bulbG = new THREE.SphereGeometry(0.17, 6, 5);
+  var bO = regNight(new THREE.MeshStandardMaterial({color: 0xff7a1a, emissive: 0xff7a1a, emissiveIntensity: 0}), 2.4);
+  var bP = regNight(new THREE.MeshStandardMaterial({color: 0x9a4dff, emissive: 0x9a4dff, emissiveIntensity: 0}), 2.4);
+  var oPts = [], uPts = [], wire = [];
+  [0, 100].forEach(function(sz){
+    for (var x = DX0 + 16; x < DX1; x += 33 * thin){
+      var NB = 12, prev = null;
+      for (var b = 0; b <= NB; b++){
+        var f = b / NB, zz = sz - 11 + 22 * f, yy = 7 - Math.sin(f * Math.PI) * 1.4;
+        (b % 2 ? uPts : oPts).push([x, yy - 0.15, zz]);
+        if (prev) wire.push(prev[0], prev[1], prev[2], x, yy, zz);
+        prev = [x, yy, zz];
+      }
+    }
+  });
+  [[oPts, bO], [uPts, bP]].forEach(function(set){
+    var im = new THREE.InstancedMesh(bulbG, set[1], set[0].length);
+    set[0].forEach(function(p, i){ M.makeTranslation(p[0], p[1], p[2]); im.setMatrixAt(i, M); });
+    scene.add(im);
+  });
+  var wg = new THREE.BufferGeometry();
+  wg.setAttribute('position', new THREE.Float32BufferAttribute(wire, 3));
+  scene.add(new THREE.LineSegments(wg, new THREE.LineBasicMaterial({color: 0x1a1a1a})));
+  // --- Phoenix Park graveyard ---
+  var stoneTex = makeTex(128, 160, function(g, w, h){
+    g.fillStyle = '#8d8f93'; g.fillRect(0, 0, w, h);
+    for (var k = 0; k < 220; k++){ g.fillStyle = 'rgba(0,0,0,' + Math.random() * 0.12 + ')'; g.fillRect(Math.random() * w, Math.random() * h, 3, 3); }
+    g.fillStyle = '#3b3d42'; g.font = 'bold 34px Georgia, serif'; g.textAlign = 'center';
+    g.fillText('R.I.P.', w / 2, 70);
+    g.font = 'bold 13px Georgia, serif'; g.fillText('CAPITAL', w / 2, 100); g.fillText('PROJECTS', w / 2, 116);
+  });
+  stoneTex.wrapS = stoneTex.wrapT = THREE.ClampToEdgeWrapping;
+  var stoneSide = new THREE.MeshStandardMaterial({color: 0x8d8f93, roughness: 1});
+  var stoneFace = new THREE.MeshStandardMaterial({map: stoneTex, roughness: 1});
+  var graves = [];
+  for (var gx = 0; gx < 4; gx++) for (var gz = 0; gz < 3; gz++)
+    graves.push([114 + gx * 6 + (Math.random() - 0.5), 64 + gz * 8 + (Math.random() - 0.5), (Math.random() - 0.5) * 0.25, (Math.random() - 0.5) * 0.12]);
+  var slabIM = new THREE.InstancedMesh(new THREE.BoxGeometry(1.2, 1.5, 0.28),
+    [stoneSide, stoneSide, stoneSide, stoneSide, stoneFace, stoneFace], graves.length);
+  var capG = new THREE.CylinderGeometry(0.6, 0.6, 0.28, 12, 1, false, -Math.PI / 2, Math.PI);
+  capG.rotateX(Math.PI / 2);
+  var capIM = new THREE.InstancedMesh(capG, stoneSide, graves.length);
+  graves.forEach(function(gv, i){
+    var gy = groundY(gv[0], gv[1]);
+    Q.setFromEuler(E.set(gv[3], gv[2], 0));
+    M.compose(P.set(gv[0], gy + 0.75, gv[1]), Q, S.set(1, 1, 1)); slabIM.setMatrixAt(i, M);
+    M.compose(P.set(gv[0], gy + 1.5, gv[1]), Q, S.set(1, 1, 1)); capIM.setMatrixAt(i, M);
+  });
+  slabIM.castShadow = capIM.castShadow = true;
+  scene.add(slabIM); scene.add(capIM);
+  labels.push({name: 'PHOENIX PARK BONEYARD', x: 123, y: 6, z: 72});
+  // --- sheet ghosts drifting in the parks ---
+  var ghostMat = regNight(new THREE.MeshStandardMaterial({color: 0xf4f4ff, emissive: 0xc8d4ff, emissiveIntensity: 0,
+    transparent: true, opacity: 0.82, roughness: 0.9, side: THREE.DoubleSide}), 0.55);
+  var eyeMat = new THREE.MeshBasicMaterial({color: 0x101018});
+  var sheetG = new THREE.CylinderGeometry(0.55, 1.0, 1.6, 12, 1, true);
+  var headG = new THREE.SphereGeometry(0.55, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+  var eyeG = new THREE.BoxGeometry(0.12, 0.2, 0.05);
+  [[122, 40, 9], [124, 72, 7], [-171, 30, 12], [56, -20, 8], [200, 120, 10], [-60, 50, 9]].forEach(function(c, i){
+    var g = new THREE.Group();
+    var sheet = new THREE.Mesh(sheetG, ghostMat); g.add(sheet);
+    var head = new THREE.Mesh(headG, ghostMat); head.position.y = 0.8; g.add(head);
+    var e1 = new THREE.Mesh(eyeG, eyeMat); e1.position.set(-0.18, 1.0, 0.5); g.add(e1);
+    var e2 = new THREE.Mesh(eyeG, eyeMat); e2.position.set(0.18, 1.0, 0.5); g.add(e2);
+    scene.add(g);
+    hw.ghosts.push({g: g, cx: c[0], cz: c[1], r: c[2], ph: i * 1.7, gy: groundY(c[0], c[1])});
+  });
+  // --- bats: one instanced cloud orbiting City Hall's cornice + the courthouse dome ---
+  var bv = new Float32Array([   // flat silhouette in XZ, nose +z: body + two scalloped wings
+     0, 0, 0.35,  -0.12, 0, -0.3,  0.12, 0, -0.3,
+     0, 0, 0.15,  -1.0, 0, 0.1,   -0.15, 0, -0.2,
+    -1.0, 0, 0.1, -0.7, 0, -0.35, -0.15, 0, -0.2,
+     0, 0, 0.15,   0.15, 0, -0.2,  1.0, 0, 0.1,
+     1.0, 0, 0.1,  0.15, 0, -0.2,  0.7, 0, -0.35]);
+  var batG = new THREE.BufferGeometry();
+  batG.setAttribute('position', new THREE.BufferAttribute(bv, 3));
+  hw.batN = IS_COARSE ? 14 : 30;
+  hw.bats = new THREE.InstancedMesh(batG, new THREE.MeshBasicMaterial({color: 0x0c0a10, side: THREE.DoubleSide}), hw.batN);
+  hw.bats.frustumCulled = false;   // instances orbit far from the geometry's origin
+  for (var bi = 0; bi < hw.batN; bi++){
+    var home = bi % 3 === 0 ? [50, 30, -45] : [176, 52, 34];
+    hw.batSeeds.push({hx: home[0], hy: home[1], hz: home[2], r: 8 + Math.random() * 14, w: (0.5 + Math.random() * 0.6) * (Math.random() < 0.5 ? -1 : 1),
+                      ph: Math.random() * 6.28, bob: Math.random() * 6.28, sc: 0.5 + Math.random() * 0.35});
+  }
+  scene.add(hw.bats);
+  // --- banners over Main St (two back-to-back planes so neither side reads mirrored) ---
+  function banner(x, text, sub){
+    var tex = makeTex(512, 96, function(g, w, h){
+      g.fillStyle = '#1b0f2a'; g.fillRect(0, 0, w, h);
+      g.fillStyle = '#ff7a1a'; g.fillRect(0, 0, w, 6); g.fillRect(0, h - 6, w, 6);
+      g.fillStyle = '#ff9a3a'; g.font = 'bold 40px ui-monospace, Menlo, monospace'; g.textAlign = 'center';
+      g.fillText(text, w / 2, 50);
+      g.fillStyle = '#c99bff'; g.font = 'bold 18px ui-monospace, Menlo, monospace'; g.fillText(sub, w / 2, 80);
+    });
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping; tex.encoding = THREE.sRGBEncoding;
+    var mat = regNight(new THREE.MeshStandardMaterial({map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0, roughness: 0.9}), 0.7);
+    var pg = new THREE.PlaneGeometry(17, 3.2);
+    var a = new THREE.Mesh(pg, mat); a.position.set(x - 0.03, 8.4, 0); a.rotation.y = -Math.PI / 2; scene.add(a);
+    var b = new THREE.Mesh(pg, mat); b.position.set(x + 0.03, 8.4, 0); b.rotation.y = Math.PI / 2; scene.add(b);
+    var poleM = new THREE.MeshStandardMaterial({color: 0x2c2f35, roughness: 0.8});
+    [-9.6, 9.6].forEach(function(dz){
+      var pl = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 10, 6), poleM);
+      pl.position.set(x, 5, dz); scene.add(pl);
+    });
+  }
+  banner(134, 'HAPPY HALLOWEEN, LEXINGTON', 'THRILLER PARADE  -  CITY HALL  -  ALL OCTOBER');
+  banner(-40, 'THRILLER PARADE ROUTE', 'ZOMBIES: PLEASE STAY ON MAIN ST');
+  // --- giant inflatable jack-o'-lantern on the City Hall plaza (climbable) ---
+  var big = new THREE.Mesh(new THREE.SphereGeometry(3.4, 28, 18), pMat);
+  var bgx = 147, bgz = 44, bgy = groundY(bgx, bgz);
+  big.scale.set(1, 0.78, 1); big.position.set(bgx, bgy + 2.6, bgz);
+  big.rotation.y = -Math.PI / 2;   // face west, toward Limestone and the arriving parade
+  big.castShadow = true; scene.add(big);
+  var bigStem = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.5, 1.4, 6), new THREE.MeshStandardMaterial({color: 0x4f5a22}));
+  bigStem.position.set(bgx, bgy + 5.6, bgz); scene.add(bigStem);
+  colliders.push({ell: 1, cx: bgx, cz: bgz, rx: 3.2, rz: 3.2, h: bgy + 5.2});
+  labels.push({name: 'THE GREAT PUMPKIN', x: bgx, y: 9, z: bgz});
+  // --- harvest moon: a fog-free sprite parked far along a fixed bearing from the camera ---
+  var moonTex = makeTex(128, 128, function(g, w, h){
+    var gr = g.createRadialGradient(w / 2, h / 2, w * 0.28, w / 2, h / 2, w / 2);
+    gr.addColorStop(0, 'rgba(255,214,150,1)'); gr.addColorStop(0.55, 'rgba(255,170,90,0.35)'); gr.addColorStop(1, 'rgba(255,140,60,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#ffd59a'; g.beginPath(); g.arc(w / 2, h / 2, w * 0.3, 0, Math.PI * 2); g.fill();
+    g.fillStyle = 'rgba(200,130,70,0.35)';
+    [[0.42, 0.42, 0.06], [0.58, 0.55, 0.05], [0.47, 0.62, 0.04]].forEach(function(c){ g.beginPath(); g.arc(w * c[0], h * c[1], w * c[2], 0, Math.PI * 2); g.fill(); });
+  });
+  moonTex.wrapS = moonTex.wrapT = THREE.ClampToEdgeWrapping;
+  hw.moon = new THREE.Sprite(new THREE.SpriteMaterial({map: moonTex, transparent: true, fog: false, depthWrite: false, opacity: 0}));
+  hw.moon.scale.setScalar(300);
+  scene.add(hw.moon);
+})();
+var _hwDir = new THREE.Vector3(0.55, 0.42, -0.72).normalize();   // ENE, low over the skyline
+var _hwM = new THREE.Matrix4(), _hwQ = new THREE.Quaternion(), _hwE = new THREE.Euler(), _hwS = new THREE.Vector3(), _hwP = new THREE.Vector3();
+function updateHalloween(dt, night){
+  if (!hw) return;
+  var t = performance.now() / 1000, M = _hwM, Q = _hwQ, E = _hwE, S = _hwS, P = _hwP;
+  for (var i = 0; i < hw.ghosts.length; i++){
+    var gh = hw.ghosts[i], a = t * 0.25 + gh.ph;
+    var x = gh.cx + Math.cos(a) * gh.r, z = gh.cz + Math.sin(a) * gh.r;
+    gh.g.position.set(x, gh.gy + 2.2 + Math.sin(t * 1.6 + gh.ph) * 0.45, z);
+    gh.g.rotation.y = Math.atan2(-Math.sin(a), Math.cos(a));   // face along the drift
+    gh.g.rotation.z = Math.sin(t * 1.1 + gh.ph) * 0.12;
+  }
+  for (var b = 0; b < hw.batN; b++){
+    var s = hw.batSeeds[b], ang = t * s.w + s.ph;
+    P.set(s.hx + Math.cos(ang) * s.r, s.hy + Math.sin(t * 1.3 + s.bob) * 3, s.hz + Math.sin(ang) * s.r);
+    Q.setFromEuler(E.set(0, Math.atan2(-Math.sin(ang) * s.w, Math.cos(ang) * s.w), 0));   // nose along the orbit
+    var flap = 0.25 + 0.75 * Math.abs(Math.sin(t * 14 + b));   // wingspan pumps = reads as flapping
+    S.set(s.sc * flap, s.sc, s.sc);
+    M.compose(P, Q, S); hw.bats.setMatrixAt(b, M);
+  }
+  hw.bats.instanceMatrix.needsUpdate = true;
+  hw.moon.material.opacity = Math.max(0, Math.min(1, (night - 0.25) * 2));
+  hw.moon.visible = hw.moon.material.opacity > 0.01;
+  if (hw.moon.visible) hw.moon.position.copy(camera.position).addScaledVector(_hwDir, 2400);
+}
+
 // ---------- MISSION 12: THE THRILLER (the finale - zombie-horde last stand) ----
 // THE FINALE. It's the real October Thriller parade: THE MAYOR shares her
 // "medicinal" gummy bears and you BOTH hallucinate the red-jacketed dancers as a
@@ -6039,16 +6319,19 @@ var M12_TRIG = {x: 150, z: 20};        // City Hall plaza, near DOOR_P / the m1 
 var M12_PLAZA = {x: 158, z: 26};       // horde converges here; spawns ring the plaza edge
 var M12_RING_COL = 0xd826ff;           // candy-magenta (FINAL; CVD-safe vs every taken hue)
 var M12_ZCAP = IS_COARSE ? 10 : 24;    // concurrent-zombie cap, scaled down on touch/low-end
-var M12_ZHP = 3, M12_BOSS_HP = 30;
+var M12_ZHP = 3, M12_BOSS_HP = 150;   // THE BIG ONE is a real fight now: splash-resistant, summons, enrages
 // escalating wave table: {n zombies, weapon phase 0=MG/1=rocket/2=grenade, boss?}.
 // The spawner queues overflow past the concurrent cap. Counts halve on IS_COARSE.
 var M12_WAVES = [
-  {n: 6,  phase: 0},
-  {n: 9,  phase: 0},
-  {n: 12, phase: 1},
-  {n: 15, phase: 1},
-  {n: 18, phase: 2},
-  {n: 16, phase: 2, boss: true}   // the climax: a horde + THE BIG ONE
+  {n: 8,  phase: 0},
+  {n: 12, phase: 0, run: 0.3},                 // run/brute = share of red-jacket runners / brutes
+  {n: 16, phase: 0, run: 0.35, brute: 0.1},
+  {n: 16, phase: 1, run: 0.25, brute: 0.15},
+  {n: 20, phase: 1, run: 0.3,  brute: 0.2},
+  {n: 24, phase: 1, run: 0.35, brute: 0.25},
+  {n: 22, phase: 2, run: 0.3,  brute: 0.25},
+  {n: 28, phase: 2, run: 0.35, brute: 0.3},
+  {n: 20, phase: 2, run: 0.4,  brute: 0.2, boss: true}   // the climax: a horde + THE BIG ONE
 ];
 var M12_BANTER = [
   'I\'M ADDING THIS TO NEXT WEEK\'S AGENDA.',
@@ -6067,7 +6350,10 @@ var m12Credits = false;   // first-clear credits gate (lt_m12_credits) - reserve
 try { m12Credits = localStorage.getItem('lt_m12_credits') === '1'; } catch (e){}
 var mission12 = {stage: 'idle', tStage: 0, t0: 0, ms: 0, phase: 0, wave: 0, hp: 5,
                  capIdx: 0, quick: false, spawned: 0, killed: 0, need: 0,
-                 spawnAt: 0, banterAt: 0};
+                 spawnAt: 0, banterAt: 0,
+                 wpn: 0, score: 0, combo: 0, lastKill: 0, bestCombo: 0, rapidUntil: 0, hurtAt: 0};
+var m12BestPts = 0;
+try { m12BestPts = parseInt(localStorage.getItem('lt_m12_pts') || '0', 10) || 0; } catch (e){}
 // --- Phase B: night force + hallucination grade + music + credits ---
 // The "gummy-bear kick-in" slides the day clock to night and washes the world in a
 // sick violet grade; the reveal SNAPS the grade off (you sobered up) while the night
@@ -6097,26 +6383,45 @@ function nearM12Trig(){
 function thrillerFight(){ return mission12.stage === 'fighting' || mission12.stage === 'climax'; }
 function m12WaveN(w){ return IS_COARSE ? Math.max(3, Math.ceil(w.n * 0.5)) : w.n; }
 // a cheap zombie ped in the avatar-builder SHAPE (no gun/jetpack baggage - perf) with
-// the arms-out Thriller reach; recolored sickly green. THE BIG ONE reuses makeFoal.
-function makeZombie(){
+// the arms-out Thriller reach. Three kinds: the green WALKER, the red-jacketed RUNNER
+// (the lead dancer - fast + fragile) and the BRUTE (big, slow, bites for 2). Geometry
+// is shared; materials are per-zombie so a hit can flash just that one white.
+// THE BIG ONE reuses makeFoal.
+var M12_KINDS = {
+  walker: {skin: 0x6b8f4e, coat: 0x6b8f4e, pants: 0x3a2f45, s: 0.85, hp: 3,  spd: 3.2, bite: 1, r: 1.4, pts: 100},
+  runner: {skin: 0x7fa060, coat: 0xb3202a, pants: 0x1e1a24, s: 0.8,  hp: 2,  spd: 5.4, bite: 1, r: 1.3, pts: 150},
+  brute:  {skin: 0x56763f, coat: 0x4a3b2a, pants: 0x2a2433, s: 1.3,  hp: 10, spd: 2.3, bite: 2, r: 2.0, pts: 300}
+};
+var m12Geo = {
+  torso: new THREE.BoxGeometry(1.3, 1.15, 0.65), head: new THREE.BoxGeometry(0.78, 0.78, 0.78),
+  arm: new THREE.BoxGeometry(0.42, 1.0, 0.5), leg: new THREE.BoxGeometry(0.5, 1.0, 0.5),
+  eye: new THREE.BoxGeometry(0.16, 0.1, 0.05)
+};
+var m12EyeMat = new THREE.MeshBasicMaterial({color: 0xd8ff5a});   // glowing eyes read at night through the violet grade
+function makeZombie(kind){
+  var K = M12_KINDS[kind];
   var g = new THREE.Group();
-  var mat = new THREE.MeshStandardMaterial({color: 0x6b8f4e, roughness: 0.95});
-  var pants = new THREE.MeshStandardMaterial({color: 0x3a2f45, roughness: 0.95});
-  var torso = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.15, 0.65), mat);
+  g.rotation.order = 'YXZ';   // heading in world Y; the fall-back / sway tilt in local X/Z
+  var mat = new THREE.MeshStandardMaterial({color: K.skin, roughness: 0.95});
+  var coat = K.coat === K.skin ? mat : new THREE.MeshStandardMaterial({color: K.coat, roughness: 0.8});
+  var pants = new THREE.MeshStandardMaterial({color: K.pants, roughness: 0.95});
+  var torso = new THREE.Mesh(m12Geo.torso, coat);
   torso.position.y = 1.52; torso.castShadow = true; g.add(torso);
-  var head = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.78, 0.78), mat);
+  var head = new THREE.Mesh(m12Geo.head, mat);
   head.position.y = 2.5; head.rotation.z = 0.14; g.add(head);   // lolling head
+  var eL = new THREE.Mesh(m12Geo.eye, m12EyeMat); eL.position.set(-0.17, 0.08, 0.4); head.add(eL);
+  var eR = new THREE.Mesh(m12Geo.eye, m12EyeMat); eR.position.set(0.17, 0.08, 0.4); head.add(eR);
   var armL = new THREE.Group(); armL.position.set(-0.9, 2.05, 0);
-  var aL = new THREE.Mesh(new THREE.BoxGeometry(0.42, 1.0, 0.5), mat); aL.position.y = -0.5; armL.add(aL);
+  var aL = new THREE.Mesh(m12Geo.arm, coat); aL.position.y = -0.5; armL.add(aL);
   armL.rotation.x = -1.4; g.add(armL);
   var armR = new THREE.Group(); armR.position.set(0.9, 2.05, 0);
-  var aR = new THREE.Mesh(new THREE.BoxGeometry(0.42, 1.0, 0.5), mat); aR.position.y = -0.5; armR.add(aR);
+  var aR = new THREE.Mesh(m12Geo.arm, coat); aR.position.y = -0.5; armR.add(aR);
   armR.rotation.x = -1.4; g.add(armR);
-  var legL = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.0, 0.5), pants); legL.position.set(-0.35, 0.5, 0); g.add(legL);
-  var legR = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.0, 0.5), pants); legR.position.set(0.35, 0.5, 0); g.add(legR);
-  g.scale.setScalar(0.85);
+  var legL = new THREE.Mesh(m12Geo.leg, pants); legL.position.set(-0.35, 0.5, 0); g.add(legL);
+  var legR = new THREE.Mesh(m12Geo.leg, pants); legR.position.set(0.35, 0.5, 0); g.add(legR);
+  g.scale.setScalar(K.s);
   scene.add(g);
-  return {g: g, armL: armL, armR: armR};
+  return {g: g, armL: armL, armR: armR, mats: coat === mat ? [mat, pants] : [mat, coat, pants]};
 }
 function m12NameSprite(text){
   var c = document.createElement('canvas'); c.width = 256; c.height = 64;
@@ -6135,7 +6440,13 @@ function makeMayor(){
   av.g.add(m12NameSprite('THE MAYOR'));
   return {av: av, g: av.g, x: 0, y: 0, z: 0, fireAt: 0};
 }
-function spawnZombie(isBoss){
+function m12PickKind(w){
+  var r = Math.random();
+  if (w.brute && r < w.brute) return 'brute';
+  if (w.run && r < (w.brute || 0) + w.run) return 'runner';
+  return 'walker';
+}
+function spawnZombie(kind){
   // west/south arc only (ang in [pi/2, 3pi/2] keeps every spawn at x <= plaza.x = 158,
   // clear of the City Hall footprint at x[163,189] to the EAST) — npcWalk has no
   // collision, so an east spawn would shamble straight through the building. R=30-40
@@ -6143,61 +6454,197 @@ function spawnZombie(isBoss){
   var ang = Math.PI * 0.5 + Math.random() * Math.PI, R = 30 + Math.random() * 10;
   var x = M12_PLAZA.x + Math.cos(ang) * R, z = M12_PLAZA.z + Math.sin(ang) * R;
   var y = groundY(x, z);
-  if (isBoss){
+  var now = performance.now();
+  var zb;
+  if (kind === 'boss'){
     var f = makeFoal(0x5a7a3a);   // sickly-green zombie thoroughbred - THE BIG ONE
     f.g.scale.setScalar(1.6);
-    f.g.position.set(x, y + 0.05, z);
-    m12Zombies.push({g: f.g, x: x, y: y, z: z, hp: M12_BOSS_HP, state: 'shamble', boss: true, biteAt: 0});
+    f.g.rotation.order = 'YXZ';
+    zb = {g: f.g, mats: [f.coat], kind: 'boss', boss: true, s: 1.6, hp: M12_BOSS_HP, maxHp: M12_BOSS_HP,
+          spd: 2.2, bite: 2, r: 3.2, headY: 4.3, pts: 2500, charge: 0, chargeAt: now + 7000, chargeT: 0, cdx: 0, cdz: 0};
   } else {
-    var zm = makeZombie();
-    zm.g.position.set(x, y, z);
-    m12Zombies.push({g: zm.g, armL: zm.armL, armR: zm.armR, x: x, y: y, z: z,
-                     hp: M12_ZHP, state: 'shamble', boss: false, biteAt: 0});
+    var K = M12_KINDS[kind], zm = makeZombie(kind);
+    zb = {g: zm.g, armL: zm.armL, armR: zm.armR, mats: zm.mats, kind: kind, boss: false, s: K.s,
+          hp: K.hp, maxHp: K.hp, spd: K.spd * (0.9 + Math.random() * 0.2), bite: K.bite, r: K.r,
+          headY: 2.1 * K.s, pts: K.pts};
   }
+  zb.x = x; zb.y = y; zb.z = z;
+  zb.state = 'rise'; zb.riseT = 0; zb.biteAt = 0; zb.flash = 0; zb.flashOn = false;
+  zb.kbx = 0; zb.kbz = 0; zb.stun = 0; zb.ph = Math.random() * 6.28;
+  zb.g.position.set(x, y - 2.6 * zb.s, z);   // they climb up out of the ground (the video's graveyard beat)
+  puff(x, y + 0.3, z, 0x4a3a2a, 0.6, 2.4, 700, 0.8, 0.7);
+  m12Zombies.push(zb);
 }
-function damageZombie(z, dmg, now){
+// dmg lands with an optional shove direction (hx,hz - not normalized) and head flag
+function damageZombie(z, dmg, now, hx, hz, head){
   if (z.state === 'dying') return;
+  if (z.boss && dmg >= 5) dmg = 3;   // THE BIG ONE shrugs off splash - it rewards aimed fire too
+  if (head) dmg *= 2;
   z.hp -= dmg;
+  if (z.boss && z.hp > 0){   // at 2/3 and 1/3 health it calls the herd; the last third it's enraged
+    if (!z.sum1 && z.hp <= z.maxHp * 0.66){ z.sum1 = true; m12Summon(z, false); }
+    else if (!z.sum2 && z.hp <= z.maxHp * 0.33){ z.sum2 = true; m12Summon(z, true); }
+  }
+  z.flash = 1;
+  hitMarkAt = now; hitMarkName = '';   // reuse the crosshair hitmarker (no TAGGED chip)
+  if (hx !== undefined && !z.boss){
+    var kl = Math.hypot(hx, hz) || 1, kb = dmg >= 5 ? 9 : (z.kind === 'brute' ? 0.8 : 2.4);
+    z.kbx += hx / kl * kb; z.kbz += hz / kl * kb;
+    z.stun = Math.max(z.stun, dmg >= 5 ? 0.6 : 0.12);
+  }
   if (z.hp <= 0){
     z.state = 'dying'; z.dieT = now;
     mission12.killed++;
     puff(z.x, z.y + 1, z.z, M12_RING_COL, 0.3, 1.4, 500, 0.6, 0.7);   // the hallucination disperses (no gore)
     sndTone(z.boss ? 190 : 520, 0.2, 0, 'triangle', 0.13);
-    if (z.boss){ explosion(z.x, z.y + 1.4, z.z, true); }   // THE BIG ONE goes down big (win fanfare is m12Win's)
+    if (z.boss){ explosion(z.x, z.y + 1.4, z.z, true); addShake(0.8); }   // THE BIG ONE goes down big (win fanfare is m12Win's)
+    m12Kill(z, now, head);
   } else {
-    puff(z.x, z.y + 1.3, z.z, 0xffffff, 0.1, 0.8, 200, 0.4, 0.6);
+    puff(z.x, z.y + (head ? z.headY + 0.3 : 1.3), z.z, head ? 0xffe066 : 0xffffff, 0.1, 0.8, 200, 0.4, 0.6);
+    sndTone(head ? 1250 : 700, 0.05, 0, 'square', 0.06);
+    if (head) m12Pop(z.x, z.y + z.headY + 0.8, z.z, 'HEADSHOT', '#ffe066');
   }
 }
+function m12Summon(boss, enrage){
+  var n = IS_COARSE ? 3 : 6;
+  for (var i = 0; i < n; i++) spawnZombie('runner');
+  mission12.need += n;   // the adds count toward the wave - the finale ends when the plaza is clear
+  if (enrage){ boss.enraged = true; boss.spd = 3.4; boss.chargeAt = performance.now() + 2500; }
+  m12Banner(enrage ? 'THE BIG ONE IS ENRAGED' : 'THE BIG ONE CALLS THE HERD', enrage ? 'IT CHARGES MORE OFTEN NOW' : 'RED JACKETS INBOUND', 1800);
+  sndTone(150, 0.9, 0, 'sawtooth', 0.14, 70);
+  addShake(0.4);
+}
+// kill bookkeeping: combo chain (kills inside 2.4s of each other), parade points,
+// streak call-outs, and the occasional candy drop
+var M12_STREAKS = {2: 'DOUBLE KILL', 3: 'TRIPLE KILL', 5: 'MONSTER MASH', 8: 'THRILLER!!', 12: 'UNBOTHERED', 20: 'NIGHT OF THE LIVING MAYOR'};
+function m12Kill(z, now, head){
+  mission12.combo = (now - mission12.lastKill < 2400) ? mission12.combo + 1 : 1;
+  mission12.lastKill = now;
+  if (mission12.combo > mission12.bestCombo) mission12.bestCombo = mission12.combo;
+  var mult = Math.min(8, mission12.combo);
+  var pts = z.pts * mult + (head ? 50 : 0);
+  mission12.score += pts;
+  m12Pop(z.x, z.y + z.headY + 0.4, z.z, '+' + pts + (mult > 1 ? ' x' + mult : ''), mult > 1 ? '#ff9de8' : '#ffd28a');
+  if (M12_STREAKS[mission12.combo]){
+    m12Banner(M12_STREAKS[mission12.combo], mission12.combo + ' IN A ROW', 1300);
+    sndTone(440 + mission12.combo * 60, 0.12, 0, 'square', 0.1); sndTone(660 + mission12.combo * 60, 0.16, 0.08, 'square', 0.1);
+  }
+  if (!z.boss){
+    var r = Math.random();
+    if (r < 0.04) m12DropCandy(z.x, z.z, 'bar');
+    else if (r < 0.16) m12DropCandy(z.x, z.z, 'corn');
+  }
+}
+function m12Hurt(d, now){
+  mission12.hp -= d;
+  mission12.hurtAt = now;
+  mission12.combo = 0;   // getting bit breaks the chain
+  addShake(0.35 + 0.15 * d);
+  buzz([70]);
+  sndTone(90, 0.16, 0, 'sawtooth', 0.16);
+}
 function updateZombie(z, idx, dt, now){
+  if (z.flash > 0 || z.flashOn){   // hit flash: everything this zombie wears pops white, then fades
+    z.flash = Math.max(0, z.flash - dt * 7);
+    for (var mi = 0; mi < z.mats.length; mi++) z.mats[mi].emissive.setRGB(z.flash * 0.9, z.flash * 0.9, z.flash * 0.9);
+    z.flashOn = z.flash > 0;
+  }
   if (z.state === 'dying'){
-    var k = (now - z.dieT) / 500;
+    var k = (now - z.dieT) / 750;
     if (k >= 1){ scene.remove(z.g); m12Zombies.splice(idx, 1); return; }
-    z.g.scale.setScalar((z.boss ? 1.6 : 0.85) * (1 - k));   // melt: shrink + sink
-    z.g.position.y = z.y - k * 1.2;
+    z.g.rotation.x = -Math.min(1, k * 2.4) * 1.5;               // keel over backward
+    z.g.position.y = z.y - Math.max(0, k - 0.5) * 3 * z.s;      // then sink back into the ground
+    if (z.armL){ z.armL.rotation.x = -2.6; z.armR.rotation.x = -2.6; }
     return;
   }
   // aggro soak: chase whichever of player / mayor is nearer (mayor draws a share)
   var tx = player.x, tz = player.z;
-  if (m12Mayor){
+  if (m12Mayor && !z.boss){   // THE BIG ONE only wants you
     var dpl = Math.hypot(player.x - z.x, player.z - z.z);
     var dma = Math.hypot(m12Mayor.x - z.x, m12Mayor.z - z.z);
     if (dma < dpl){ tx = m12Mayor.x; tz = m12Mayor.z; }
   }
-  npcWalk(z.g, tx, tz, z.boss ? 2.2 : 3.2, dt);
-  z.x = z.g.position.x; z.y = z.g.position.y; z.z = z.g.position.z;
-  if (z.armL){ var sw = Math.sin(now * 0.005 + idx) * 0.2; z.armL.rotation.x = -1.4 + sw; z.armR.rotation.x = -1.4 - sw; }
-  // only the player takes damage - the mayor is unbothered (no hp)
+  if (z.state === 'rise'){
+    z.riseT += dt;
+    var rk = Math.min(1, z.riseT / 0.9);
+    z.g.position.set(z.x, z.y - (1 - rk) * 2.6 * z.s, z.z);
+    z.g.rotation.y = Math.atan2(tx - z.x, tz - z.z) - (z.boss ? Math.PI / 2 : 0);
+    if (z.armL){ z.armL.rotation.x = z.armR.rotation.x = -1.4 - (1 - rk) * 1.4; }   // arms claw up first
+    if (rk >= 1) z.state = 'shamble';
+    return;
+  }
+  // knockback slide (decays fast); a shove into a wall just stops
+  if (z.kbx || z.kbz){
+    var nx = z.x + z.kbx * dt, nz = z.z + z.kbz * dt;
+    if (!pointInBuilding(nx, z.y + 1, nz)){ z.x = nx; z.z = nz; }
+    var kd = Math.max(0, 1 - 9 * dt); z.kbx *= kd; z.kbz *= kd;
+    if (Math.abs(z.kbx) + Math.abs(z.kbz) < 0.05){ z.kbx = 0; z.kbz = 0; }
+    z.g.position.set(z.x, groundY(z.x, z.z) + 0.02, z.z);
+  }
   var pd = Math.hypot(player.x - z.x, player.z - z.z);
-  if (pd < (z.boss ? 3.2 : 2.2) && now - z.biteAt > 1000){
+  if (z.boss){ updateBossCharge(z, dt, now, pd); if (z.charge) return; }
+  if (z.stun > 0) z.stun -= dt;
+  else {
+    var td = Math.hypot(tx - z.x, tz - z.z);
+    var spd = z.spd * (td < 5 && !z.boss ? 1.6 : 1);   // the last-second lunge
+    var arrived = npcWalk(z.g, tx, tz, spd, dt);
+    if (z.boss && !arrived) z.g.rotation.y -= Math.PI / 2;   // makeFoal's nose is local +x; npcWalk faces +z
+  }
+  z.x = z.g.position.x; z.y = z.g.position.y; z.z = z.g.position.z;
+  if (z.armL){
+    var sw = Math.sin(now * 0.005 + z.ph) * 0.2; z.armL.rotation.x = -1.4 + sw; z.armR.rotation.x = -1.4 - sw;
+    z.g.rotation.z = Math.sin(now * 0.006 + z.ph) * 0.12;   // the Thriller shuffle-sway
+    z.g.rotation.x = z.stun > 0 ? -0.35 : 0;                 // rock back on a hit
+  }
+  // only the player takes damage - the mayor is unbothered (no hp)
+  if (pd < (z.boss ? 3.2 : 1.5 + z.r * 0.5) && now - z.biteAt > 1000){
     z.biteAt = now;
-    mission12.hp -= (z.boss ? 2 : 1);
-    sndTone(90, 0.16, 0, 'sawtooth', 0.16);
+    m12Hurt(z.bite, now);
+  }
+}
+// THE BIG ONE: every ~6s it rears up (telegraph), locks your bearing, and charges
+// straight through. Sidestep it. Contact = 2 hp + a shove.
+function updateBossCharge(z, dt, now, pd){
+  if (!z.charge){
+    if (now > z.chargeAt && pd < 50 && pd > 6){
+      z.charge = 1; z.chargeT = 0; z.hitThis = false;
+      m12Banner('THE BIG ONE IS CHARGING', 'SIDESTEP IT', 1200);
+      sndTone(120, 0.7, 0, 'sawtooth', 0.14, 60);
+    }
+    return;
+  }
+  z.chargeT += dt;
+  if (z.charge === 1){   // rear-up windup: face you, nose up
+    z.g.rotation.y = Math.atan2(player.x - z.x, player.z - z.z) - Math.PI / 2;
+    z.g.rotation.z = Math.sin(Math.min(1, z.chargeT / 0.9) * Math.PI) * 0.5;
+    if (z.chargeT > 0.9){
+      var dl = Math.hypot(player.x - z.x, player.z - z.z) || 1;
+      z.cdx = (player.x - z.x) / dl; z.cdz = (player.z - z.z) / dl;
+      z.charge = 2; z.chargeT = 0; z.g.rotation.z = 0;
+    }
+    return;
+  }
+  // charge 2: the run
+  var nx = z.x + z.cdx * 14 * dt, nz = z.z + z.cdz * 14 * dt;
+  if (pointInBuilding(nx, z.y + 1.5, nz) || z.chargeT > 1.4){
+    z.charge = 0; z.chargeAt = now + (z.enraged ? 3200 : 5500) + Math.random() * 2000;
+    return;
+  }
+  z.x = nx; z.z = nz;
+  z.g.position.set(z.x, groundY(z.x, z.z) + 0.05, z.z);
+  if (Math.random() < 0.4) puff(z.x, z.y + 0.3, z.z, 0x8a7a66, 0.4, 2, 500, 0.6, 0.5);
+  if (!z.hitThis && pd < 3.4){
+    z.hitThis = true; z.biteAt = now;
+    m12Hurt(2, now);
+    player.kx = (player.kx || 0) + z.cdx * 8; player.kz = (player.kz || 0) + z.cdz * 8;
   }
 }
 function updateMayor(dt, now){
   if (!m12Mayor) return;
-  var tx = player.x - 3, tz = player.z + 1;
-  if (Math.hypot(tx - m12Mayor.x, tz - m12Mayor.z) > 2.5) npcWalk(m12Mayor.g, tx, tz, 4.2, dt);
+  // flank: 3.5 m off your left shoulder and a step behind, so she never blocks the first-person view
+  var fx = Math.sin(player.ry), fz = Math.cos(player.ry);
+  var tx = player.x + fz * 3.5 - fx * 1.5, tz = player.z - fx * 3.5 - fz * 1.5;
+  if (Math.hypot(tx - m12Mayor.x, tz - m12Mayor.z) > 2.5) npcWalk(m12Mayor.g, tx, tz, 6.5, dt);
   m12Mayor.x = m12Mayor.g.position.x; m12Mayor.y = m12Mayor.g.position.y; m12Mayor.z = m12Mayor.g.position.z;
   var near = null, nd = 1e9;
   for (var i = 0; i < m12Zombies.length; i++){
@@ -6212,37 +6659,105 @@ function updateMayor(dt, now){
       var mx = m12Mayor.x, my = m12Mayor.y + 1.5, mz = m12Mayor.z;
       var ddx = near.x - mx, ddy = (near.y + 1.4) - my, ddz = near.z - mz;
       var dl = Math.hypot(ddx, ddy, ddz) || 1;
-      spawnDart(mx, my, mz, ddx / dl, ddy / dl, ddz / dl, false);   // mine:false -> never damages
+      spawnDart(mx, my, mz, ddx / dl, ddy / dl, ddz / dl, false, true);   // mine:false -> never damages
       sndPew();
     }
   }
 }
-function m12SetWeaponVisual(){ player.av.gun.visible = (mission12.phase === 0); }   // MG in hand; rockets/nades use rpgView
-// the machine gun / rockets / grenades, dispatched by phase from fireAction()
-function thrillerFire(){
-  if (mission12.phase === 0){                 // MACHINE GUN: ~10/s dart stream, mission-local
-    var now = performance.now();
-    if (now - m12MgAt < 100 || isFrozen()) return;
-    m12MgAt = now;
-    camera.getWorldDirection(_aim);
-    player.ry = Math.atan2(_aim.x, _aim.z);
-    var sx, sy, sz;
-    if (ads || camFP){ sx = camera.position.x + _aim.x * 6; sy = camera.position.y + _aim.y * 6; sz = camera.position.z + _aim.z * 6; }
-    else { sx = player.x + _aim.x * 1.1; sy = player.y + 1.7 + _aim.y * 1.1; sz = player.z + _aim.z * 1.1; }
-    var jx = (Math.random() - 0.5) * 0.03, jy = (Math.random() - 0.5) * 0.03;   // tight spread
-    spawnDart(sx, sy, sz, _aim.x + jx, _aim.y + jy, _aim.z, true);
-    sndPew();
-  } else if (mission12.phase === 1){          // ROCKET LAUNCHER: reuse the RPG rig
-    fireRocket();
-  } else {                                    // GRENADE LAUNCHER: arced, fused, area
-    thrillerGrenade();
+// weapons: wpn is what's in hand, phase is the highest unlocked. A new unlock
+// auto-equips; after that 1/2/3, Q (or the touch WPN button) swaps freely.
+var M12_WPN = ['MACHINE GUN', 'ROCKETS', 'GRENADES'];
+function m12SetWeaponVisual(){ player.av.gun.visible = (mission12.wpn === 0); }   // MG in hand; rockets/nades use rpgView
+function m12SelectWpn(i){
+  if (!thrillerFight() || i < 0 || i > mission12.phase || i === mission12.wpn) return false;
+  mission12.wpn = i;
+  m12SetWeaponVisual();
+  sndTone(330, 0.06, 0, 'square', 0.08); sndTone(495, 0.06, 0.05, 'square', 0.08);
+  return true;
+}
+function m12CycleWpn(){
+  if (!thrillerFight() || mission12.phase === 0) return;
+  m12SelectWpn((mission12.wpn + 1) % (mission12.phase + 1));
+}
+// touch aim assist: nudge the shot toward the nearest live zombie inside a narrow
+// cone (phones can't flick-aim a horde). Mutates _aim in place.
+function m12AimAssist(){
+  if (!IS_COARSE) return;
+  var best = null, bd = 0.985;   // cos(~10 deg)
+  for (var i = 0; i < m12Zombies.length; i++){
+    var z = m12Zombies[i]; if (z.state === 'dying') continue;
+    var dx = z.x - camera.position.x, dy = z.y + 1.4 * z.s - camera.position.y, dz = z.z - camera.position.z;
+    var dl = Math.hypot(dx, dy, dz); if (dl > 70 || dl < 0.5) continue;
+    var c = (dx * _aim.x + dy * _aim.y + dz * _aim.z) / dl;
+    if (c > bd){ bd = c; best = [dx / dl, dy / dl, dz / dl]; }
+  }
+  if (best){
+    _aim.set(_aim.x * 0.35 + best[0] * 0.65, _aim.y * 0.35 + best[1] * 0.65, _aim.z * 0.35 + best[2] * 0.65).normalize();
   }
 }
-function thrillerGrenade(){
+// muzzle flash: one persistent additive sprite, shown for a few frames per shot
+var m12Muzzle = new THREE.Sprite(new THREE.SpriteMaterial({
+  map: makeTex(64, 64, function(g, w, h){
+    var gr = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+    gr.addColorStop(0, 'rgba(255,250,220,1)'); gr.addColorStop(0.35, 'rgba(255,190,80,0.9)'); gr.addColorStop(1, 'rgba(255,120,30,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  }), color: 0xffffff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending}));
+m12Muzzle.visible = false; scene.add(m12Muzzle);
+var m12MuzzleUntil = 0;
+function m12Flash(x, y, z, sc){
+  m12Muzzle.position.set(x, y, z);
+  m12Muzzle.scale.setScalar(sc * (0.8 + Math.random() * 0.4));
+  m12Muzzle.material.rotation = Math.random() * 6.28;
+  m12Muzzle.visible = true;
+  m12MuzzleUntil = performance.now() + 45;
+}
+// the machine gun / rockets / grenades, dispatched by the weapon in hand from
+// fireAction() and auto-repeated while the trigger is held (updateMission12)
+function thrillerFire(){
   var now = performance.now();
-  if (now - lastRocket < 900 || isFrozen()) return;
+  if (isFrozen()) return;
+  var sugar = now < mission12.rapidUntil;
+  if (mission12.wpn === 0){                 // MACHINE GUN: tracer stream, mission-local
+    if (now - m12MgAt < (sugar ? 55 : 95)) return;
+    m12MgAt = now;
+    camera.getWorldDirection(_aim);
+    m12AimAssist();
+    player.ry = Math.atan2(_aim.x, _aim.z);
+    var sx, sy, sz;
+    if (ads || camFP || rpgOut()){ sx = camera.position.x + _aim.x * 6; sy = camera.position.y + _aim.y * 6; sz = camera.position.z + _aim.z * 6; }
+    else { sx = player.x + _aim.x * 1.1; sy = player.y + 1.7 + _aim.y * 1.1; sz = player.z + _aim.z * 1.1; }
+    var spr = ads ? 0.012 : 0.03;   // ADS tightens the spread
+    var jx = (Math.random() - 0.5) * spr, jy = (Math.random() - 0.5) * spr;
+    if (mgView.visible){   // first person: tracers leave the viewmodel muzzle, converging on the crosshair 40 m out
+      mgMuzzle.getWorldPosition(_mgMz);
+      var cx = camera.position.x + (_aim.x + jx) * 40 - _mgMz.x, cy = camera.position.y + (_aim.y + jy) * 40 - _mgMz.y,
+          cz = camera.position.z + _aim.z * 40 - _mgMz.z, cl = Math.hypot(cx, cy, cz) || 1;
+      spawnDart(_mgMz.x, _mgMz.y, _mgMz.z, cx / cl, cy / cl, cz / cl, true, true);
+    } else spawnDart(sx, sy, sz, _aim.x + jx, _aim.y + jy, _aim.z, true, true);
+    if (mgView.visible){   // first person: flash at the viewmodel's muzzle, kick the gun
+      m12Flash(_mgMz.x, _mgMz.y, _mgMz.z, 0.45);
+      mgKick = Math.min(1, mgKick + 0.55);
+    } else m12Flash(sx + _aim.x * 0.6, sy + _aim.y * 0.6, sz + _aim.z * 0.6, ads || camFP ? 0.9 : 1.3);
+    rigP.el -= 0.004 + Math.random() * 0.003;              // recoil climb
+    rigP.az += (Math.random() - 0.5) * 0.004;
+    addShake(0.06);
+    sndPew(0.07);
+  } else if (mission12.wpn === 1){          // ROCKET LAUNCHER: reuse the RPG rig
+    if (now - lastRocket < (sugar ? 550 : 1100)) return;
+    camera.getWorldDirection(_aim);
+    m12AimAssist();
+    fireRocket(true, sugar ? 550 : 1100);
+    rigP.el -= 0.03; addShake(0.25);
+  } else {                                  // GRENADE LAUNCHER: arced, fused, area
+    thrillerGrenade(sugar ? 450 : 900);
+  }
+}
+function thrillerGrenade(cool){
+  var now = performance.now();
+  if (now - lastRocket < cool || isFrozen()) return;
   lastRocket = now;
   camera.getWorldDirection(_aim);
+  m12AimAssist();
   player.ry = Math.atan2(_aim.x, _aim.z);
   var ox = player.x + _aim.x * 1.5, oy = player.y + 1.9 + _aim.y * 1.5, oz = player.z + _aim.z * 1.5;
   var g = new THREE.Group();
@@ -6252,27 +6767,88 @@ function thrillerGrenade(){
   scene.add(g);
   // nade:true -> updateRockets adds gravity + a fuse and detonates it as an area blast
   rockets.push({g: g, vx: _aim.x * 30, vy: _aim.y * 30 + 6, vz: _aim.z * 30, born: now, puffAt: 0, mine: true, nade: true});
+  m12Flash(ox, oy, oz, 1.6);
+  rigP.el -= 0.02; addShake(0.18);
   sndRocket();
 }
+// candy drops: CANDY CORN heals 1, a FULL-SIZE BAR is a 7s SUGAR RUSH (double fire rate)
+var m12Candy = [];
+var m12CandyGeo = {corn: new THREE.ConeGeometry(0.35, 0.8, 6), tip: new THREE.ConeGeometry(0.16, 0.3, 6), bar: new THREE.BoxGeometry(0.9, 0.22, 0.45)};
+var m12CandyMat = {corn: new THREE.MeshStandardMaterial({color: 0xff8a1a, emissive: 0xff6a00, emissiveIntensity: 0.6}),
+                   tip: new THREE.MeshStandardMaterial({color: 0xfff6dc, emissive: 0xffffff, emissiveIntensity: 0.3}),
+                   bar: new THREE.MeshStandardMaterial({color: 0x7a2fd0, emissive: 0x9a4dff, emissiveIntensity: 0.7})};
+function m12DropCandy(x, z, kind){
+  var g = new THREE.Group();
+  if (kind === 'corn'){
+    var c = new THREE.Mesh(m12CandyGeo.corn, m12CandyMat.corn); c.rotation.x = Math.PI; g.add(c);   // point down, like the real thing
+    var t = new THREE.Mesh(m12CandyGeo.tip, m12CandyMat.tip); t.position.y = 0.5; t.rotation.x = Math.PI; g.add(t);
+  } else g.add(new THREE.Mesh(m12CandyGeo.bar, m12CandyMat.bar));
+  var y = groundY(x, z);
+  g.position.set(x, y + 1, z);
+  scene.add(g);
+  m12Candy.push({g: g, x: x, y: y, z: z, kind: kind, born: performance.now()});
+}
+function updateCandy(dt, now){
+  for (var i = m12Candy.length - 1; i >= 0; i--){
+    var c = m12Candy[i], age = now - c.born;
+    c.g.rotation.y += dt * 2.5;
+    c.g.position.y = c.y + 0.9 + Math.sin(age * 0.005) * 0.2;
+    c.g.visible = age < 12000 || Math.floor(age / 120) % 2 === 0;   // blink before it vanishes
+    var take = Math.hypot(player.x - c.x, player.z - c.z) < 2 && thrillerFight();
+    if (take){
+      if (c.kind === 'corn'){
+        mission12.hp = Math.min(5, mission12.hp + 1);
+        m12Pop(c.x, c.y + 2, c.z, '+1 HP  CANDY CORN', '#ffb35a');
+      } else {
+        mission12.rapidUntil = now + 7000;
+        m12Banner('SUGAR RUSH', 'FULL-SIZE BAR - DOUBLE FIRE RATE', 1300);
+      }
+      sndTone(880, 0.08, 0, 'triangle', 0.12); sndTone(1320, 0.12, 0.07, 'triangle', 0.12);
+    }
+    if (take || age > 15000){ scene.remove(c.g); m12Candy.splice(i, 1); }
+  }
+}
+function m12ClearCandy(){
+  for (var i = 0; i < m12Candy.length; i++) scene.remove(m12Candy[i].g);
+  m12Candy.length = 0;
+}
+// floating world-space call-outs (+points, HEADSHOT) and the big center banner
+var m12Pops = [];
+function m12Pop(x, y, z, text, col){
+  if (m12Pops.length > 24) m12Pops.shift();
+  m12Pops.push({x: x, y: y, z: z, text: text, col: col, born: performance.now()});
+}
+var m12Ban = {text: '', sub: '', at: 0, dur: 0};
+function m12Banner(text, sub, dur){ m12Ban.text = text; m12Ban.sub = sub || ''; m12Ban.at = performance.now(); m12Ban.dur = dur || 1500; }
 function m12StartWave(now){
   var w = M12_WAVES[mission12.wave];
   mission12.spawned = 0; mission12.killed = 0;
   mission12.need = m12WaveN(w) + (w.boss ? 1 : 0);
-  mission12.spawnAt = now;
+  // a breather between waves (grab candy, reload your nerve); wave 1 is near-instant
+  mission12.spawnAt = now + (mission12.wave === 0 ? 600 : 2600);
   if (w.phase > mission12.phase){
     mission12.phase = w.phase;
-    if (w.phase === 1) caption('THE MAYOR', 'MORE OF THEM. HERE - ROCKET LAUNCHER. I DID NOT QUESTION IT EITHER.', 4200);
+    mission12.wpn = w.phase;   // a fresh unlock goes straight into your hands
+    if (w.phase === 1) caption('THE MAYOR', 'MORE OF THEM. HERE - ROCKET LAUNCHER. I DID NOT QUESTION IT EITHER. (1/2 OR Q SWAPS.)', 4200);
     else if (w.phase === 2) caption('THE MAYOR', 'THE BIG ONE. GRENADES. ARC THEM. TRY NOT TO HIT THE FLOAT.', 4200);
     mev(81);   // funnel: phase / weapon advance
   }
   m12SetWeaponVisual();
-  if (w.boss){ mission12.stage = 'climax'; spawnZombie(true); }
-  else mission12.stage = 'fighting';
+  if (w.boss){
+    mission12.stage = 'climax'; spawnZombie('boss');
+    m12Banner('FINAL WAVE', 'THE BIG ONE', 2200);
+  } else {
+    mission12.stage = 'fighting';
+    m12Banner('WAVE ' + (mission12.wave + 1), mission12.wave === 0 ? 'HOLD THE STEPS' :
+      (w.brute ? 'BRUTES IN THE MIX' : w.run ? 'RED JACKETS RUN - FAST' : ''), 1800);
+  }
 }
 function startMission12(){
   mission12.stage = 'brief'; mission12.tStage = 0; mission12.capIdx = 0;
   mission12.phase = 0; mission12.wave = 0; mission12.hp = 5; mission12.ms = 0;
   mission12.spawned = 0; mission12.killed = 0; mission12.need = 0; mission12.spawnAt = 0; mission12.banterAt = 0;
+  mission12.wpn = 0; mission12.score = 0; mission12.combo = 0; mission12.lastKill = 0; mission12.bestCombo = 0;
+  mission12.rapidUntil = 0; mission12.hurtAt = 0; m12Pops.length = 0; m12Ban.at = 0;
   if (m12SavedSimH === null) m12SavedSimH = simH;   // save the real clock ONCE (retry won't re-save the forced value)
   m12Grade = 0; mission12.goMusic = false;
   m12MusicPrime();   // begin streaming the track now (brief) so it's ready to play at GO
@@ -6292,6 +6868,8 @@ function startMission12(){
 function m12Downed(){
   mission12.stage = 'fail'; mission12.tStage = 0;
   player.av.gun.visible = false;
+  m12ClearCandy();
+  m12Banner('DOWNED', 'WAVE ' + (mission12.wave + 1) + ' · ' + mission12.score + ' PTS', 2600);
   mev(83);   // funnel: downed
   caption('THE MAYOR', 'THEY GOT YOU. IT WAS THE GUMMY BEARS. SHAKE IT OFF, GO AGAIN.', 4600);
 }
@@ -6299,7 +6877,16 @@ function m12Win(now){
   mission12.ms = now - mission12.t0;   // FROZEN at the climax kill - pure elapsed, no fold
   mission12.stage = 'won'; mission12.tStage = 0; mission12.capIdx = 0;
   player.av.gun.visible = false;
+  if (octLocked()){   // October: the finale cleared this session -> the city opens up
+    m12SessionClear = true; m12OctOpened = true;
+    addChatLine('* OCTOBER', 'THE THRILLER CLEARED - EVERY MISSION RING IS BACK. HAPPY HALLOWEEN.', true);
+  }
   m12Grade = 0;   // the reveal: the hallucination SNAPS off (you sobered up) - night still holds
+  m12ClearCandy();
+  var newPts = mission12.score > m12BestPts;
+  if (newPts){ m12BestPts = mission12.score; try { localStorage.setItem('lt_m12_pts', String(m12BestPts)); } catch (e){} }
+  addChatLine('* FINALE', 'PARADE POINTS ' + mission12.score + (newPts ? ' - NEW BEST' : ' (BEST ' + m12BestPts + ')') +
+    ' · BEST STREAK ' + mission12.bestCombo, true);
   mev(84);   // funnel: win (last of the horde down)
   sndWin(); sndApplause();
   caption('THE MAYOR', '...OH. THEY WERE THE PARADE DANCERS. THEY\'RE TAKING A BOW. NOBODY WAS HARMED. GOOD ROUTINE, ACTUALLY.', 5600);
@@ -6311,13 +6898,19 @@ function m12Win(now){
   } catch (e){}
   sendScore({t: 'score', ms: Math.round(mission12.ms), m: 13});   // WIRE 13 (board m12) - never 12/11/10
 }
+var m12OctOpened = false;   // one-shot "the city is open" caption after an October clear
 function m12Cleanup(){
   mission12.stage = 'idle';
+  if (m12OctOpened){
+    m12OctOpened = false;
+    caption('DISPATCH', 'PARADE\'S OVER. EVERY MISSION RING IN THE CITY IS BACK ON THE MAP. HAPPY HALLOWEEN.', 5200);
+  }
   for (var i = 0; i < m12Zombies.length; i++) scene.remove(m12Zombies[i].g);
   m12Zombies.length = 0;
   if (m12Mayor){ scene.remove(m12Mayor.g); m12Mayor = null; }
   player.av.gun.visible = player.pvp;   // holster unless opted into PvP separately
-  mission12.phase = 0;
+  mission12.phase = 0; mission12.wpn = 0;
+  m12ClearCandy(); m12Muzzle.visible = false;
   // un-force the world: the SINGLE chokepoint every exit path routes through
   if (m12SavedSimH !== null){ simH = m12SavedSimH; m12SavedSimH = null; }
   m12Grade = 0;
@@ -6441,6 +7034,9 @@ function updateCredits(dt){
   }
 }
 function updateMission12(dt){
+  if (m12Muzzle.visible && performance.now() > m12MuzzleUntil) m12Muzzle.visible = false;
+  var nerfLbl = thrillerFight() ? 'WPN ▸' : 'NERF';   // touch: the NERF slot swaps weapons mid-THRILLER
+  if (els.bNerf.textContent !== nerfLbl) els.bNerf.textContent = nerfLbl;
   if (m12Ring){
     m12Ring.visible = allIdle();
     if (m12Ring.visible) m12Ring.rotation.z += dt * 0.8;
@@ -6486,11 +7082,14 @@ function updateMission12(dt){
     var alive = 0;
     for (var zi = 0; zi < m12Zombies.length; zi++) if (m12Zombies[zi].state !== 'dying') alive++;
     if (mission12.spawned < wn && alive < M12_ZCAP && now > mission12.spawnAt){
-      spawnZombie(false); mission12.spawned++;
+      spawnZombie(m12PickKind(w)); mission12.spawned++;
       mission12.spawnAt = now + 350;   // staggered so the horde flows in
     }
     for (var zj = m12Zombies.length - 1; zj >= 0; zj--) updateZombie(m12Zombies[zj], zj, dt, now);
     updateMayor(dt, now);
+    updateCandy(dt, now);
+    // hold the trigger: the MG streams, rockets/nades re-fire on their cooldown
+    if (mode === 'player' && !player.veh && ((mouse0Held && ptrLocked) || fireTouchHeld || keysDown.f)) thrillerFire();
     if (mission12.hp <= 0){ m12Downed(); return; }
     if (now > mission12.banterAt){
       mission12.banterAt = now + 9000 + Math.random() * 4000;
@@ -6597,6 +7196,7 @@ var mdRings = [], mdTrig = null;
   }
 })();
 function nearMDTrig(){
+  if (octLocked()) return false;   // October: THE THRILLER first
   var dx = player.x - MD_TRIG.x, dz = player.z - MD_TRIG.z;
   return dx * dx + dz * dz < 16;
 }
@@ -6640,7 +7240,7 @@ function mdCleanup(){
 }
 function updateMissionD(dt){
   if (mdTrig){
-    mdTrig.visible = allIdle();
+    mdTrig.visible = allIdle() && !octLocked();
     if (mdTrig.visible) mdTrig.rotation.z += dt * 0.8;
   }
   if (missionD.stage === 'idle') return;
@@ -6756,12 +7356,13 @@ labels.push({name: '★ MISSION: LOOSE IN THE PADDOCK', x: M8_TRIG.x, y: 9, z: M
 labels.push({name: '★ MISSION: AIR MAIL', x: M9_TRIG.x, y: 9, z: M9_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: HIGH WATER', x: M10_TRIG.x, y: 9, z: M10_TRIG.z, col: MISSION_COL, mission: true});
 labels.push({name: '★ MISSION: MOTORCADE', x: M11_TRIG.x, y: 9, z: M11_TRIG.z, col: MISSION_COL, mission: true});
-labels.push({name: '★ FINALE: THE THRILLER', x: M12_TRIG.x, y: 9, z: M12_TRIG.z, col: MISSION_COL, mission: true});
+labels.push({name: OCTOBER ? '★ OCTOBER FINALE: THE THRILLER' : '★ FINALE: THE THRILLER', x: M12_TRIG.x, y: 9, z: M12_TRIG.z, col: MISSION_COL, mission: true, thriller: true});
 labels.push({name: '★ DAILY: THE DASH', x: MD_TRIG.x, y: 9, z: MD_TRIG.z, col: MISSION_COL, mission: true});
 // the gentle shove: when nothing else is going on, point at the next mission
 // bare next-unbeaten mission name, by the same best-gated chain ('' when all
 // beaten). Shared by the hint AND the F2 welcome-back so the two can't disagree.
 function nextMissionName(){
+  if (octLocked()) return 'THE THRILLER';   // October: the finale comes first, every session
   if (!heliUnlocked) return 'THE RIBBON CUTTING';
   if (!m2Best) return 'SNOW EMERGENCY';
   if (!m3Best) return 'THE DATA CENTER';
@@ -6796,6 +7397,7 @@ var MISSION_HINT_SUFFIX = {
 };
 function nextMissionHint(){
   var nm = nextMissionName();
+  if (octLocked()) return 'OCTOBER: THE THRILLER — ' + MISSION_HINT_SUFFIX[nm] + ' · CLEAR IT TO OPEN THE CITY';
   // '' == every mission beaten AND today's daily already run: the fully-cleared state
   if (!nm) return 'ALL MISSIONS CLEARED — CHASE THE LEADERBOARDS';
   // the ribbon cutting is the FIRST mission; everything after it is NEXT
@@ -7133,11 +7735,13 @@ function updatePlayer(dt){
   player.av.g.rotation.y = player.ry;
 }
 // RPG in hand: lock into first person so the chopper is actually aimable
-// (third-person elevation can't look up past ~8 degrees)
+// (third-person elevation can't look up past ~8 degrees). THE THRILLER is
+// first person end to end - the machine gun too (mgOut picks its viewmodel).
 function rpgOut(){
   return mode === 'player' && !player.veh && !player.heli &&
-    (missionFight() || (myRpg > 0 && heliActive()) || (thrillerFight() && mission12.phase >= 1));
+    (missionFight() || (myRpg > 0 && heliActive()) || thrillerFight());
 }
+function mgOut(){ return thrillerFight() && mission12.wpn === 0 && mode === 'player' && !player.veh && !player.heli; }
 // first-person RPG viewmodel, parented to the camera (past the near plane)
 scene.add(camera);
 var rpgView = new THREE.Group();
@@ -7156,7 +7760,45 @@ var rpgView = new THREE.Group();
   rpgView.visible = false;
   camera.add(rpgView);
 })();
+// first-person THE THRILLER machine gun viewmodel (camera child, like rpgView).
+// mgKick is the per-shot recoil the camera branch eases back to zero.
+var mgView = new THREE.Group(), mgMuzzle = new THREE.Object3D(), mgKick = 0;
+(function(){
+  var gun = new THREE.MeshStandardMaterial({color: 0x24262b, roughness: 0.55, metalness: 0.4});
+  var wood = new THREE.MeshStandardMaterial({color: 0x5a3a22, roughness: 0.8});
+  var body = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.2, 0.75), gun); mgView.add(body);
+  var shroud = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.6, 10), gun);
+  shroud.rotation.x = Math.PI / 2; shroud.position.z = -0.62; mgView.add(shroud);
+  var barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.35, 8), gun);
+  barrel.rotation.x = Math.PI / 2; barrel.position.z = -1.05; mgView.add(barrel);
+  var drum = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.12, 14), gun);   // the tommy-gun drum
+  drum.rotation.z = Math.PI / 2; drum.position.set(0, -0.2, -0.1); mgView.add(drum);
+  var grip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.22, 0.1), wood);
+  grip.position.set(0, -0.19, 0.22); grip.rotation.x = 0.25; mgView.add(grip);
+  var fore = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 0.22), wood);
+  fore.position.set(0, -0.14, -0.38); mgView.add(fore);
+  var stock = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.16, 0.36), wood);
+  stock.position.set(0, -0.06, 0.52); mgView.add(stock);
+  mgMuzzle.position.z = -1.25; mgView.add(mgMuzzle);
+  mgView.position.set(0.32, -0.32, -0.9);
+  mgView.rotation.set(0.02, 0.05, 0);
+  mgView.visible = false;
+  camera.add(mgView);
+})();
+var _mgMz = new THREE.Vector3();
 var camR = 13, aimBlend = 0, camFP = false;
+// screen shake (THE THRILLER's guns + blasts): a 0..1 trauma value, squared into a
+// positional jitter applied AFTER the camera rig places the camera, decaying fast
+var camShake = 0;
+function addShake(a){ if (a > 0) camShake = Math.min(1, camShake + a); }
+function applyShake(dt){
+  if (camShake <= 0.001){ camShake = 0; return; }
+  var a = camShake * camShake * 0.7;
+  camera.position.x += (Math.random() - 0.5) * a;
+  camera.position.y += (Math.random() - 0.5) * a;
+  camera.position.z += (Math.random() - 0.5) * a;
+  camShake = Math.max(0, camShake - dt * 2.4);
+}
 function updatePlayerCam(dt){
   followPause -= dt;
   var aiming = ads && !player.veh && (player.pvp || player.heli || missionFight() || (myRpg > 0 && heliActive()) || thrillerFight());
@@ -7170,7 +7812,15 @@ function updatePlayerCam(dt){
   player.av.g.visible = !fp && !player.veh && !player.heli;
   // first person can look almost straight up (that's where the chopper is)
   rigP.el = Math.max(fp ? -1.45 : -0.15, Math.min(fp ? 1.45 : 1.35, rigP.el));
-  rpgView.visible = fp && rpgOut();
+  var mgFp = fp && mgOut();
+  rpgView.visible = fp && rpgOut() && !mgFp;
+  mgView.visible = mgFp;
+  if (mgFp){   // recoil: snap back + up per shot, ease home; a slight walk bob
+    mgKick = Math.max(0, mgKick - dt * 9);
+    var bob = player.moving > 0.5 ? Math.sin(performance.now() * 0.011) * 0.012 : 0;
+    mgView.position.set(0.32, -0.32 + bob + mgKick * 0.03, -0.9 + mgKick * 0.09);
+    mgView.rotation.x = 0.02 + mgKick * 0.12;
+  }
   if (fp){
     // first person: eye / hood / cockpit; same az-el mapping as third person
     var ex, ey, ez;
@@ -8128,6 +8778,11 @@ window.addEventListener('keydown', function(e){
     if (mode === 'player'){ camFP = !camFP; syncBtns(); }
     else { autoCam = !autoCam; tween = null; pTimer = 0; syncBtns(); }
   }
+  // mid-THRILLER the number row is the weapon rack (1 MG / 2 ROCKETS / 3 GRENADES), Q cycles
+  if (thrillerFight() && (k === '1' || k === '2' || k === '3' || k === 'q')){
+    if (k === 'q') m12CycleWpn(); else m12SelectWpn(parseInt(k, 10) - 1);
+    return;
+  }
   if (k === '1') setSpeed(1);
   if (k === '2') setSpeed(60);
   if (k === '3') setSpeed(300);
@@ -8220,7 +8875,7 @@ function setSpeed(s){ speed = s; paused = false; syncBtns(); }
 function togglePause(){ paused = !paused; syncBtns(); }
 els.bView.onclick = toggleMode;
 els.bCar.onclick = tryEnterExit;
-els.bNerf.onclick = function(){ setPvp(!player.pvp); };
+els.bNerf.onclick = function(){ if (thrillerFight()){ m12CycleWpn(); return; } setPvp(!player.pvp); };
 els.bFP.onclick = function(){
   if (mode !== 'player') toggleMode();
   camFP = !camFP; syncBtns();
@@ -8477,6 +9132,14 @@ function tutClose(){
       caption('LEXTOWN', 'TIP: LANDSCAPE PLAYS BETTER', 3500);
     }
   } catch (e){}
+  // October: the parade is the welcome (every session until the finale is cleared)
+  if (!_welcomed && octLocked() && allIdle()){
+    _welcomed = true;
+    setTimeout(function(){
+      if (allIdle() && octLocked())
+        caption('THE MAYOR', 'HAPPY OCTOBER. THE THRILLER PARADE IS ON THE PLAZA - MAGENTA RING, RIGHT THERE - FOLLOW THE GOLD MARKER, PRESS E. THE REST OF THE CITY CAN WAIT.', 6500);
+    }, 3000);
+  }
   // first-session shove toward the missions
   if (!_welcomed && !heliUnlocked && allIdle()){
     _welcomed = true;
@@ -8695,6 +9358,7 @@ function drawMissionTarget(){
 // m5Best / M5_TRIG belong to the mission-5 island; the m5 clause is guarded
 // so this stays crash-safe even if that island loads after these helpers.
 function currentObjective(){
+  if (octLocked()) return {x: M12_TRIG.x, y: 9, z: M12_TRIG.z, label: 'THE THRILLER'};
   if (!heliUnlocked) return {x: MISSION_TRIG.x, y: 9, z: MISSION_TRIG.z, label: 'THE RIBBON CUTTING'};
   if (!m2Best) return {x: DOOR_P.x, y: 13, z: DOOR_P.z, label: 'CITY HALL DOOR'};
   if (!m3Best) return {x: M3_TRIG.x, y: 9, z: M3_TRIG.z, label: 'THE DATA CENTER'};
@@ -8762,6 +9426,110 @@ function drawM4HorseArrows(){
   }
 }
 var camPos = new THREE.Vector3();
+// THE THRILLER combat HUD (overlay canvas): wave + remaining, HP pumpkins, the
+// weapon rack, parade points + combo, THE BIG ONE's health bar, floating call-outs,
+// the center banner, and the bite / low-HP vignette. Runs only while a run is live.
+function drawThrillerHud(now){
+  var st = mission12.stage;
+  if (st === 'idle' || st === 'credits') return;
+  var i;
+  // floating call-outs (+pts, HEADSHOT) rise and fade over ~0.9s
+  ov.textAlign = 'center';
+  for (i = m12Pops.length - 1; i >= 0; i--){
+    var pp = m12Pops[i], age = now - pp.born;
+    if (age > 900){ m12Pops.splice(i, 1); continue; }
+    var pr = project(pp.x, pp.y + age / 900 * 1.6, pp.z);
+    if (!pr) continue;
+    ov.globalAlpha = 1 - Math.max(0, (age - 500) / 400);
+    ov.font = 'bold 13px ui-monospace, Menlo, Consolas, monospace';
+    ov.fillStyle = 'rgba(0,0,0,0.6)'; ov.fillText(pp.text, pr[0] + 1, pr[1] + 1);
+    ov.fillStyle = pp.col; ov.fillText(pp.text, pr[0], pr[1]);
+  }
+  ov.globalAlpha = 1;
+  // center banner (WAVE N / streaks / SUGAR RUSH / DOWNED): punch in, hold, fade
+  var ba = now - m12Ban.at;
+  if (m12Ban.at && ba < m12Ban.dur){
+    var bin = Math.min(1, ba / 120), bout = 1 - Math.max(0, (ba - m12Ban.dur + 350) / 350);
+    ov.globalAlpha = Math.max(0, Math.min(bin, bout));
+    var bsz = Math.round((IS_COARSE ? 26 : 38) * (1.25 - 0.25 * bin));
+    ov.font = 'bold ' + bsz + 'px ui-monospace, Menlo, Consolas, monospace';
+    ov.fillStyle = 'rgba(0,0,0,0.55)'; ov.fillText(m12Ban.text, vw / 2 + 2, vh * 0.3 + 2);
+    ov.fillStyle = '#ff9de8'; ov.fillText(m12Ban.text, vw / 2, vh * 0.3);
+    if (m12Ban.sub){
+      ov.font = 'bold 12px ui-monospace, Menlo, Consolas, monospace';
+      ov.fillStyle = '#ffe9c2'; ov.fillText(m12Ban.sub, vw / 2, vh * 0.3 + 22);
+    }
+    ov.globalAlpha = 1;
+  }
+  if (!thrillerFight()){ ov.textAlign = 'left'; return; }
+  // top-center: wave + remaining
+  var left = Math.max(0, mission12.need - mission12.killed);
+  ov.font = 'bold 13px ui-monospace, Menlo, Consolas, monospace';
+  var top = IS_COARSE ? 64 : 74;
+  ov.fillStyle = 'rgba(6,4,14,0.6)'; ov.fillRect(vw / 2 - 120, top - 16, 240, 46);
+  ov.fillStyle = '#ffd28a';
+  ov.fillText('WAVE ' + (mission12.wave + 1) + '/' + M12_WAVES.length + '  ·  ' + left + ' LEFT', vw / 2, top);
+  // HP: five jack-o'-lanterns (lit = health left)
+  for (i = 0; i < 5; i++){
+    var hx = vw / 2 - 48 + i * 24, hy = top + 15;
+    var lit = i < mission12.hp;
+    ov.fillStyle = lit ? '#ff8a1a' : 'rgba(120,90,70,0.35)';
+    ov.beginPath(); ov.ellipse(hx, hy, 9, 7, 0, 0, Math.PI * 2); ov.fill();
+    ov.fillStyle = lit ? '#3c7a2a' : 'rgba(80,90,70,0.35)'; ov.fillRect(hx - 1.5, hy - 10, 3, 4);
+    if (lit){ ov.fillStyle = '#ffe066'; ov.fillRect(hx - 5, hy - 2, 3, 2); ov.fillRect(hx + 2, hy - 2, 3, 2); ov.fillRect(hx - 4, hy + 2, 8, 2); }
+  }
+  // right of center: parade points + live combo + sugar rush timer
+  ov.textAlign = 'left';
+  var rx = vw / 2 + 130;
+  if (rx + 150 < vw){
+    ov.fillStyle = '#ffe9c2'; ov.font = 'bold 13px ui-monospace, Menlo, Consolas, monospace';
+    ov.fillText(mission12.score + ' PTS', rx, top);
+    var comboLive = mission12.combo > 1 && now - mission12.lastKill < 2400;
+    if (comboLive){
+      ov.fillStyle = '#ff9de8';
+      ov.fillText('x' + Math.min(8, mission12.combo) + ' COMBO', rx, top + 17);
+      ov.fillRect(rx, top + 21, 80 * (1 - (now - mission12.lastKill) / 2400), 2);
+    }
+    if (now < mission12.rapidUntil){
+      ov.fillStyle = '#c99bff';
+      ov.fillText('SUGAR RUSH ' + Math.ceil((mission12.rapidUntil - now) / 1000) + 's', rx, top + (comboLive ? 36 : 17));
+    }
+  }
+  // weapon rack, bottom-center (locked slots dim)
+  var wy = vh - (IS_COARSE ? 150 : 96), ww = 92;
+  for (i = 0; i < 3; i++){
+    var wx = vw / 2 - 1.5 * ww - 6 + i * (ww + 6);
+    var have = i <= mission12.phase, cur = i === mission12.wpn;
+    ov.fillStyle = cur ? 'rgba(216,38,255,0.35)' : 'rgba(6,4,14,0.55)';
+    ov.fillRect(wx, wy, ww, 22);
+    ov.strokeStyle = cur ? '#ff9de8' : 'rgba(255,210,138,0.35)'; ov.lineWidth = cur ? 2 : 1;
+    ov.strokeRect(wx + 0.5, wy + 0.5, ww - 1, 21);
+    ov.font = 'bold 10px ui-monospace, Menlo, Consolas, monospace';
+    ov.fillStyle = have ? (cur ? '#ffffff' : '#ffd28a') : 'rgba(255,210,138,0.3)';
+    ov.fillText((IS_COARSE ? '' : (i + 1) + ' ') + (have ? ['MG', 'ROCKETS', 'GRENADES'][i] : 'LOCKED'), wx + 7, wy + 15);
+  }
+  // THE BIG ONE's health bar
+  for (i = 0; i < m12Zombies.length; i++){
+    var bz = m12Zombies[i];
+    if (!bz.boss || bz.state === 'dying') continue;
+    var bw = Math.min(360, vw - 60), bx = vw / 2 - bw / 2, by = top + 40;
+    ov.fillStyle = 'rgba(6,4,14,0.7)'; ov.fillRect(bx - 2, by - 2, bw + 4, 12);
+    ov.fillStyle = bz.charge ? '#ff5050' : '#9be05a'; ov.fillRect(bx, by, bw * Math.max(0, bz.hp) / bz.maxHp, 8);
+    ov.textAlign = 'center'; ov.font = 'bold 10px ui-monospace, Menlo, Consolas, monospace';
+    ov.fillStyle = '#ffe9c2'; ov.fillText('THE BIG ONE', vw / 2, by + 22);
+    ov.textAlign = 'left';
+  }
+  // bite flash + low-HP heartbeat vignette
+  var hurt = Math.max(0, 1 - (now - mission12.hurtAt) / 450);
+  var low = mission12.hp <= 2 ? (0.25 + 0.2 * Math.sin(now * 0.009)) : 0;
+  var va = Math.max(hurt * 0.55, low);
+  if (va > 0.01){
+    ov.strokeStyle = 'rgba(200,20,40,' + va + ')';
+    ov.lineWidth = 44; ov.strokeRect(0, 0, vw, vh);
+    ov.lineWidth = 14; ov.strokeStyle = 'rgba(255,60,60,' + (va * 0.5) + ')';
+    ov.strokeRect(22, 22, vw - 44, vh - 44);
+  }
+}
 function drawOverlay(){
   ov.clearRect(0, 0, vw, vh);
   if (CINE){ if (cine.bars) cineLetterbox(); return; }   // trailer: nothing but the 3D world (+ optional bars)
@@ -8811,6 +9579,7 @@ function drawOverlay(){
   }
   if (nowHm - hitMarkAt < 950 && hitMarkName)
     chip(vw / 2 - 30, vh / 2 - 22, 'TAGGED ' + hitMarkName, '#8ef7ff');
+  drawThrillerHud(nowHm);
   if (mode === 'player' && isFrozen()){   // icy vignette while frozen
     var fLeft = (player.frozenUntil - nowHm) / 4000;
     ov.strokeStyle = 'rgba(140,210,255,' + (0.2 + 0.3 * Math.min(1, fLeft)) + ')';
@@ -8939,6 +9708,7 @@ function drawOverlay(){
     for (k = 0; k < labels.length; k++){
       var lb = labels[k];
       if (lb.mission && midMission) continue;
+      if (lb.mission && !lb.thriller && octLocked()) continue;   // October: only the finale's marker
       var d3 = camPos.distanceTo(_v.set(lb.x, lb.y, lb.z));
       if (d3 > 1300) continue;
       var lp = project(lb.x, lb.y, lb.z);
@@ -9246,7 +10016,7 @@ function frameStep(now){
   } else if (mode === 'drone'){
     applyWASD(dt);
     updateRig(dt);
-  } else updatePlayerCam(dt);
+  } else { updatePlayerCam(dt); applyShake(dt); }
 
   // environment
   var env = envAt(simH);
@@ -9289,6 +10059,7 @@ function frameStep(now){
   if (wxFlash > 0.01) sun.intensity += wxFlash * 2.5;   // lightning flash (F3)
   sun.visible = env.sun > 0.04;
   var n = env.night;
+  updateHalloween(dt, n);
   for (var k = 0; k < nightMats.length; k++)
     nightMats[k].m.emissiveIntensity = n * nightMats[k].k;
   lampHeadMat.emissiveIntensity = n * 1.6;
@@ -9316,7 +10087,7 @@ function frameStep(now){
     else if (player.ride) hint = 'E — HOP OUT · R — RADIO · C — VIEW';
     else if (player.scoot) hint = 'E — HOP OFF · W/S THROTTLE · A/D STEER · ' + Math.round(Math.abs(player.scoot.spd) * 3.6) + ' KM/H';
     else if (missionFight()) hint = 'SHOOT DOWN THE CHOPPER · F/CLICK — FIRE · RMB — AIM · CHOPPER HP ' + mh.hp + '/3';
-    else if (thrillerFight()) hint = 'THE THRILLER · WAVE ' + (mission12.wave + 1) + '/' + M12_WAVES.length + ' · ' + ['MACHINE GUN', 'ROCKETS', 'GRENADES'][mission12.phase] + ' · HP ' + Math.max(0, mission12.hp) + ' · ' + Math.max(0, mission12.need - mission12.killed) + ' LEFT · F/CLICK — FIRE';
+    else if (thrillerFight()) hint = 'THE THRILLER · ' + M12_WPN[mission12.wpn] + (IS_COARSE ? ' · HOLD FIRE · WPN — SWAP' : ' · HOLD CLICK/F — FIRE · RMB — AIM' + (mission12.phase > 0 ? ' · 1/2/3 OR Q — SWAP' : '')) + ' · AIM HIGH FOR HEADSHOTS';
     else if (player.heli) hint = 'W/S A/D FLY · SPACE UP · SHIFT DOWN · HOLD F/CLICK — WATER CANNON · E — EXIT · HP ' + heli.hp + '/3';
     else if (player.veh && player.veh.plow) hint = 'BLADE: ' + (bladeDown ? 'DOWN' : 'UP') + ' · SPACE — RAISE/LOWER · CLEAR THE SNOWY STREETS · E — EXIT';
     else if (mission5.stage === 'driving'){
